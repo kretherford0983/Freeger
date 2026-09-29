@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useState } from "react";
 import { api, setCsrf } from "./api";
 import { Link, match, useRouter } from "./router";
 import { Loading } from "./components";
+import { NavIcon } from "./icons";
 import InitWizard from "./pages/InitWizard";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
@@ -25,6 +26,7 @@ export interface Me {
   roles: string[];
   permissions: string[];
   theme: "light" | "dark";
+  nav_collapsed?: boolean;
   csrf_token: string;
 }
 
@@ -111,6 +113,13 @@ function navFor(me: Me) {
 
 function Shell({ workspace, warning, onLogout }: { workspace: string; warning: boolean; onLogout: () => void }) {
   const { me, can, setTheme } = useMe();
+  // CR-014: collapsible left navigation, remembered per user (like the theme)
+  const [collapsed, setCollapsed] = useState(!!me.nav_collapsed);
+  const toggleNav = () => {
+    const next = !collapsed;
+    setCollapsed(next);
+    api.put("/api/me/preferences", { nav_collapsed: next }).catch(() => undefined);
+  };
   const { path } = useRouter();
   const nav = navFor(me);
   const allowed = new Set(nav.map((n) => n[0]));
@@ -149,7 +158,7 @@ function Shell({ workspace, warning, onLogout }: { workspace: string; warning: b
     REGISTER_USER: "Register User", AUDITOR: "Auditor",
   };
   return (
-    <div className="shell">
+    <div className={`shell${collapsed ? " nav-collapsed" : ""}`}>
       <header className="topbar">
         <div className="brand">
           <span className="logo" aria-hidden="true">◆</span> {workspace} <span className="muted">· Financial Management</span>
@@ -166,8 +175,14 @@ function Shell({ workspace, warning, onLogout }: { workspace: string; warning: b
       {warning ? <div className="alert warn banner" role="alert">Security warning: this server is exposed on a network without HTTPS configuration. Deploy behind an HTTPS reverse proxy.</div> : null}
       <div className="body">
         <nav className="sidenav" aria-label="Main navigation">
+          <button type="button" className="nav-toggle" onClick={toggleNav} aria-expanded={!collapsed}
+            aria-label={collapsed ? "Expand navigation" : "Collapse navigation"} title={collapsed ? "Expand navigation" : "Collapse navigation"}>
+            <span aria-hidden="true">{collapsed ? "»" : "«"}</span>
+          </button>
           {nav.map(([to, label]) => (
-            <Link key={to} to={to}>{label}</Link>
+            <Link key={to} to={to} aria-label={label} title={collapsed ? label : undefined}>
+              <NavIcon to={to} /><span className="nav-label">{label}</span>
+            </Link>
           ))}
           {can("financial.view") ? null : null}
         </nav>

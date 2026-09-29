@@ -88,8 +88,8 @@ def test_cr002_audit_report_structure_and_attachment_order(env, base):
     assert "<img src='/etc/passwd'/> Vendor & Co" in t1_page  # user markup rendered literally, not interpreted
     assert "Parent note <b>not bold</b>" in t1_page
     assert "Bank interest" in texts[order[3]] and "VOID" in texts[order[4]] and "Duplicate" in texts[order[4]]
-    # FY supporting documentation at the end
-    assert first_page(texts, "BOARDMINUTES page 1") > order[4]
+    # v1.3 (Q5): Fiscal Year documents are no longer part of the audit report (they are in the Close report)
+    assert "BOARDMINUTES" not in joined
     # footers
     assert f"Page 1 of {len(texts)}" in texts[0] and f"Page {len(texts)} of {len(texts)}" in texts[-1]
     # audited

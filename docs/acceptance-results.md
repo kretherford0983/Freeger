@@ -1,5 +1,13 @@
 # Acceptance-criteria results
 
+> **v1.3.0 update:** change requests CR-007 … CR-015 (FY document types, Close report, split attachment labels,
+> attachments in the transaction form, duplicate protection, missing check review, fixed/collapsible navigation, pinned
+> register header); see implementation-notes.md §1a. Full regression: **159 backend tests and 16 E2E tests pass**
+> (E2E also against the portable and PyInstaller Linux packages); `pip-audit` and `npm audit` clean. By product-owner
+> decision the Fiscal Year closing requirement of AC-FY-010/011 now needs an *Audit Signoff* document (and an
+> Approval document or the "no approval document" mark) instead of any supporting attachment; AC-FY-009 approval
+> additionally requires the Approval document or mark. All other criteria keep their status.
+>
 > **v1.2.1 update:** product-owner corrections to CR-002 (audit PDF layout with attachments rendered at page width),
 > CR-003 (transfer Entity) and CR-005 (split documentation rule + per-allocation no-attachment flag, migration 0004);
 > see implementation-notes.md §1a. Full regression: **138 backend tests and 12 E2E tests pass**; `pip-audit` and

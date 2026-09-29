@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, money, qs } from "../api";
-import { ErrorBox, Field, FyStatus, Loading, Modal, useConfirmable } from "../components";
+import { ErrorBox, Field, FyStatus, Loading, Modal, useConfirmable, GuardedForm } from "../components";
 import { useMe } from "../App";
 import { Link, useRouter } from "../router";
 
@@ -80,7 +80,7 @@ function CreateFy({ list, onClose }: { list: any[]; onClose: () => void }) {
   const toggle = (id: number) => { const s = new Set(selected); s.has(id) ? s.delete(id) : s.add(id); setSelected(s); };
   return (
     <Modal title="New Fiscal Year" onClose={onClose} wide>
-      <form onSubmit={submit}>
+      <GuardedForm onSubmit={submit}>
         <ErrorBox error={err} />
         <Field label="Identifier" hint={`Displayed as FY${f.identifier || "…"}`}><input required pattern="[A-Za-z0-9-]{1,20}" value={f.identifier} onChange={(e) => setF({ ...f, identifier: e.target.value })} /></Field>
         <div className="row">
@@ -107,7 +107,7 @@ function CreateFy({ list, onClose }: { list: any[]; onClose: () => void }) {
           </fieldset>
         ) : null}
         <div className="actions"><button type="button" onClick={onClose}>Cancel</button><button className="primary" type="submit">Create Fiscal Year</button></div>
-      </form>
+      </GuardedForm>
       {dialog}
     </Modal>
   );

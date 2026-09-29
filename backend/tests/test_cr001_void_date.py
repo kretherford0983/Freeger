@@ -3,16 +3,20 @@ Guards: only VOID transactions, only the date, Register User permission, CSRF, c
 from conftest import Api
 
 
-def _zero_void(env, base, date="2026-08-01"):
+_CHECKS = iter(range(1001, 2000))
+
+
+def _zero_void(env, base, date="2026-08-01", check=None):
     r = env.ru.post("/api/transactions", {"bank_account_id": base["acct"]["id"], "transaction_type": "WITHDRAWAL",
-                                          "transaction_date": date, "check_number": "1001", "create_as_void": True,
+                                          "transaction_date": date, "check_number": check or str(next(_CHECKS)),
+                                          "create_as_void": True,
                                           "void_reason": "Damaged check"})
     assert r.status_code == 201, r.text
     return r.json()
 
 
 def test_cr001_zero_dollar_void_date_corrected_and_audited(env, base):
-    t = _zero_void(env, base)
+    t = _zero_void(env, base, check="1001")
     r = env.ru.post(f"/api/transactions/{t['id']}/void-date", {"transaction_date": "2026-09-15",
                                                                "reason": "Entered with default date"})
     assert r.status_code == 200, r.text
@@ -70,13 +74,11 @@ def test_cr001_guards(env, base):
 
 
 def test_cr001_closed_fiscal_year_protection(env, base):
-    from conftest import PDF_BYTES
     fy = base["fy"]["id"]
     t = _zero_void(env, base)
     other = env.fy("2028", "2027-07-01", "2028-06-30")
-    env.bm.post(f"/api/fiscal-years/{fy}/approve", {"confirm_irreversible": True})
-    env.bm.c.post(f"/api/attachments?owner_type=fiscal_year&owner_id={fy}", files={"file": ("a.pdf", PDF_BYTES)},
-                  headers={"X-CSRF-Token": env.bm.csrf})
+    env.approve(fy)
+    env.fy_doc(fy, "AUDIT_SIGNOFF")
     assert env.bm.post(f"/api/fiscal-years/{fy}/close", {"confirm_reviewed": True}).status_code == 200
     # record belongs to the closed year -> immutable
     assert env.ru.post(f"/api/transactions/{t['id']}/void-date", {"transaction_date": "2027-08-01"}).status_code == 409

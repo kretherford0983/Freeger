@@ -72,6 +72,7 @@ class User(Base):
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     security_domain: Mapped[str] = mapped_column(String(20))  # ADMINISTRATOR | FINANCIAL | AUDITOR
     theme: Mapped[str] = mapped_column(String(10), default="light")
+    nav_collapsed: Mapped[bool] = mapped_column(Boolean, default=False, server_default=sa_false(), nullable=False)  # v1.3 CR-014
     password_changed_at: Mapped[dt.datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow)
     created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"), nullable=True)
@@ -120,6 +121,11 @@ class FiscalYear(Base):
     closed_at: Mapped[dt.datetime | None] = mapped_column(DateTime, nullable=True)
     closed_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"), nullable=True)
     exception_confirmed: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    # v1.3 CR-007: the organization produces no approval document (strong warning when set)
+    approval_no_attachment: Mapped[bool] = mapped_column(Boolean, default=False, server_default=sa_false(), nullable=False)
+    approval_no_attachment_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    approval_no_attachment_set_at: Mapped[dt.datetime | None] = mapped_column(DateTime, nullable=True)
+    approval_no_attachment_set_by_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow)
     created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"), nullable=True)
     updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
@@ -330,6 +336,36 @@ class Attachment(Base):
     removed_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"), nullable=True)
     uploaded_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow)
     uploaded_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"), nullable=True)
+    # v1.3 CR-007: APPROVAL | AUDIT_SIGNOFF | UNSPECIFIED for Fiscal Year attachments (None otherwise)
+    document_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    system_generated: Mapped[bool] = mapped_column(Boolean, default=False, server_default=sa_false(), nullable=False)
+
+
+class RequestKey(Base):
+    """v1.3 CR-011: a one-time key sent with a create request; a repeat returns the original result."""
+    __tablename__ = "request_key"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspace.id"), index=True)
+    key: Mapped[str] = mapped_column(String(64))
+    kind: Mapped[str] = mapped_column(String(20))
+    result_ids: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"), nullable=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow)
+
+    __table_args__ = (UniqueConstraint("workspace_id", "key", name="uq_request_key_ws_key"),)
+
+
+class CheckNumberAcknowledgement(Base):
+    """v1.3 CR-012: check numbers (or a range) confirmed as 'not missing' with a note."""
+    __tablename__ = "check_number_acknowledgement"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspace.id"), index=True)
+    bank_account_id: Mapped[int] = mapped_column(ForeignKey("bank_account.id"), index=True)
+    first_number: Mapped[int] = mapped_column(Integer)
+    last_number: Mapped[int] = mapped_column(Integer)
+    note: Mapped[str] = mapped_column(String(1000))
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"), nullable=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow)
 
 
 # ---------------------------------------------------------------- audit

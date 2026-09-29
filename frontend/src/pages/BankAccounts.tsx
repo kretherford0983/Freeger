@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, money, todayIso } from "../api";
-import { ErrorBox, Field, Loading, Modal } from "../components";
+import { ErrorBox, Field, Loading, Modal, GuardedForm } from "../components";
 import { useMe } from "../App";
 import { EntityForm } from "./Entities";
 
@@ -101,7 +101,7 @@ function AccountForm({ account, onClose, onSaved }: any) {
   };
   return (
     <Modal title={isNew ? "New bank account" : `Edit ${account.account_name}`} onClose={onClose} wide>
-      <form onSubmit={submit}>
+      <GuardedForm onSubmit={submit}>
         <ErrorBox error={err} />
         <Field label="Account name"><input required value={f.account_name} onChange={set("account_name")} /></Field>
         <Field label="Financial Institution" hint="Only Entities flagged as Financial Institutions are listed.">
@@ -131,7 +131,7 @@ function AccountForm({ account, onClose, onSaved }: any) {
         ) : isNew ? <Field label="Current balance (manually maintained)"><input value={f.current_balance} onChange={set("current_balance")} /></Field> : null}
         <Field label="Notes"><textarea value={f.notes} onChange={set("notes")} /></Field>
         <div className="actions"><button type="button" onClick={onClose}>Cancel</button><button className="primary" type="submit">Save</button></div>
-      </form>
+      </GuardedForm>
       {newFi ? <EntityForm entity={{ entity_type: "ORGANIZATION" }} forceFi onClose={() => setNewFi(false)} onSaved={(e) => { setNewFi(false); loadFis().then(() => setF({ ...f, financial_institution_entity_id: e.id })); }} /> : null}
     </Modal>
   );
@@ -147,13 +147,13 @@ function BalanceForm({ account, onClose, onSaved }: any) {
   };
   return (
     <Modal title={`Update balance: ${account.account_name}`} onClose={onClose}>
-      <form onSubmit={submit}>
+      <GuardedForm onSubmit={submit}>
         <ErrorBox error={err} />
         <Field label="Current balance"><input required value={v} onChange={(e) => setV(e.target.value)} /></Field>
         <Field label="Reason"><input value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
         <p className="hint">Manual balance updates are audited.</p>
         <div className="actions"><button type="button" onClick={onClose}>Cancel</button><button className="primary" type="submit">Save</button></div>
-      </form>
+      </GuardedForm>
     </Modal>
   );
 }
@@ -167,13 +167,13 @@ function CloseForm({ account, onClose, onSaved }: any) {
   };
   return (
     <Modal title={`Close ${account.account_name}`} onClose={onClose}>
-      <form onSubmit={submit}>
+      <GuardedForm onSubmit={submit}>
         <ErrorBox error={err} />
         <p>Current balance: <b>{money(account.current_balance)}</b> · Uncleared transactions: <b>{account.uncleared_count}</b></p>
         <p className="hint">An account can be closed only with no uncleared transactions and a balance of exactly $0.00{account.register_enabled ? ", reached through register activity" : ", set through an audited balance update"}.</p>
         <Field label="Reason (required)"><input required value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
         <div className="actions"><button type="button" onClick={onClose}>Cancel</button><button className="primary danger" type="submit">Close account</button></div>
-      </form>
+      </GuardedForm>
     </Modal>
   );
 }

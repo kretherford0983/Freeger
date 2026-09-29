@@ -98,3 +98,10 @@ export function todayIso() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
+
+/** v1.3 CR-011: one-time key for a create form (works on plain-HTTP LAN addresses, unlike crypto.randomUUID). */
+export function newRequestKey() {
+  const b = new Uint8Array(16);
+  crypto.getRandomValues(b);
+  return Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+}

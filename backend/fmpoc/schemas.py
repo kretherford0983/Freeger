@@ -78,7 +78,8 @@ class ChangePasswordIn(In):
 
 
 class PreferencesIn(In):
-    theme: Literal["light", "dark"]
+    theme: Literal["light", "dark"] | None = None
+    nav_collapsed: bool | None = None  # v1.3 CR-014
 
 
 Domain = Literal["ADMINISTRATOR", "FINANCIAL", "AUDITOR"]
@@ -142,6 +143,17 @@ class FiscalYearUpdateIn(In):
 
 class FiscalYearApproveIn(In):
     confirm_irreversible: bool
+
+
+class AttachmentTypeIn(In):
+    """v1.3 CR-007: Fiscal Year document type."""
+    document_type: Literal["APPROVAL", "AUDIT_SIGNOFF", "UNSPECIFIED"]
+
+
+class ApprovalNoAttachmentIn(In):
+    """v1.3 CR-007: the organization produces no approval document (strong warning in the UI)."""
+    no_attachment: bool
+    reason: OptStr(500) = None
 
 
 class FiscalYearCloseIn(In):
@@ -260,6 +272,10 @@ class AllocationIn(In):
     no_attachment_reason: OptStr(500) = None
 
 
+RequestKeyStr = Annotated[str | None, StringConstraints(pattern=r"^[A-Za-z0-9-]{16,64}$")]
+CheckNumberStr = Annotated[str | None, StringConstraints(strip_whitespace=True, max_length=20, pattern=r"^[A-Za-z0-9-]*$")]
+
+
 class TransactionCreateIn(In):
     bank_account_id: int
     transaction_type: Literal["DEPOSIT", "WITHDRAWAL"]
@@ -275,6 +291,7 @@ class TransactionCreateIn(In):
     fiscal_year_id: int | None = None  # only for zero-dollar VOID accountability records
     no_attachment: bool = False
     no_attachment_reason: OptStr(500) = None
+    request_key: RequestKeyStr = None  # v1.3 CR-011: one-time key per opened form (repeat submit = same result)
     confirmations: Confirmations = []
 
 
@@ -302,6 +319,7 @@ class TransferIn(In):
     entity_id: int | None = None  # v1.2.1: recorded on both legs; used in the generated description
     notes: OptStr(4000) = None
     fiscal_year_id: int | None = None
+    request_key: RequestKeyStr = None
 
 
 class VoidIn(In):
@@ -314,6 +332,20 @@ class VoidDateIn(In):
     transaction_date: Date
     fiscal_year_id: int | None = None
     reason: OptStr(500) = None
+
+
+class VoidCheckNumberIn(In):
+    """v1.3 CR-011: correct (clear or change) the check number of a VOID record; the reason is required."""
+    check_number: CheckNumberStr = None
+    reason: Str(500)
+
+
+class CheckAckIn(In):
+    """v1.3 CR-012: confirm that check number(s) are not missing."""
+    bank_account_id: int
+    first_number: Annotated[int, Field(ge=0, le=10**12)]
+    last_number: Annotated[int, Field(ge=0, le=10**12)]
+    note: Str(1000)
 
 
 class NoteIn(In):

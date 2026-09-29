@@ -1,4 +1,4 @@
-# Upgrading a Linux server install (current release: 1.2.1)
+# Upgrading a Linux server install (current release: 1.3.0)
 
 The upgrade replaces only the application binaries. It does **not** modify:
 
@@ -10,12 +10,17 @@ Before switching versions the installer stops the service and copies the whole d
 
 | Upgrade | Database change | Rollback |
 |---|---|---|
+| 1.2.x → 1.3.0 | migration `0005` — **adds** tables `request_key`, `check_number_acknowledgement` and columns on `attachment` (document type, system-generated), `fiscal_year` (approval "no document" mark) and `app_user` (collapsed menu); existing Fiscal Year documents are labelled "Other" | switch binaries **and** restore the pre-upgrade data backup |
+| 1.1.x → 1.3.0 | migrations `0003`–`0005` applied in order automatically | restore the pre-upgrade data backup |
 | 1.2.0 → 1.2.1 | migration `0004` — **adds** four columns to `transaction_allocation` (per-allocation no-attachment flag, reason, who/when); no existing value is changed or removed | switch binaries **and** restore the pre-upgrade data backup (1.2.0 does not know revision 0004) |
 | 1.1.x → 1.2.1 | migrations `0003` + `0004` applied in order automatically | restore the pre-upgrade data backup |
 | 1.1.x → 1.2.0 | migration `0003` — **adds** columns to `register_transaction` (transfer link, no-attachment flag); no existing value is changed or removed | switch binaries **and** restore the pre-upgrade data backup (1.1.x cannot open a 0003 database) |
 | 1.1.0 → 1.1.1 | none | switch binaries only |
 
-Verified during release testing: upgrading a 1.2.0 server with data to 1.2.1 left `config.toml`, the key and all
+Verified during release testing: upgrading a 1.2.1 server with data to 1.3.0 left `config.toml`, the key and all
+attachments byte-for-byte identical, kept every row, applied `0005`, labelled the existing Fiscal Year document "Other"
+and reported the Audit Signoff as the only new closing requirement.
+Earlier: upgrading a 1.2.0 server with data to 1.2.1 left `config.toml`, the key and all
 attachments byte-for-byte identical, kept every row and existing no-attachment marks, and applied `0004`.
 Earlier: upgrading a 1.1.1 server with data left `config.toml`, the encryption key and
 every attachment file byte-for-byte identical, kept all rows, and the audit/entity reports, transfers and
@@ -34,15 +39,17 @@ documentation review worked on the pre-existing data.
    ```
    If you installed on a non-default port, pass the same `--port N` (it only affects the health check; your
    `config.toml` keeps its own port).
-4. Expected output ends with `"version":"1.2.1"` and `Installed.` and names the backup folder
+4. Expected output ends with `"version":"1.3.0"` and `Installed.` and names the backup folder
    (`snapshotting data to /var/backups/fmpoc/<timestamp>`). The Cloudflare tunnel needs no change.
-5. Verify: sign in, open **Reports → Open printable PDF** (title page, FY Review, budgets, one page per
-   transaction with attachments shown), open **Transfer…** in the Register (Entity field), and in a split
-   transaction check the per-allocation "No attachment" boxes.
+5. Verify: sign in, check the collapsible menu («), open a Fiscal Year page (**Fiscal Year documents** section),
+   Register → **Fiscal Year reviews** (missing checks), and Reports → **Fiscal Year Close**.
+6. **After upgrading to 1.3.0:** open each Fiscal Year that is not closed yet. Documents uploaded earlier are listed
+   under *Other documents*; use the drop-down to mark the signoff as **Audit Signoff** and the budget approval as
+   **Approval document** (or tick "No approval document"). Closed years are unaffected.
 
 ## Rollback
 
-Rolling back from 1.2.1 to 1.2.0 or 1.1.x requires restoring the data snapshot taken by the upgrade, because an older release
+Rolling back from 1.3.0 (or 1.2.1) to an earlier release requires restoring the data snapshot taken by the upgrade, because an older release
 cannot open a database migrated by a newer one. **Anything entered after the upgrade is lost**, so export anything you need first.
 
 ```bash

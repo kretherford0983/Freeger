@@ -40,7 +40,10 @@ Budget User / Register User) and Auditors under **Users**.
 Since 1.2: **Reports** (printable End of Year Audit PDF — title, FY review, budgets, then one page per transaction
 with its attachments reproduced at page width; Entity activity report with CSV), **Transfer…** between register
 accounts (with Entity), a searchable entity picker, "no attachment will be provided" flags on transactions and split
-allocations, and a Fiscal Year **documentation review** (see CHANGELOG.md; current version 1.2.1).
+allocations, and a Fiscal Year **documentation review**.
+Since 1.3: typed Fiscal Year documents (Approval / Audit Signoff), a **Fiscal Year Close report**, attachments in
+the transaction form, duplicate and check-number protection, a **missing check** review, and a fixed, collapsible
+menu with a pinned register header (see CHANGELOG.md and docs/user-guide-v1.3.md; current version 1.3.0).
 
 Useful options: `--mode server --host 0.0.0.0 --port 8765 --data-dir DIR --no-browser` (see configuration docs).
 

@@ -36,7 +36,7 @@ def me_payload(ctx: Ctx) -> dict:
     u = ctx.user
     return {"id": u.id, "username": u.username, "email": u.email, "display_name": u.display_name,
             "security_domain": u.security_domain, "roles": sorted(ctx.roles), "permissions": sorted(ctx.perms),
-            "theme": u.theme, "csrf_token": ctx.session.csrf_token}
+            "theme": u.theme, "nav_collapsed": bool(u.nav_collapsed), "csrf_token": ctx.session.csrf_token}
 
 
 @router.post("/auth/login")
@@ -71,6 +71,9 @@ def change_password(body: ChangePasswordIn, db: Session = Depends(get_db), ctx: 
 
 @router.put("/me/preferences")
 def preferences(body: PreferencesIn, db: Session = Depends(get_db), ctx: Ctx = Depends(auth_ctx)):
-    ctx.user.theme = body.theme  # persisted per user (BR-UI-THEME-002)
+    if body.theme is not None:
+        ctx.user.theme = body.theme  # persisted per user (BR-UI-THEME-002)
+    if body.nav_collapsed is not None:
+        ctx.user.nav_collapsed = body.nav_collapsed  # v1.3 CR-014
     db.commit()
-    return {"theme": ctx.user.theme}
+    return {"theme": ctx.user.theme, "nav_collapsed": bool(ctx.user.nav_collapsed)}

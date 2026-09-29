@@ -1,5 +1,39 @@
 # Changelog
 
+## 1.3.0 — 2026-09-29
+Change requests CR-007 … CR-015 (decisions recorded in docs/implementation-notes.md §1a):
+- **CR-007 Fiscal Year document types.** Fiscal Year documents are *Approval document*, *Audit Signoff* or *Other*.
+  Approving a Fiscal Year needs an Approval document — or the "No approval document" mark (strong warning, optional
+  reason), which is then a Fiscal Year review warning. Closing needs an Audit Signoff (an "other" document no longer
+  counts) and an Approval document unless the mark is set. Budget Managers can change a document's type while the
+  year is open (audited); uploading an Approval document clears the mark automatically.
+- **CR-008 Fiscal Year Close report.** New PDF on the Reports page: the audit report with the Fiscal Year documents
+  placed after the Fiscal Year review and before the budgets and transactions. A copy is generated automatically when
+  the year is closed and kept as a permanent, system-generated Fiscal Year document (if it cannot be produced the
+  closing is not performed). The End of Year Audit report no longer includes the Fiscal Year documents.
+- **CR-009** Split-allocation attachment lists and PDF captions are labelled "<Entity> - <Budget>"
+  (e.g. "Bob Smith - 4000 Donations"; the transaction's entity is used when the allocation has none).
+- **CR-010** Files can be attached while entering or editing a transaction — for the transaction and for each split
+  allocation. They upload right after saving; any file that fails is named and can be added again from the register.
+- **CR-011 Duplicate protection.** Every form is locked with "Saving…" while it saves; each create form sends a
+  one-time request key so a repeated submit returns the record already created; a *possible duplicate* confirmation
+  appears for a transaction with the same account, date, type, amount and entity. A check number can be used only once
+  per account — voided checks keep their number. A wrongly entered number on a VOID record is fixed with
+  **Correct check number…** (clear or change, reason required, audited, noted on the record).
+- **CR-012 Missing check review.** Register → Fiscal Year reviews lists gaps in each account's check sequence (from
+  the lowest to the highest recorded number; VOID records count as recorded). Resolve by entering the transaction,
+  recording a zero-dollar VOID for the number, or "Confirm not missing" with a note. Gaps are a closing warning only.
+  Check numbers repeated before 1.3 are listed for clean-up.
+- **CR-013** The top bar and left navigation stay in place; only the page content scrolls.
+- **CR-014** The left navigation collapses to icons («/»); the choice is remembered per user.
+- **CR-015** The register header (title, account, buttons, filters, balances) and the column headings stay on screen
+  while scrolling (normal scrolling on very small windows).
+
+Upgrade notes: database migration `0005` is additive (new tables `request_key`, `check_number_acknowledgement`; new
+columns on `attachment`, `fiscal_year`, `app_user`). Existing Fiscal Year documents become "Other": before closing an
+open Fiscal Year, mark its signoff document as **Audit Signoff** (and its approval document as **Approval**).
+`config.toml`, the key and attachments are not touched. See docs/upgrade.md.
+
 ## 1.2.1 — 2026-09-29
 Corrections requested by the product owner after reviewing 1.2.0:
 - **CR-002 — End of Year Audit PDF layout.** Page 1 is a title page; page 2 is the *Fiscal Year Review*

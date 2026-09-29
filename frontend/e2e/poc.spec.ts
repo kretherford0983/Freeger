@@ -364,3 +364,155 @@ test("CR-002 / CR-005: reports page, audit PDF and entity report; documentation 
   await expect(splitRow).toContainText("1 of 2 allocations undocumented");
   await expect(page.getByText(/transaction\(s\) are marked 'no attachment will be provided'/)).toBeVisible();
 });
+
+// ---------------------------------------------------------------- v1.3 enhancements
+const PDF = Buffer.from("%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[]/Count 0>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n");
+
+async function pickTravel(dlg: any, i = 1) {
+  await dlg.getByLabel(`Allocation ${i} Fiscal Year`).selectOption({ label: "FY2027 — Draft" });
+  const sel = dlg.getByLabel(`Allocation ${i} Budget`);
+  await sel.selectOption((await sel.locator("option", { hasText: "1000-01 Travel" }).getAttribute("value"))!);
+}
+
+test("CR-011 / CR-010: double-click saves once, files attach in the form, check numbers are unique", async ({ page }) => {
+  await login(page, "ru1", "Brand-New-Pass-99");
+  await page.getByRole("link", { name: "Register" }).click();
+  await page.getByRole("button", { name: "New transaction" }).click();
+  const t = page.getByRole("dialog", { name: /New transaction/ });
+  await t.getByLabel("Transaction date").fill("2026-11-10");
+  await t.getByLabel("Check #").fill("7001");
+  await pickTravel(t);
+  await t.getByLabel("Allocation 1 Amount").fill("12.34");
+  await t.getByLabel("Transaction attachments").setInputFiles({ name: "receipt-7001.pdf", mimeType: "application/pdf", buffer: PDF });
+  await expect(t).toContainText("receipt-7001.pdf");
+  await t.getByRole("button", { name: "Save" }).dblclick();
+  await expect(t).toHaveCount(0);
+  await expect(page.getByRole("row", { name: /2026-11-10/ })).toHaveCount(1);
+  await expect(page.getByRole("row", { name: /2026-11-10/ })).toContainText("📎1");
+  // the same check number cannot be used twice in the account
+  await page.getByRole("button", { name: "New transaction" }).click();
+  const t2 = page.getByRole("dialog", { name: /New transaction/ });
+  await t2.getByLabel("Transaction date").fill("2026-11-11");
+  await t2.getByLabel("Check #").fill("7001");
+  await pickTravel(t2);
+  await t2.getByLabel("Allocation 1 Amount").fill("5.00");
+  await t2.getByRole("button", { name: "Save" }).click();
+  await expect(t2.getByRole("alert")).toContainText("Check number 7001 is already used");
+  await t2.getByRole("button", { name: "Cancel" }).click();
+});
+
+test("CR-012: missing checks are listed in the Fiscal Year reviews and can be resolved", async ({ page }) => {
+  await login(page, "ru1", "Brand-New-Pass-99");
+  const post = await apiAs(page);
+  const opts = await (await page.request.get("/api/budgets/selectable?fiscal_year_id=1&transaction_type=WITHDRAWAL")).json();
+  const travel = opts.find((o: any) => o.label === "1000-01 Travel").id;
+  expect((await post("/api/transactions", { bank_account_id: 1, transaction_type: "WITHDRAWAL", transaction_date: "2026-11-12",
+    check_number: "7003", allocations: [{ budget_id: travel, amount: "3.00" }] })).status()).toBe(201);
+  await page.getByRole("link", { name: "Register" }).click();
+  await page.getByRole("button", { name: "Fiscal Year reviews" }).click();
+  const sec = page.locator(".missing-checks");
+  const row = sec.getByRole("row", { name: /^7002/ });
+  await expect(row).toContainText("#7001");
+  await expect(row).toContainText("#7003");
+  await row.getByRole("button", { name: "Enter transaction" }).click();
+  const t = page.getByRole("dialog", { name: /New transaction/ });
+  await expect(t.getByLabel("Check #")).toHaveValue("7002");
+  await t.getByRole("button", { name: "Cancel" }).click();
+  await row.getByRole("button", { name: "Confirm not missing…" }).click();
+  const d = page.getByRole("dialog", { name: /Confirm check #7002 not missing/ });
+  await d.getByLabel("Note (required)").fill("Torn out of the checkbook and destroyed");
+  await d.getByRole("button", { name: "Confirm not missing" }).click();
+  await expect(d).toHaveCount(0);
+  await expect(sec.getByRole("row", { name: /^7002/ })).toHaveCount(0);
+});
+
+test("CR-007 / CR-008: Fiscal Year document types, approval rules and the Close report", async ({ page }) => {
+  await login(page, "bm1");
+  const post = await apiAs(page);
+  const r = await post("/api/fiscal-years", { identifier: "2031", start_date: "2030-07-01", end_date: "2031-06-30", confirmations: ["FY_GAP"] });
+  expect(r.status()).toBe(201);
+  const fy = await r.json();
+  await page.goto(`/fiscal-years/${fy.id}`);
+  await page.getByRole("button", { name: "Approve…" }).click();
+  let dlg = page.getByRole("dialog", { name: /Approve FY2031/ });
+  await expect(dlg).toContainText("Attach the Approval document");
+  await dlg.getByLabel("I understand approval cannot be reversed.").check();
+  await expect(dlg.getByRole("button", { name: "Approve" })).toBeDisabled();
+  await dlg.getByRole("button", { name: "Cancel" }).click();
+  // "no approval document" needs a strong confirmation
+  await page.getByLabel(/No approval document — this organization/).click();
+  const mark = page.getByRole("dialog", { name: "No approval document?" });
+  await expect(mark).toContainText("The budget approval should be documented.");
+  await mark.getByLabel("Reason (optional)").fill("Approved verbally at the annual meeting");
+  await mark.getByLabel(/I understand and confirm/).check();
+  await mark.getByRole("button", { name: "Mark as no approval document" }).click();
+  await expect(page.locator(".fy-docs")).toContainText("Approved verbally at the annual meeting");
+  // uploading an approval document removes the mark
+  await page.getByLabel(/Add approval document/).setInputFiles({ name: "board-minutes.pdf", mimeType: "application/pdf", buffer: PDF });
+  await expect(page.locator(".fy-docs")).toContainText("board-minutes.pdf");
+  await expect(page.getByLabel(/No approval document — this organization/)).toHaveCount(0);
+  await page.getByRole("button", { name: "Approve…" }).click();
+  dlg = page.getByRole("dialog", { name: /Approve FY2031/ });
+  await dlg.getByLabel("I understand approval cannot be reversed.").check();
+  await dlg.getByRole("button", { name: "Approve" }).click();
+  await expect(page.getByRole("heading", { name: /FY2031/, level: 1 })).toContainText("Approved");
+  // an "other" document can be re-labelled as the Audit Signoff
+  await page.getByLabel(/Add other document/).setInputFiles({ name: "auditor-letter.pdf", mimeType: "application/pdf", buffer: PDF });
+  await page.getByLabel("Document type of auditor-letter.pdf").selectOption("AUDIT_SIGNOFF");
+  const signoff = page.locator(".fy-docs section.attachments", { has: page.getByRole("heading", { name: /Audit Signoff/ }) });
+  await expect(signoff).toContainText("auditor-letter.pdf");
+  const readiness = page.locator("section.card", { has: page.getByRole("heading", { name: "Closure readiness" }) });
+  await expect(readiness).not.toContainText("An Audit Signoff document is required");
+  await page.locator(".fy-docs").evaluate((el) => el.scrollIntoView({ block: "start" }));
+  await page.screenshot({ path: "e2e-screenshots/light-fy-documents.png" });
+  // Close report on the Reports page
+  await page.getByRole("link", { name: "Reports" }).click();
+  await page.getByRole("tab", { name: "Fiscal Year Close" }).click();
+  await page.getByLabel("Close report Fiscal Year").selectOption({ label: "FY2031 — Approved" });
+  const href = await page.getByRole("link", { name: "Open Close report PDF" }).getAttribute("href");
+  expect(href).toContain(`/api/reports/fy-close?fiscal_year_id=${fy.id}`);
+  const pdf = await page.request.get(href!);
+  expect(pdf.status()).toBe(200);
+  expect((await pdf.body()).subarray(0, 5).toString()).toBe("%PDF-");
+});
+
+test("CR-013 / CR-014 / CR-015: fixed navigation, collapsible menu and pinned register header", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await login(page, "ru1", "Brand-New-Pass-99");
+  const post = await apiAs(page);
+  const opts = await (await page.request.get("/api/budgets/selectable?fiscal_year_id=1&transaction_type=WITHDRAWAL")).json();
+  const travel = opts.find((o: any) => o.label === "1000-01 Travel").id;
+  for (let i = 0; i < 30; i++) {
+    const res = await post("/api/transactions", { bank_account_id: 1, transaction_type: "WITHDRAWAL", transaction_date: "2026-12-01",
+      allocations: [{ budget_id: travel, amount: `1.${String(i).padStart(2, "0")}`, description: `Scroll ${i}` }] });
+    expect(res.status()).toBe(201);
+  }
+  await page.getByRole("link", { name: "Register" }).click();
+  await expect(page.getByRole("row", { name: /Scroll 29/ })).toBeVisible();
+  await page.locator("main.content").evaluate((el) => { el.scrollTop = el.scrollHeight; });
+  await page.waitForTimeout(200);
+  // top bar and navigation did not move; register header and column headings are still on screen
+  expect((await page.locator("header.topbar").boundingBox())!.y).toBe(0);
+  expect((await page.getByRole("link", { name: "Dashboard" }).boundingBox())!.y).toBeLessThan(150);
+  const h1 = (await page.getByRole("heading", { name: "Register", level: 1 }).boundingBox())!;
+  expect(h1.y).toBeGreaterThan(40);
+  expect(h1.y).toBeLessThan(140);
+  await expect(page.getByRole("button", { name: "New transaction" })).toBeInViewport();
+  await expect(page.getByText("Current balance")).toBeInViewport();
+  await expect(page.getByLabel("Search")).toBeInViewport();
+  await expect(page.locator("table.register thead th", { hasText: "Withdrawal" })).toBeInViewport();
+  await expect(page.getByRole("row", { name: /Scroll 0\b/ })).not.toBeInViewport();
+  await page.screenshot({ path: "e2e-screenshots/light-register-scrolled.png" });
+  // collapsible navigation: icons only, current page still highlighted, remembered after reload
+  await page.getByRole("button", { name: "Collapse navigation" }).click();
+  const nav = page.getByRole("navigation", { name: "Main navigation" });
+  await expect.poll(async () => (await nav.boundingBox())!.width).toBeLessThan(70);
+  await expect(nav.locator(".nav-label").first()).toBeHidden();
+  await expect(nav.getByRole("link", { name: "Register" })).toHaveAttribute("aria-current", "page");
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Expand navigation" })).toBeVisible();
+  expect((await page.locator("header.topbar").boundingBox())!.width).toBe(1280);
+  await page.screenshot({ path: "e2e-screenshots/light-register-collapsed.png" });
+  await page.getByRole("button", { name: "Expand navigation" }).click();
+  await expect(nav.getByText("Register", { exact: true })).toBeVisible();
+});

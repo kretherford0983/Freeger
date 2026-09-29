@@ -10,8 +10,9 @@ from sqlalchemy.orm import Session
 from ..deps import Ctx, get_db, require
 from ..errors import AppError
 from ..models import BankAccount, FiscalYear, FiscalYearReview, RegisterTransaction, TransactionAllocation
-from ..schemas import (NoteIn, ReviewResolveIn, TransactionCreateIn, TransactionUpdateIn, TransferIn, VoidDateIn,
-                       VoidIn)
+from ..schemas import (CheckAckIn, NoteIn, ReviewResolveIn, TransactionCreateIn, TransactionUpdateIn, TransferIn,
+                       VoidCheckNumberIn, VoidDateIn, VoidIn)
+from ..services import idempotency
 from ..services import register as svc
 from ..services.common import get_scoped
 
@@ -56,7 +57,11 @@ def get_txn(txn_id: int, db: Session = Depends(get_db), ctx: Ctx = Depends(requi
 
 @router.post("/transactions", status_code=201)
 def create_txn(body: TransactionCreateIn, db: Session = Depends(get_db), ctx: Ctx = Depends(require("transaction.manage"))):
+    replay = idempotency.claim(db, ctx, body.request_key, "transaction")
+    if replay:  # v1.3 CR-011: repeated submit of the same form - return the transaction already created
+        return svc.out(db, svc.get(db, ctx, replay[0]))
     t = svc.create(db, ctx, body)
+    idempotency.complete(db, ctx, body.request_key, [t.id])
     db.commit()
     return svc.out(db, t)
 
@@ -64,7 +69,11 @@ def create_txn(body: TransactionCreateIn, db: Session = Depends(get_db), ctx: Ct
 @router.post("/transfers", status_code=201)
 def create_transfer(body: TransferIn, db: Session = Depends(get_db), ctx: Ctx = Depends(require("transaction.manage"))):
     from ..services import transfers
+    replay = idempotency.claim(db, ctx, body.request_key, "transfer")
+    if replay:
+        return {"withdrawal": svc.out(db, svc.get(db, ctx, replay[0])), "deposit": svc.out(db, svc.get(db, ctx, replay[1]))}
     legs = transfers.create(db, ctx, body)
+    idempotency.complete(db, ctx, body.request_key, [legs[0].id, legs[1].id])
     db.commit()
     return {"withdrawal": svc.out(db, legs[0]), "deposit": svc.out(db, legs[1])}
 
@@ -92,11 +101,38 @@ def correct_void_date(txn_id: int, body: VoidDateIn, db: Session = Depends(get_d
     return svc.out(db, t)
 
 
+@router.post("/transactions/{txn_id}/void-check-number")
+def correct_void_check_number(txn_id: int, body: VoidCheckNumberIn, db: Session = Depends(get_db),
+                              ctx: Ctx = Depends(require("transaction.manage"))):
+    t = svc.correct_void_check_number(db, ctx, svc.get(db, ctx, txn_id), body.check_number, body.reason)
+    db.commit()
+    return svc.out(db, t)
+
+
 @router.post("/transactions/{txn_id}/notes")
 def add_note(txn_id: int, body: NoteIn, db: Session = Depends(get_db), ctx: Ctx = Depends(require("transaction.manage"))):
     t = svc.add_note(db, ctx, svc.get(db, ctx, txn_id), body.note)
     db.commit()
     return svc.out(db, t)
+
+
+@router.get("/check-review")
+def check_review(bank_account_id: int | None = None, db: Session = Depends(get_db),
+                 ctx: Ctx = Depends(require("financial.view"))):
+    """v1.3 CR-012: possibly missing check numbers and (pre-v1.3) repeated check numbers."""
+    from ..services import checks
+    if bank_account_id is not None:
+        get_scoped(db, BankAccount, bank_account_id, ctx, "Bank Account")
+    return checks.review(db, ctx.workspace_id, bank_account_id)
+
+
+@router.post("/check-review/acknowledge", status_code=201)
+def acknowledge_checks(body: CheckAckIn, db: Session = Depends(get_db), ctx: Ctx = Depends(require("transaction.manage"))):
+    from ..services import checks
+    a = checks.acknowledge(db, ctx, body.bank_account_id, body.first_number, body.last_number, body.note)
+    db.commit()
+    return {"id": a.id, "bank_account_id": a.bank_account_id, "first_number": a.first_number,
+            "last_number": a.last_number, "note": a.note}
 
 
 @router.get("/fiscal-year-reviews")
