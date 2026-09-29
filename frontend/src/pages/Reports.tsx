@@ -1,0 +1,149 @@
+// v1.2 CR-002: reporting interface.
+import { Fragment, useEffect, useState } from "react";
+import { api, money, qs } from "../api";
+import { EntityPicker, ErrorBox, Field, Loading } from "../components";
+
+export default function Reports() {
+  const [tab, setTab] = useState<"audit" | "entity">("audit");
+  const [fys, setFys] = useState<any[] | null>(null);
+  const [accounts, setAccounts] = useState<any[]>([]);
+  const [err, setErr] = useState<unknown>(null);
+  useEffect(() => {
+    Promise.all([api.get("/api/fiscal-years"), api.get("/api/bank-accounts")]).then(([y, a]) => {
+      setFys(y);
+      setAccounts(a.filter((x: any) => x.register_enabled));
+    }, setErr);
+  }, []);
+  if (!fys) return <><ErrorBox error={err} /><Loading /></>;
+  return (
+    <div>
+      <div className="page-head no-print">
+        <h1>Reports</h1>
+        <div role="tablist" className="row">
+          <button role="tab" aria-selected={tab === "audit"} className={tab === "audit" ? "primary" : ""} onClick={() => setTab("audit")}>End of Year Audit</button>
+          <button role="tab" aria-selected={tab === "entity"} className={tab === "entity" ? "primary" : ""} onClick={() => setTab("entity")}>Entity activity</button>
+        </div>
+      </div>
+      {tab === "audit" ? <AuditReport fys={fys} accounts={accounts} /> : <EntityReport fys={fys} accounts={accounts} />}
+    </div>
+  );
+}
+
+function AuditReport({ fys, accounts }: { fys: any[]; accounts: any[] }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const cur = fys.find((f) => f.start_date <= today && f.end_date >= today) || fys[fys.length - 1];
+  const [f, setF] = useState({ fiscal_year_id: cur ? String(cur.id) : "", bank_account_id: "", include_void: true });
+  const url = (download: boolean) => `/api/reports/audit${qs({ fiscal_year_id: f.fiscal_year_id, bank_account_id: f.bank_account_id, include_void: f.include_void, download: download || null })}`;
+  return (
+    <section className="card">
+      <h2>End of Year Audit report</h2>
+      <p>A printable PDF containing the selected Fiscal Year's budget followed by every transaction in the register for that year with all details, descriptions and notes. Each transaction is <b>immediately followed by its attachments</b> (images and PDF pages), so the printed report keeps every transaction together with its documentation. Fiscal Year supporting documents are appended at the end.</p>
+      <div className="report-options">
+        <Field label="Fiscal Year">
+          <select aria-label="Audit report Fiscal Year" value={f.fiscal_year_id} onChange={(e) => setF({ ...f, fiscal_year_id: e.target.value })}>
+            {fys.map((y) => <option key={y.id} value={y.id}>{y.label}</option>)}
+          </select>
+        </Field>
+        <Field label="Account">
+          <select value={f.bank_account_id} onChange={(e) => setF({ ...f, bank_account_id: e.target.value })}>
+            <option value="">All register accounts</option>
+            {accounts.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
+          </select>
+        </Field>
+        <label className="check"><input type="checkbox" checked={f.include_void} onChange={(e) => setF({ ...f, include_void: e.target.checked })} /> Include VOID transactions</label>
+      </div>
+      <div className="actions left">
+        <a className="button primary" href={url(false)} target="_blank" rel="noopener">Open printable PDF</a>
+        <a className="button" href={url(true)}>Download PDF</a>
+      </div>
+      <p className="hint">Large years with many attachments can take a little while to generate. Generating a report is recorded in the audit log.</p>
+    </section>
+  );
+}
+
+function EntityReport({ fys, accounts }: { fys: any[]; accounts: any[] }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const cur = fys.find((f) => f.start_date <= today && f.end_date >= today) || fys[fys.length - 1];
+  const primary = accounts.find((a) => a.is_primary) || accounts[0];
+  const [f, setF] = useState({ bank_account_id: primary ? String(primary.id) : "", date_from: cur?.start_date || "", date_to: cur?.end_date || "", entity_id: "", details: false });
+  const [entities, setEntities] = useState<any[]>([]);
+  const [data, setData] = useState<any>(null);
+  const [err, setErr] = useState<unknown>(null);
+  const [open, setOpen] = useState<Record<string, boolean>>({});
+  useEffect(() => { api.get("/api/entities?status=all").then(setEntities); }, []);
+  const params = { bank_account_id: f.bank_account_id, date_from: f.date_from, date_to: f.date_to, entity_id: f.entity_id, details: true };
+  const run = async () => {
+    setErr(null);
+    try { setData(await api.get(`/api/reports/entity-activity${qs(params)}`)); } catch (e) { setErr(e); }
+  };
+  const setFy = (id: string) => {
+    const y = fys.find((x) => String(x.id) === id);
+    if (y) setF({ ...f, date_from: y.start_date, date_to: y.end_date });
+  };
+  return (
+    <section className="card">
+      <h2 className="no-print">Entity activity report</h2>
+      <p className="no-print">How much each entity deposited and withdrew in the selected period for the selected account. Split deposits credit each allocation's entity; transfers between accounts are shown separately and excluded from totals.</p>
+      <div className="report-options no-print">
+        <Field label="Account">
+          <select aria-label="Entity report account" value={f.bank_account_id} onChange={(e) => setF({ ...f, bank_account_id: e.target.value })}>
+            <option value="">All register accounts</option>
+            {accounts.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
+          </select>
+        </Field>
+        <Field label="Fiscal Year (sets dates)">
+          <select defaultValue="" onChange={(e) => setFy(e.target.value)}>
+            <option value="">—</option>
+            {fys.map((y) => <option key={y.id} value={y.id}>{y.label}</option>)}
+          </select>
+        </Field>
+        <Field label="From"><input type="date" required value={f.date_from} onChange={(e) => setF({ ...f, date_from: e.target.value })} /></Field>
+        <Field label="To"><input type="date" required value={f.date_to} onChange={(e) => setF({ ...f, date_to: e.target.value })} /></Field>
+        <EntityPicker label="Entity (optional)" entities={entities} value={f.entity_id} onChange={(v) => setF({ ...f, entity_id: v })} placeholder="All entities" />
+        <button className="primary" onClick={run} disabled={!f.date_from || !f.date_to}>Run report</button>
+      </div>
+      <ErrorBox error={err} />
+      {data ? (
+        <div className="entity-report">
+          <h2>Entity activity — {data.account ? data.account.label : "All accounts"}</h2>
+          <p>{data.date_from} to {data.date_to}</p>
+          <div className="actions left no-print">
+            <button onClick={() => window.print()}>Print</button>
+            <a className="button" href={`/api/reports/entity-activity${qs({ ...params, format: "csv" })}`}>Download CSV</a>
+          </div>
+          <table className="table">
+            <thead><tr><th className="no-print" /><th>Entity</th><th>Entity #</th><th className="num">Deposited</th><th className="num"># Dep.</th><th className="num">Withdrew</th><th className="num"># Wdl.</th><th className="num">Net</th></tr></thead>
+            <tbody>
+              {data.rows.length === 0 ? <tr><td colSpan={8} className="muted">No activity in this period.</td></tr> : null}
+              {data.rows.map((r: any) => (
+                <Fragment key={r.key}>
+                  <tr className={r.key === "transfers" ? "muted" : ""}>
+                    <td className="no-print"><button className="small" aria-expanded={!!open[r.key]} aria-label={`Details for ${r.label}`} onClick={() => setOpen({ ...open, [r.key]: !open[r.key] })}>{open[r.key] ? "▾" : "▸"}</button></td>
+                    <td>{r.label}</td><td>{r.entity?.entity_number || ""}</td>
+                    <td className="num">{money(r.deposits)}</td><td className="num">{r.deposit_count}</td>
+                    <td className="num">{money(r.withdrawals)}</td><td className="num">{r.withdrawal_count}</td>
+                    <td className={`num ${Number(r.net) < 0 ? "neg" : ""}`}>{money(r.net)}</td>
+                  </tr>
+                  {open[r.key] ? (
+                    <tr className="detail-row"><td colSpan={8}>
+                      <table className="table compact">
+                        <thead><tr><th>Txn #</th><th>Date</th><th>Account</th><th>Type</th><th>Description</th><th>Invoice #</th><th>Check #</th><th className="num">Amount</th></tr></thead>
+                        <tbody>{r.lines.map((l: any, i: number) => (
+                          <tr key={i}><td>{l.transaction_id}</td><td>{l.transaction_date}</td><td>{l.account}</td><td>{l.type}</td><td>{l.description || ""}</td><td>{l.invoice_number || ""}</td><td>{l.check_number || ""}</td><td className="num">{money(l.amount)}</td></tr>
+                        ))}</tbody>
+                      </table>
+                    </td></tr>
+                  ) : null}
+                </Fragment>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr><th className="no-print" /><th>Total (excluding transfers)</th><th /><th className="num">{money(data.totals.deposits)}</th><th /><th className="num">{money(data.totals.withdrawals)}</th><th /><th className="num">{money(data.totals.net)}</th></tr>
+            </tfoot>
+          </table>
+          <p className="hint">Generated {data.generated_at.replace("T", " ").slice(0, 16)} UTC</p>
+        </div>
+      ) : null}
+    </section>
+  );
+}

@@ -15,6 +15,7 @@ import BankAccounts from "./pages/BankAccounts";
 import Register from "./pages/Register";
 import Entities from "./pages/Entities";
 import Account from "./pages/Account";
+import Reports from "./pages/Reports";
 
 export interface Me {
   id: number;
@@ -101,6 +102,7 @@ function navFor(me: Me) {
     ["/bank-accounts", "Bank Accounts"],
     ["/register", "Register"],
     ["/entities", "Entities"],
+    ["/reports", "Reports"],
   ];
   if (me.security_domain === "ADMINISTRATOR") return [["/", "Dashboard"], ["/users", "Users"], ["/audit-log", "Audit Log"], ["/about", "System/About"]];
   if (me.security_domain === "AUDITOR") return [...fin, ["/users", "Users"], ["/audit-log", "Audit Log"]];
@@ -139,6 +141,7 @@ function Shell({ workspace, warning, onLogout }: { workspace: string; warning: b
   else if (path === "/bank-accounts") page = guard("/bank-accounts", <BankAccounts />);
   else if (path === "/register") page = guard("/register", <Register />);
   else if (path === "/entities") page = guard("/entities", <Entities />);
+  else if (path === "/reports") page = guard("/reports", <Reports />);
   else page = <p>Page not found.</p>;
 
   const roleNames: Record<string, string> = {

@@ -81,6 +81,7 @@ export default function Dashboard() {
         <ul>
           <li>Fiscal Year review items pending: <b>{d.attention.pending_fiscal_year_reviews}</b> {d.attention.pending_fiscal_year_reviews ? <Link to="/register?reviews=1">Review</Link> : null}</li>
           <li>Uncleared transactions: <b>{d.attention.uncleared_transactions}</b></li>
+          {fy ? <li>Documentation review warnings ({fy.display_name}): <b>{d.attention.documentation_warnings}</b> {d.attention.documentation_warnings ? <Link to={`/fiscal-years/${fy.id}`}>Review</Link> : null}</li> : null}
         </ul>
       </section>
     </div>

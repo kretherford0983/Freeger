@@ -62,6 +62,13 @@ def closure_check(fy_id: int, db: Session = Depends(get_db), ctx: Ctx = Depends(
     return svc.closure_check(db, get_scoped(db, FiscalYear, fy_id, ctx, "Fiscal Year"))
 
 
+@router.get("/{fy_id}/documentation-review")
+def documentation_review(fy_id: int, db: Session = Depends(get_db), ctx: Ctx = Depends(require("financial.view"))):
+    from ..services import documentation
+    fy = get_scoped(db, FiscalYear, fy_id, ctx, "Fiscal Year")
+    return {"fiscal_year_id": fy.id, "items": documentation.review(db, fy)}
+
+
 @router.post("/{fy_id}/approve")
 def approve(fy_id: int, body: FiscalYearApproveIn, db: Session = Depends(get_db),
             ctx: Ctx = Depends(require("fiscal_year.manage"))):

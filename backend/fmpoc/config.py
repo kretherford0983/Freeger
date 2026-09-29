@@ -13,7 +13,7 @@ from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 
 APP_NAME = "FinancialManagementPOC"
-VERSION = "1.1.1"
+VERSION = "1.2.0"
 
 
 def default_data_dir() -> Path:

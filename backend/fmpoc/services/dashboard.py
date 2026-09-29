@@ -12,6 +12,7 @@ from ..money import fmt
 from . import bank_accounts as bank
 from . import budgets as bsvc
 from .common import active_allocation_totals, covering_fiscal_years, fy_brief
+from .documentation import review as documentation_review
 from .fiscal_years import list_all
 
 
@@ -51,7 +52,8 @@ def financial(db: Session, ctx) -> dict:
         "budget_summary": summary,
         "bank_accounts": [{"id": a["id"], "label": a["label"], "current_balance": a["current_balance"],
                            "is_primary": a["is_primary"], "register_enabled": a["register_enabled"]} for a in accounts],
-        "attention": {"pending_fiscal_year_reviews": _pending_reviews(db, ws), "uncleared_transactions": uncleared},
+        "attention": {"pending_fiscal_year_reviews": _pending_reviews(db, ws), "uncleared_transactions": uncleared,
+                      "documentation_warnings": len(documentation_review(db, fy)) if fy is not None else 0},
     }
 
 

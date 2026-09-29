@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import React, { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { api, ApiError, type ApiWarning, qs } from "./api";
 
@@ -275,5 +275,67 @@ export function Attachments({ ownerType, ownerId, canUpload, canRemove, title = 
         </Modal>
       ) : null}
     </section>
+  );
+}
+
+// ------------------------------------------------------------------ searchable entity picker (v1.2, CR-006)
+/** Accessible combobox: type to filter entities by name or Entity Number; arrow keys + Enter to choose. */
+export function EntityPicker({ label, entities, value, onChange, placeholder = "Type to search…", extraOption }: {
+  label: string;
+  entities: any[];
+  value: string;
+  onChange: (id: string) => void;
+  placeholder?: string;
+  extraOption?: { id: string; label: string } | null;
+}) {
+  const all = extraOption && !entities.some((e) => String(e.id) === extraOption.id)
+    ? [...entities, { id: extraOption.id, display_name: extraOption.label, entity_number: "" }] : entities;
+  const selected = all.find((e) => String(e.id) === value);
+  const counts: Record<string, number> = {};
+  all.forEach((e) => (counts[e.display_name] = (counts[e.display_name] || 0) + 1));
+  const text = (e: any) => (counts[e.display_name] > 1 && e.entity_number ? `${e.display_name} (${e.entity_number})` : e.display_name);
+  const [query, setQuery] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(0);
+  const id = useRef(`ep-${Math.random().toString(36).slice(2)}`).current;
+  const q = (query ?? "").trim().toLowerCase();
+  const matches = all.filter((e) => !q || e.display_name.toLowerCase().includes(q) || (e.entity_number || "").toLowerCase().includes(q)).slice(0, 50);
+  const choose = (e: any | null) => {
+    onChange(e ? String(e.id) : "");
+    setQuery(null);
+    setOpen(false);
+  };
+  const onKey = (ev: React.KeyboardEvent) => {
+    if (ev.key === "ArrowDown") { ev.preventDefault(); setOpen(true); setActive((a) => Math.min(a + 1, matches.length)); }
+    else if (ev.key === "ArrowUp") { ev.preventDefault(); setActive((a) => Math.max(a - 1, 0)); }
+    else if (ev.key === "Enter" && open) { ev.preventDefault(); choose(active === 0 ? null : matches[active - 1]); }
+    else if (ev.key === "Escape") { setOpen(false); setQuery(null); }
+  };
+  return (
+    <div className="field entity-picker">
+      <label className="field-inner" htmlFor={id}>
+        <span className="field-label">{label}</span>
+      </label>
+      <input id={id} role="combobox" aria-expanded={open} aria-controls={`${id}-list`} aria-autocomplete="list"
+             autoComplete="off" placeholder={placeholder}
+             value={query ?? (selected ? text(selected) : "")}
+             onChange={(e) => { setQuery(e.target.value); setOpen(true); setActive(1); }}
+             onFocus={(e) => { setOpen(true); e.target.select(); }}
+             onBlur={() => setTimeout(() => { setOpen(false); setQuery(null); }, 150)}
+             onKeyDown={onKey} />
+      {open ? (
+        <ul className="picker-list" role="listbox" id={`${id}-list`}>
+          <li role="option" aria-selected={active === 0} className={active === 0 ? "active" : ""}
+              onMouseDown={(e) => { e.preventDefault(); choose(null); }}>— none —</li>
+          {matches.map((e, i) => (
+            <li key={e.id} role="option" aria-selected={active === i + 1} className={active === i + 1 ? "active" : ""}
+                onMouseDown={(ev) => { ev.preventDefault(); choose(e); }}>
+              {e.display_name} <span className="muted">{e.entity_number}</span>
+            </li>
+          ))}
+          {matches.length === 0 ? <li className="muted" aria-disabled="true">No matching entities</li> : null}
+        </ul>
+      ) : null}
+    </div>
   );
 }

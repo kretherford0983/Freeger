@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "../api";
+import { api, money } from "../api";
 import { Attachments, ErrorBox, FyStatus, Loading, Modal } from "../components";
 import { useMe } from "../App";
 import { Link } from "../router";
@@ -40,10 +40,40 @@ export default function FiscalYearDetail({ id }: { id: number }) {
       <BudgetSection title="Income" rows={b.income} summary={b.income_summary} fyStatus="CLOSED" showOutside={showOutside} />
       <BudgetSection title="Expense" rows={b.expense} summary={b.expense_summary} fyStatus="CLOSED" showOutside={showOutside} />
       {d.status !== "CLOSED" ? <Closure c={d.closure} /> : null}
+      <DocumentationReview fyId={d.id} />
       <Attachments ownerType="fiscal_year" ownerId={d.id} canUpload={manage} canRemove={manage && d.status !== "CLOSED"} title="Supporting documentation" />
       {dlg === "approve" ? <Approve fy={d} onClose={() => setDlg(null)} onDone={() => { setDlg(null); load(); }} /> : null}
       {dlg === "close" ? <Close fy={d} onClose={() => setDlg(null)} onDone={() => { setDlg(null); load(); }} /> : null}
     </div>
+  );
+}
+
+// v1.2 CR-005: documentation review (warnings only - never blocks approval or closure)
+function DocumentationReview({ fyId }: { fyId: number }) {
+  const [items, setItems] = useState<any[] | null>(null);
+  useEffect(() => { api.get(`/api/fiscal-years/${fyId}/documentation-review`).then((r) => setItems(r.items), () => setItems([])); }, [fyId]);
+  if (!items) return null;
+  return (
+    <section className="card">
+      <h3>Documentation review <span className="muted">(warnings – not a closure blocker)</span></h3>
+      {items.length === 0 ? <p className="ok-text">All transactions affecting this Fiscal Year have supporting attachments.</p> : (
+        <table className="table compact">
+          <thead><tr><th>Txn #</th><th>Date</th><th>Account</th><th>Type</th><th>Entity / description</th><th className="num">Amount</th><th>Warning</th></tr></thead>
+          <tbody>
+            {items.map((i) => (
+              <tr key={i.transaction_id}>
+                <td>{i.transaction_id}</td><td>{i.transaction_date}</td><td>{i.bank_account.label}</td>
+                <td>{i.is_transfer ? "Transfer" : i.transaction_type.charAt(0) + i.transaction_type.slice(1).toLowerCase()}{i.is_split ? " (split)" : ""}</td>
+                <td>{i.entity?.display_name || i.description || ""}</td><td className="num">{money(i.total)}</td>
+                <td>{i.category === "NO_ATTACHMENT_MARKED"
+                  ? <><span className="badge grey">No attachment</span> {i.no_attachment_reason || ""}</>
+                  : <><span className="badge yellow">Missing attachment</span>{i.is_split ? ` ${i.allocations_without_attachment.length} of ${i.allocation_count} allocations undocumented` : ""}</>}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
   );
 }
 

@@ -141,7 +141,9 @@ test("AC-FY-VIS-006 / AC-REG-001 / AC-SEC-011: Register User allocates to Draft 
   await page.getByRole("button", { name: "New transaction" }).click();
   const t = page.getByRole("dialog");
   await t.getByLabel("Transaction date").fill("2026-08-15");
-  await t.getByLabel("Payee (entity)").selectOption({ label: payload });
+  await t.getByRole("combobox", { name: "Payee (entity)" }).fill("Vendor");
+  await page.getByRole("option", { name: /Vendor/ }).click();
+  await expect(t.getByRole("combobox", { name: "Payee (entity)" })).toHaveValue(payload);
   await t.getByLabel("Allocation 1 Fiscal Year").selectOption({ label: "FY2027 — Draft" });
   await t.getByLabel("Allocation 1 Budget").selectOption({ label: "1000-01 Travel (remaining $25,000.00)" });
   await t.getByLabel("Allocation 1 Amount").fill("250.00");
@@ -207,7 +209,7 @@ test("AC-UI-THEME-003: core screens render in light and dark (screenshots)", asy
     const cur = await page.locator("html").getAttribute("data-theme");
     if (cur !== theme) await page.getByRole("button", { name: /Switch to/ }).click();
     await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
-    for (const [path, name] of [["/", "dashboard"], ["/fiscal-years/1", "fy-detail"], ["/budgets", "budgets"], ["/register", "register"], ["/bank-accounts", "bank-accounts"], ["/entities", "entities"]]) {
+    for (const [path, name] of [["/", "dashboard"], ["/fiscal-years/1", "fy-detail"], ["/budgets", "budgets"], ["/register", "register"], ["/bank-accounts", "bank-accounts"], ["/entities", "entities"], ["/reports", "reports"]]) {
       await page.goto(path);
       await page.waitForLoadState("networkidle");
       await page.screenshot({ path: `e2e-screenshots/${theme}-${name}.png`, fullPage: true });
@@ -235,4 +237,96 @@ test("CR-001: correct the date of a zero-dollar VOID record in the UI", async ({
   const fixed = page.getByRole("row", { name: /2026-09-20/ }).first();
   await expect(fixed).toContainText("VOID");
   await expect(fixed).toContainText("1001");
+});
+
+
+// ---------------------------------------------------------------- v1.2 enhancements
+async function apiAs(page: Page) {
+  const me = await (await page.request.get("/api/auth/me")).json();
+  return (url: string, data: any) => page.request.post(url, { headers: { "X-CSRF-Token": me.csrf_token }, data });
+}
+
+test("CR-006 / CR-004: searchable entity picker and 'no attachment' checkbox with warning", async ({ page }) => {
+  await login(page, "ru1", "Brand-New-Pass-99");
+  const post = await apiAs(page);
+  for (const n of ["Alpha Supplies", "Beta Services", "Gamma Bank Interest"]) {
+    expect((await post("/api/entities", { entity_type: "ORGANIZATION", organization_name: n, confirmations: ["DUPLICATE_ENTITY"] })).status()).toBe(201);
+  }
+  await page.getByRole("link", { name: "Register" }).click();
+  await page.getByRole("button", { name: "New transaction" }).click();
+  const t = page.getByRole("dialog", { name: /New transaction/ });
+  await t.getByLabel("Transaction date").fill("2026-10-31");
+  const picker = t.getByRole("combobox", { name: "Payee (entity)" });
+  await picker.fill("gam");
+  const list = page.getByRole("listbox");
+  await expect(list.getByRole("option", { name: /Gamma Bank Interest/ })).toBeVisible();
+  await expect(list.getByRole("option", { name: /Alpha Supplies/ })).toHaveCount(0);
+  await picker.press("ArrowDown");
+  await picker.press("Enter");
+  await expect(picker).toHaveValue("Gamma Bank Interest");
+  await t.getByLabel("Allocation 1 Fiscal Year").selectOption({ label: "FY2027 — Draft" });
+  await t.getByLabel("Allocation 1 Budget").selectOption({ label: "1000-01 Travel (remaining $25,000.00)" });
+  await t.getByLabel("Allocation 1 Amount").fill("0.87");
+  await t.getByLabel("No attachment will be provided").click(); // warning first; box ticks only after confirming
+  await expect(t.getByLabel("No attachment will be provided")).not.toBeChecked();
+  const warn = page.getByRole("dialog", { name: "No attachment?" });
+  await expect(warn).toContainText("should have supporting documentation");
+  await warn.getByRole("button", { name: "Mark as no attachment" }).click();
+  await expect(t.getByLabel("No attachment will be provided")).toBeChecked();
+  await t.getByLabel("Reason no attachment is available (optional)").fill("Monthly bank service fee - auto debit");
+  await t.getByRole("button", { name: "Save" }).click();
+  const row = page.getByRole("row", { name: /2026-10-31/ }).first();
+  await expect(row).toContainText("No attachment");
+  await expect(row).toContainText("Gamma Bank Interest");
+});
+
+test("CR-003: transfer between two register accounts from the register", async ({ page }) => {
+  await login(page, "bm1");
+  const bm = await apiAs(page);
+  const fi = await (await page.request.get("/api/entities?financial_institution=true")).json();
+  expect((await bm("/api/bank-accounts", { account_name: "Savings", financial_institution_entity_id: fi[0].id, account_type: "SAVINGS",
+    account_number: "555566667777", opening_balance: "0.00", opening_balance_date: "2026-07-01" })).status()).toBe(201);
+  await logout(page);
+  await login(page, "ru1", "Brand-New-Pass-99");
+  await page.getByRole("link", { name: "Register" }).click();
+  await page.getByRole("button", { name: "Transfer…" }).click();
+  const d = page.getByRole("dialog", { name: "Transfer between accounts" });
+  await d.getByLabel("To account").selectOption({ label: "Savings - ******7777" });
+  await d.getByLabel("Amount").fill("300.00");
+  await d.getByLabel("Transaction date").fill("2026-11-01");
+  await d.getByLabel("Clear date (blank = uncleared)").fill("2026-11-02");
+  await expect(d).toContainText("Transfer to ******7777");
+  await d.getByRole("button", { name: "Record transfer" }).click();
+  await expect(d).toHaveCount(0);
+  const row = page.getByRole("row", { name: /2026-11-01/ }).first();
+  await expect(row).toContainText("Transfer");
+  await expect(row).toContainText("Transfer to ******7777 for E2E Org");
+  await expect(row).toContainText("$300.00");
+  await page.getByLabel("Register bank account").selectOption({ label: "Savings - ******7777" });
+  const dep = page.getByRole("row", { name: /2026-11-01/ }).first();
+  await expect(dep).toContainText("Transfer from ******9012 for E2E Org");
+  await expect(dep).toContainText("$300.00");
+});
+
+test("CR-002 / CR-005: reports page, audit PDF and entity report; documentation review warnings", async ({ page }) => {
+  await login(page, "bm1");
+  await page.getByRole("link", { name: "Reports" }).click();
+  const open = page.getByRole("link", { name: "Open printable PDF" });
+  const href = await open.getAttribute("href");
+  expect(href).toContain("/api/reports/audit?fiscal_year_id=");
+  const pdf = await page.request.get(href!);
+  expect(pdf.status()).toBe(200);
+  expect(pdf.headers()["content-type"]).toBe("application/pdf");
+  expect((await pdf.body()).subarray(0, 5).toString()).toBe("%PDF-");
+  await page.getByRole("tab", { name: "Entity activity" }).click();
+  await page.getByLabel("Entity report account").selectOption({ label: "Operating - ******9012" });
+  await page.getByRole("button", { name: "Run report" }).click();
+  await expect(page.getByRole("row", { name: /Gamma Bank Interest/ })).toContainText("$0.87");
+  await expect(page.getByRole("row", { name: /Transfers between accounts/ })).toContainText("$300.00");
+  await expect(page.getByRole("link", { name: "Download CSV" })).toBeVisible();
+  await page.goto("/fiscal-years/1");
+  const review = page.getByRole("heading", { name: /Documentation review/ }).locator("..");
+  await expect(review).toContainText("No attachment");
+  await expect(review).toContainText("Monthly bank service fee - auto debit");
+  await expect(page.getByText(/transaction\(s\) are marked 'no attachment will be provided'/)).toBeVisible();
 });

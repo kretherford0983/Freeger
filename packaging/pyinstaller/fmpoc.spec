@@ -2,7 +2,7 @@
 # Usage (from repo root, after `npm --prefix frontend run build`):
 #   pyinstaller --noconfirm --distpath dist --workpath build/pyinstaller packaging/pyinstaller/fmpoc.spec
 import os
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 ROOT = os.path.abspath(os.path.join(SPECPATH, "..", ".."))
 PKG = os.path.join(ROOT, "backend", "fmpoc")
@@ -10,10 +10,11 @@ PKG = os.path.join(ROOT, "backend", "fmpoc")
 datas = [
     (os.path.join(PKG, "static"), "fmpoc/static"),
     (os.path.join(PKG, "migrations"), "fmpoc/migrations"),
-]
+] + collect_data_files("reportlab")  # fonts used by the audit report
 hidden = (collect_submodules("fmpoc") + collect_submodules("uvicorn") + collect_submodules("alembic")
           + ["sqlalchemy.dialects.sqlite", "argon2", "argon2._password_hasher", "multipart", "python_multipart",
-             "PIL.PngImagePlugin", "PIL.JpegImagePlugin"])
+             "PIL.PngImagePlugin", "PIL.JpegImagePlugin"] + collect_submodules("reportlab")
+          + collect_submodules("pypdf"))
 
 a = Analysis([os.path.join(SPECPATH, "entry.py")], pathex=[os.path.join(ROOT, "backend")], datas=datas,
              hiddenimports=hidden, excludes=["tkinter", "pytest", "PIL.ImageTk", "IPython"], noarchive=False)

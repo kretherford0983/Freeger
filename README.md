@@ -10,7 +10,7 @@ attachments, void lifecycle, immutable audit trail, role separation, and self-co
 | Frontend | React 18 + TypeScript (Vite build, served by FastAPI; no router/UI libraries) |
 | Backend | Python 3.11/3.12, FastAPI, SQLAlchemy 2, Alembic, SQLite |
 | Security | Argon2id, server-side sessions (HttpOnly/SameSite=Strict), CSRF tokens, AES-256-GCM + HMAC fingerprint for account numbers, append-only audit (DB triggers), CSP & security headers |
-| Tests | 114 backend API tests (AC-ID named) + 7 Playwright E2E UI tests (run against source **and** the packaged Linux build) |
+| Tests | 135 backend API tests (AC/CR-ID named) + 11 Playwright E2E UI tests (run against source **and** the packaged Linux builds) |
 
 ## Documentation
 
@@ -37,6 +37,10 @@ The first launch shows the **Initialization Wizard** (workspace name, administra
 confirmation). No default credentials exist. The Administrator then creates Financial users (Budget Manager /
 Budget User / Register User) and Auditors under **Users**.
 
+Since 1.2.0: **Reports** (printable End of Year Audit PDF with attachments after each transaction; Entity activity
+report with CSV), **Transfer…** between register accounts, a searchable entity picker, a "no attachment will be
+provided" flag and a Fiscal Year **documentation review** (see CHANGELOG.md).
+
 Useful options: `--mode server --host 0.0.0.0 --port 8765 --data-dir DIR --no-browser` (see configuration docs).
 
 Frontend development with hot reload: run the backend (`python -m fmpoc --no-browser`) and `npm --prefix frontend run dev`
@@ -45,7 +49,7 @@ Frontend development with hot reload: run the backend (`python -m fmpoc --no-bro
 ## Tests
 
 ```bash
-cd backend && python -m pytest                    # 114 API tests incl. security negative tests
+cd backend && python -m pytest                    # 135 API tests incl. security negative tests
 cd frontend && npx tsc --noEmit -p . && npm run build
 cd frontend && FM_PYTHON=$(which python) npx playwright test                     # E2E vs source
 cd frontend && FM_BUNDLE=../dist/FinancialManagementPOC/FinancialManagementPOC npx playwright test   # E2E vs package

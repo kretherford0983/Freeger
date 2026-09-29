@@ -301,6 +301,7 @@ def tree(db: Session, fy: FiscalYear, include_hidden: bool = False) -> dict:
     for p in (b for b in budgets if b.parent_budget_id is None):
         if p.is_budget_zero:
             budget_zero = _row(p, None, totals, qtotals, outside)
+            budget_zero.update(_budget_zero_flows(db, p.id))  # transfers post both directions to Budget 0
             continue
         kids = by_parent.get(p.id, [])
         explicit = [k for k in kids if not k.is_other]
@@ -339,6 +340,18 @@ def tree(db: Session, fy: FiscalYear, include_hidden: bool = False) -> dict:
         "income_summary": summary(sections["INCOME"]), "expense_summary": summary(sections["EXPENSE"]),
         "budget_zero": budget_zero,
     }
+
+
+def _budget_zero_flows(db: Session, budget_id: int) -> dict:
+    from sqlalchemy import func
+    from ..models import RegisterTransaction
+    rows = db.execute(select(RegisterTransaction.transaction_type, func.coalesce(func.sum(TransactionAllocation.amount_cents), 0))
+                      .join(RegisterTransaction, RegisterTransaction.id == TransactionAllocation.transaction_id)
+                      .where(TransactionAllocation.budget_id == budget_id, TransactionAllocation.removed_at.is_(None),
+                             RegisterTransaction.status == "ACTIVE")
+                      .group_by(RegisterTransaction.transaction_type)).all()
+    d = {k: int(v) for k, v in rows}
+    return {"inflow": fmt(d.get("DEPOSIT", 0)), "outflow": fmt(d.get("WITHDRAWAL", 0))}
 
 
 def _amt(s):

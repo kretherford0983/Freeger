@@ -18,6 +18,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy import false as sa_false
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 NAMING = {
@@ -244,6 +245,13 @@ class RegisterTransaction(Base):
     updated_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"), nullable=True)
     voided_at: Mapped[dt.datetime | None] = mapped_column(DateTime, nullable=True)
     voided_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"), nullable=True)
+    # v1.2 (migration 0003) - linked transfer legs share a group id
+    transfer_group: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    # v1.2 - user explicitly records that no supporting attachment will be provided (e.g. bank interest)
+    no_attachment: Mapped[bool] = mapped_column(Boolean, default=False, server_default=sa_false(), nullable=False)
+    no_attachment_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    no_attachment_set_at: Mapped[dt.datetime | None] = mapped_column(DateTime, nullable=True)
+    no_attachment_set_by_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     allocations: Mapped[list["TransactionAllocation"]] = relationship(
         back_populates="transaction", lazy="selectin", order_by="TransactionAllocation.id"

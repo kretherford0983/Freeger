@@ -1,6 +1,6 @@
-import { Fragment, useEffect, useMemo, useState, type FormEvent } from "react";
+import { Fragment, useEffect, useState, type FormEvent } from "react";
 import { api, money, qs, todayIso } from "../api";
-import { Attachments, ErrorBox, Field, Loading, Modal, useConfirmable } from "../components";
+import { Attachments, EntityPicker, ErrorBox, Field, Loading, Modal, useConfirmable } from "../components";
 import { useMe } from "../App";
 import { EntityForm } from "./Entities";
 
@@ -45,6 +45,7 @@ export default function Register() {
         {manage && acct?.status === "ACTIVE" ? (
           <>
             <button className="primary" onClick={() => setModal({ kind: "txn", txn: null })}>New transaction</button>
+            <button onClick={() => setModal({ kind: "transfer" })}>Transfer…</button>
             <button onClick={() => setModal({ kind: "zero" })}>Zero-dollar VOID record</button>
           </>
         ) : null}
@@ -89,11 +90,11 @@ export default function Register() {
                       <td>{t.is_split ? `Split (${t.allocations.length})` : t.allocations[0]?.description || t.allocations[0]?.budget.label}</td>
                       <td className="num">{t.deposit ? money(t.deposit) : ""}</td><td className="num">{t.withdrawal ? money(t.withdrawal) : ""}</td>
                       <td className="num">{money(t.running_balance)}</td>
-                      <td>{t.status === "VOID" ? <span className="badge red">VOID</span> : t.cleared ? "Cleared" : "Uncleared"}{t.has_pending_review ? <span className="badge yellow">Review</span> : null}</td>
+                      <td>{t.status === "VOID" ? <span className="badge red">VOID</span> : t.cleared ? "Cleared" : "Uncleared"}{t.has_pending_review ? <span className="badge yellow">Review</span> : null}{t.transfer ? <span className="badge blue">Transfer</span> : null}{t.no_attachment ? <span className="badge grey" title={t.no_attachment_reason || ""}>No attachment</span> : null}</td>
                       <td>{t.attachment_count ? <span aria-label={`${t.attachment_count} attachments`}>📎{t.attachment_count}</span> : ""}</td>
                     </tr>
                     {open === t.id ? (
-                      <tr className="detail-row"><td colSpan={12}><TxnDetail t={t} manage={manage} onEdit={() => setModal({ kind: "txn", txn: t })} onVoid={() => setModal({ kind: "void", txn: t })} onVoidDate={() => setModal({ kind: "voiddate", txn: t })} onChanged={load} /></td></tr>
+                      <tr className="detail-row"><td colSpan={12}><TxnDetail t={t} manage={manage} onEdit={() => setModal({ kind: t.transfer ? "legedit" : "txn", txn: t })} onVoid={() => setModal({ kind: "void", txn: t })} onVoidDate={() => setModal({ kind: "voiddate", txn: t })} onChanged={load} /></td></tr>
                     ) : null}
                   </Fragment>
                 ))}
@@ -104,6 +105,8 @@ export default function Register() {
       ) : f.bank_account_id ? <Loading /> : null}
       {modal?.kind === "txn" ? <TxnForm account={acct} txn={modal.txn} fys={fys} onClose={() => setModal(null)} onSaved={() => { setModal(null); load(); }} /> : null}
       {modal?.kind === "void" ? <VoidForm txn={modal.txn} onClose={() => setModal(null)} onSaved={() => { setModal(null); load(); }} /> : null}
+      {modal?.kind === "transfer" ? <TransferForm accounts={accounts} fromId={acct?.id} fys={fys} onClose={() => setModal(null)} onSaved={() => { setModal(null); load(); }} /> : null}
+      {modal?.kind === "legedit" ? <TransferLegForm txn={modal.txn} onClose={() => setModal(null)} onSaved={() => { setModal(null); load(); }} /> : null}
       {modal?.kind === "voiddate" ? <VoidDateForm txn={modal.txn} fys={fys} onClose={() => setModal(null)} onSaved={() => { setModal(null); load(); }} /> : null}
       {modal?.kind === "zero" ? <ZeroVoidForm account={acct} fys={fys} onClose={() => setModal(null)} onSaved={() => { setModal(null); load(); }} /> : null}
     </div>
@@ -129,6 +132,8 @@ function TxnDetail({ t, manage, onEdit, onVoid, onVoidDate, onChanged }: { t: an
         <dt>Total (derived)</dt><dd>{money(t.total)}</dd>
         {t.status === "VOID" ? <><dt>Void reason</dt><dd>{t.void_reason}</dd></> : null}
         {t.notes ? <><dt>Notes</dt><dd className="pre">{t.notes}</dd></> : null}
+        {t.transfer ? <><dt>Transfer</dt><dd>{t.transfer.direction === "OUT" ? "To" : "From"} {t.transfer.counterpart_account?.label} (transaction #{t.transfer.counterpart_transaction_id}). Voiding either side voids both.</dd></> : null}
+        {t.no_attachment ? <><dt>Documentation</dt><dd>No attachment will be provided{t.no_attachment_reason ? `: ${t.no_attachment_reason}` : ""}</dd></> : null}
         {t.closed_fiscal_year_protected ? <><dt>Protection</dt><dd>Affects a Closed Fiscal Year – financial fields are immutable.</dd></> : null}
       </dl>
       <table className="table compact">
@@ -186,7 +191,9 @@ function TxnForm({ account, txn, fys, onClose, onSaved }: { account: any; txn: a
   const [h, setH] = useState({
     transaction_date: txn?.transaction_date || todayIso(), clear_date: txn?.clear_date || "",
     entity_id: txn?.entity && !txn.entity.is_system ? String(txn.entity.id) : "", check_number: txn?.check_number || "", notes: txn?.notes || "",
+    no_attachment: !!txn?.no_attachment, no_attachment_reason: txn?.no_attachment_reason || "",
   });
+  const [noAttDlg, setNoAttDlg] = useState(false);
   const [allocs, setAllocs] = useState<Alloc[]>(txn ? txn.allocations.map((a: any) => ({
     id: a.id, fiscal_year_id: String(a.budget.fiscal_year.id), budget_id: String(a.budget.id), entity_id: a.entity ? String(a.entity.id) : "",
     invoice_number: a.invoice_number || "", description: a.description || "", amount: a.amount, notes: a.notes || "",
@@ -207,12 +214,6 @@ function TxnForm({ account, txn, fys, onClose, onSaved }: { account: any; txn: a
       if (isNew) setAllocs((as) => as.map((a) => (a.budget_id ? a : { ...a, fiscal_year_id: n.default_fiscal_year_id ? String(n.default_fiscal_year_id) : "" })));
     });
   }, [h.transaction_date]);
-  const dupNames = useMemo(() => {
-    const c: Record<string, number> = {};
-    entities.forEach((e) => (c[e.display_name] = (c[e.display_name] || 0) + 1));
-    return c;
-  }, [entities]);
-  const entLabel = (e: any) => (dupNames[e.display_name] > 1 ? `${e.display_name} (${e.entity_number})` : e.display_name);
   const options = useBudgetOptions(allocs.map((a) => a.fiscal_year_id), type);
   const total = allocs.reduce((s, a) => s + (Number(a.amount) || 0), 0);
   const upd = (i: number, k: keyof Alloc, v: string) => setAllocs(allocs.map((a, j) => (j === i ? { ...a, [k]: v, ...(k === "fiscal_year_id" ? { budget_id: "" } : {}) } : a)));
@@ -250,6 +251,7 @@ function TxnForm({ account, txn, fys, onClose, onSaved }: { account: any; txn: a
     const header = {
       transaction_date: h.transaction_date, clear_date: h.clear_date || null, entity_id: h.entity_id ? Number(h.entity_id) : null,
       check_number: type === "WITHDRAWAL" ? h.check_number || null : null, notes: h.notes || null,
+      no_attachment: h.no_attachment, no_attachment_reason: h.no_attachment ? h.no_attachment_reason || null : null,
     };
     try {
       const r = await run((confirmations) => isNew
@@ -279,13 +281,9 @@ function TxnForm({ account, txn, fys, onClose, onSaved }: { account: any; txn: a
         ) : null}
         {nat?.ambiguous ? <div className="alert warn" role="alert">More than one open Fiscal Year covers this date ({nat.covering.map((c: any) => c.label).join(", ")}). Select the intended Fiscal Year explicitly for each allocation.</div> : null}
         <div className="row">
-          <Field label={type === "WITHDRAWAL" ? "Payee (entity)" : split ? "Default entity (parent uses “Multiple” when entities differ)" : "Entity (payer)"}>
-            <select value={h.entity_id} onChange={(e) => setH({ ...h, entity_id: e.target.value })}>
-              <option value="">— none —</option>
-              {entities.map((e) => <option key={e.id} value={e.id}>{entLabel(e)}</option>)}
-              {txn?.entity && !txn.entity.is_system && !entities.some((e) => e.id === txn.entity.id) ? <option value={txn.entity.id}>{txn.entity.display_name} (inactive)</option> : null}
-            </select>
-          </Field>
+          <EntityPicker label={type === "WITHDRAWAL" ? "Payee (entity)" : split ? "Default entity (parent uses “Multiple” when entities differ)" : "Entity (payer)"}
+            entities={entities} value={h.entity_id} onChange={(v) => setH({ ...h, entity_id: v })}
+            extraOption={txn?.entity && !txn.entity.is_system ? { id: String(txn.entity.id), label: `${txn.entity.display_name}${txn.entity.active ? "" : " (inactive)"}` } : null} />
           <button type="button" className="small" onClick={() => setNewEnt(true)}>+ New entity</button>
         </div>
         <h3>Allocations {split ? "(split)" : ""}</h3>
@@ -314,12 +312,8 @@ function TxnForm({ account, txn, fys, onClose, onSaved }: { account: any; txn: a
               {cross ? <p className="warn-text">Budget Fiscal Year differs from the Fiscal Year covering the Transaction Date – confirmation will be required and the allocation will be flagged for review.</p> : null}
               <div className="row">
                 {type === "DEPOSIT" && split ? (
-                  <Field label="Entity">
-                    <select value={a.entity_id} onChange={(e) => upd(i, "entity_id", e.target.value)}>
-                      <option value="">— default —</option>
-                      {entities.map((e) => <option key={e.id} value={e.id}>{entLabel(e)}</option>)}
-                    </select>
-                  </Field>
+                  <EntityPicker label={`Allocation ${i + 1} Entity`} entities={entities} value={a.entity_id}
+                    onChange={(v) => upd(i, "entity_id", v)} placeholder="Default entity" />
                 ) : null}
                 {type === "WITHDRAWAL" ? <Field label="Invoice #"><input value={a.invoice_number} onChange={(e) => upd(i, "invoice_number", e.target.value)} /></Field> : null}
                 <Field label="Description"><input maxLength={500} value={a.description} onChange={(e) => upd(i, "description", e.target.value)} /></Field>
@@ -334,9 +328,22 @@ function TxnForm({ account, txn, fys, onClose, onSaved }: { account: any; txn: a
           <span className="total">Total (derived from allocations): <b>{money(total.toFixed(2))}</b></span>
         </div>
         <Field label="Notes"><textarea value={h.notes} onChange={(e) => setH({ ...h, notes: e.target.value })} /></Field>
+        <label className="check">
+          <input type="checkbox" checked={h.no_attachment} onChange={(e) => (e.target.checked ? setNoAttDlg(true) : setH({ ...h, no_attachment: false, no_attachment_reason: "" }))} />
+          No attachment will be provided
+        </label>
+        {h.no_attachment ? (
+          <Field label="Reason no attachment is available (optional)"><input maxLength={500} value={h.no_attachment_reason} onChange={(e) => setH({ ...h, no_attachment_reason: e.target.value })} placeholder="e.g. Bank interest - direct deposit" /></Field>
+        ) : null}
         <div className="actions"><button type="button" onClick={onClose}>Cancel</button><button className="primary" type="submit">Save</button></div>
       </form>
       {dialog}
+      {noAttDlg ? (
+        <Modal title="No attachment?" onClose={() => setNoAttDlg(false)}>
+          <div className="alert warn" role="alert">Transactions should have supporting documentation (receipt, invoice, statement). Only mark this when no document is available — for example interest or other amounts deposited directly by the bank. The transaction will be listed as a Fiscal Year review warning.</div>
+          <div className="actions"><button onClick={() => setNoAttDlg(false)}>Cancel</button><button className="primary" onClick={() => { setH({ ...h, no_attachment: true }); setNoAttDlg(false); }}>Mark as no attachment</button></div>
+        </Modal>
+      ) : null}
       {typeDlg ? (
         <Modal title="Change transaction type?" onClose={() => setTypeDlg(null)}>
           <div className="alert warn">Changing between Deposit and Withdrawal is a protected action. All budget selections will be cleared and must be re-selected with {typeDlg === "DEPOSIT" ? "Income" : "Expense"} budgets{typeDlg === "DEPOSIT" ? "; check and invoice numbers will be cleared" : ""}. The server will require a final confirmation.</div>
@@ -364,11 +371,97 @@ function VoidForm({ txn, onClose, onSaved }: any) {
     <Modal title={`Void transaction #${txn.id}`} onClose={onClose}>
       <form onSubmit={submit}>
         <ErrorBox error={err} />
+        {txn.transfer ? <div className="alert warn">This is one side of a transfer. <b>Both</b> the withdrawal and the deposit will be voided.</div> : null}
         <div className="alert warn">Voiding is <b>irreversible</b>. The transaction stays visible as VOID with its allocations and attachments, but no longer affects bank balances or budget actuals.</div>
         <Field label="Void reason (required)"><textarea required value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
         <Field label='Type VOID to confirm'><input value={typed} onChange={(e) => setTyped(e.target.value)} /></Field>
         <div className="actions"><button type="button" onClick={onClose}>Cancel</button><button className="primary danger" type="submit" disabled={typed !== "VOID" || !reason.trim()}>Void transaction</button></div>
       </form>
+    </Modal>
+  );
+}
+
+// v1.2 CR-003: transfer between two register-enabled accounts; descriptions are generated by the server.
+function TransferForm({ accounts, fromId, fys, onClose, onSaved }: any) {
+  const active = accounts.filter((a: any) => a.status === "ACTIVE");
+  const [f, setF] = useState({ from: String(fromId || active[0]?.id || ""), to: "", amount: "", transaction_date: todayIso(), clear_date: "", notes: "", fiscal_year_id: "" });
+  const [err, setErr] = useState<unknown>(null);
+  const [busy, setBusy] = useState(false);
+  const from = active.find((a: any) => String(a.id) === f.from);
+  const to = active.find((a: any) => String(a.id) === f.to);
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    setErr(null);
+    setBusy(true);
+    try {
+      await api.post("/api/transfers", { from_account_id: Number(f.from), to_account_id: Number(f.to), amount: f.amount,
+        transaction_date: f.transaction_date, clear_date: f.clear_date || null, notes: f.notes || null,
+        fiscal_year_id: f.fiscal_year_id ? Number(f.fiscal_year_id) : null });
+      onSaved();
+    } catch (x) { setErr(x); } finally { setBusy(false); }
+  };
+  return (
+    <Modal title="Transfer between accounts" onClose={onClose}>
+      <form onSubmit={submit}>
+        <ErrorBox error={err} />
+        <div className="row">
+          <Field label="From account">
+            <select required value={f.from} onChange={(e) => setF({ ...f, from: e.target.value, to: f.to === e.target.value ? "" : f.to })}>
+              {active.map((a: any) => <option key={a.id} value={a.id}>{a.label}</option>)}
+            </select>
+          </Field>
+          <Field label="To account">
+            <select required value={f.to} onChange={(e) => setF({ ...f, to: e.target.value })}>
+              <option value="">— select —</option>
+              {active.filter((a: any) => String(a.id) !== f.from).map((a: any) => <option key={a.id} value={a.id}>{a.label}</option>)}
+            </select>
+          </Field>
+        </div>
+        <div className="row">
+          <Field label="Amount"><input required inputMode="decimal" pattern="\d+(\.\d{1,2})?" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} /></Field>
+          <Field label="Transaction date"><input required type="date" value={f.transaction_date} onChange={(e) => setF({ ...f, transaction_date: e.target.value })} /></Field>
+          <Field label="Clear date (blank = uncleared)"><input type="date" value={f.clear_date} onChange={(e) => setF({ ...f, clear_date: e.target.value })} /></Field>
+        </div>
+        <Field label="Fiscal Year (only needed if ambiguous)">
+          <select value={f.fiscal_year_id} onChange={(e) => setF({ ...f, fiscal_year_id: e.target.value })}>
+            <option value="">Automatic</option>
+            {fys.filter((y: any) => y.status !== "CLOSED").map((y: any) => <option key={y.id} value={y.id}>{y.label}</option>)}
+          </select>
+        </Field>
+        <Field label="Notes (optional)"><input maxLength={4000} value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} /></Field>
+        {from && to ? (
+          <div className="alert info">
+            A <b>withdrawal</b> will be recorded in {from.label} (“Transfer to {to.account_number_masked} for …”) and a <b>deposit</b> in {to.label} (“Transfer from {from.account_number_masked} for …”). Both use protected Budget 0, so budgets are not affected. Clear dates can be adjusted per account afterwards.
+          </div>
+        ) : null}
+        <div className="actions"><button type="button" onClick={onClose}>Cancel</button><button className="primary" type="submit" disabled={busy || !f.to}>Record transfer</button></div>
+      </form>
+    </Modal>
+  );
+}
+
+function TransferLegForm({ txn, onClose, onSaved }: any) {
+  const [clear, setClear] = useState(txn.clear_date || "");
+  const [notes, setNotes] = useState(txn.notes || "");
+  const [err, setErr] = useState<unknown>(null);
+  const { run, dialog } = useConfirmable();
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    try {
+      const r = await run((confirmations) => api.patch(`/api/transactions/${txn.id}`, { clear_date: clear || null, notes: notes || null, confirmations }));
+      if (r) onSaved();
+    } catch (x) { setErr(x); }
+  };
+  return (
+    <Modal title={`Edit transfer leg #${txn.id}`} onClose={onClose}>
+      <form onSubmit={submit}>
+        <ErrorBox error={err} />
+        <p className="muted">Only the clear date and notes of a transfer can be edited. To change the amount, date or accounts, void the transfer and record it again.</p>
+        <Field label="Clear/Post date (blank = uncleared)"><input type="date" value={clear} onChange={(e) => setClear(e.target.value)} /></Field>
+        <Field label="Notes"><textarea value={notes} onChange={(e) => setNotes(e.target.value)} /></Field>
+        <div className="actions"><button type="button" onClick={onClose}>Cancel</button><button className="primary" type="submit">Save</button></div>
+      </form>
+      {dialog}
     </Modal>
   );
 }

@@ -31,3 +31,12 @@ Results recorded for this run (2026-09-28): `pip-audit 2.10.1` — *No known vul
 `npm 10.9.7 audit` — *found 0 vulnerabilities*. During development `npm audit` reported advisories for
 `react-router-dom@6.x` and `vite@6.4.1`; they were remediated by removing the router dependency (a 60-line
 History-API router is used instead) and pinning `vite@6.4.3`.
+
+## v1.2.0 additions
+
+| Area | Control | Verified by |
+|---|---|---|
+| Reports (PDF) | All user-controlled text XML-escaped before reportlab paragraph markup (blocks `<img src=…>`/markup injection); attachments read only via generated storage keys and verified against stored SHA-256; malformed PDFs replaced by a placeholder; temp files deleted after the response; available to financial roles and Auditors only (Administrator 403); generation audited | `test_v12_reports.py` |
+| Reports (CSV) | Cells beginning with `= + - @` are prefixed with `'` (spreadsheet formula injection) | `test_cr002_entity_activity_report` |
+| Transfers | `transaction.manage` + CSRF; request model forbids client-supplied descriptions/fields; object-scoped accounts; closed/non-register accounts refused; legs voided atomically | `test_v12_transfers.py` |
+| New dependencies | reportlab 5.0.1, pypdf 6.19.0, charset-normalizer (pinned); `pip-audit`: no known vulnerabilities (2026-09-29); `npm audit`: 0 | `scripts/security_check.sh` |

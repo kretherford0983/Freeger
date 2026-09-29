@@ -64,6 +64,18 @@ jobs:
       - uses: actions/upload-artifact@v4
         with: { name: FinancialManagementPOC-windows-x64-pyinstaller, path: dist/FinancialManagementPOC-windows-x64-pyinstaller.zip }
 
+  build-linux-portable:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - run: npm --prefix frontend ci && npm --prefix frontend run build
+      - run: bash packaging/build_linux_portable.sh
+      - uses: actions/upload-artifact@v4
+        with: { name: FinancialManagementPOC-linux-x64-portable, path: dist/FinancialManagementPOC-linux-x64-portable.tar.gz }
+
   build-windows-portable:
     needs: test
     runs-on: ubuntu-latest

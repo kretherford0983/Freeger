@@ -271,6 +271,8 @@ class TransactionCreateIn(In):
     create_as_void: bool = False
     void_reason: OptStr(1000) = None
     fiscal_year_id: int | None = None  # only for zero-dollar VOID accountability records
+    no_attachment: bool = False
+    no_attachment_reason: OptStr(500) = None
     confirmations: Confirmations = []
 
 
@@ -283,7 +285,20 @@ class TransactionUpdateIn(In):
                                                           pattern=r"^[A-Za-z0-9-]*$")] = None
     notes: OptStr(4000) = None
     allocations: Annotated[list[AllocationIn] | None, Field(max_length=100)] = None
+    no_attachment: bool | None = None
+    no_attachment_reason: OptStr(500) = None
     confirmations: Confirmations = []
+
+
+class TransferIn(In):
+    """v1.2 transfer between two register-enabled accounts (descriptions are system generated)."""
+    from_account_id: int
+    to_account_id: int
+    amount: Amount
+    transaction_date: OptDate = None
+    clear_date: OptDate = None
+    notes: OptStr(4000) = None
+    fiscal_year_id: int | None = None
 
 
 class VoidIn(In):

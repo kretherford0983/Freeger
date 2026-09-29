@@ -32,6 +32,8 @@ def snapshot(t: RegisterTransaction) -> dict:
             "transaction_date": t.transaction_date, "entry_timestamp": t.entry_timestamp, "clear_date": t.clear_date,
             "parent_entity_id": t.parent_entity_id, "check_number": t.check_number, "status": t.status,
             "notes": t.notes, "void_reason": t.void_reason, "total": fmt(t.total_cents),
+            "transfer_group": t.transfer_group, "no_attachment": bool(t.no_attachment),
+            "no_attachment_reason": t.no_attachment_reason,
             "allocations": [alloc_snapshot(a) for a in t.live_allocations]}
 
 
@@ -79,10 +81,24 @@ def out(db: Session, t: RegisterTransaction, running_balance: int | None = None)
         "running_balance": fmt(running_balance) if running_balance is not None else None,
         "cleared": t.clear_date is not None, "closed_fiscal_year_protected": closed,
         "zero_dollar_void": is_zero_dollar_void(t),
+        "transfer": _transfer_info(db, t),
         "attachment_count": att_counts.get(("t", t.id), 0) + sum(v for k, v in att_counts.items() if k[0] == "a"),
         "has_pending_review": any(r["status"] == "PENDING" for rs in reviews.values() for r in rs),
         "invoice_numbers": sorted({a.invoice_number for a in t.live_allocations if a.invoice_number}),
     }
+
+
+def _transfer_info(db: Session, t: RegisterTransaction) -> dict | None:
+    if not t.transfer_group:
+        return None
+    other = db.scalar(select(RegisterTransaction).where(RegisterTransaction.transfer_group == t.transfer_group,
+                                                        RegisterTransaction.id != t.id))
+    if other is None:
+        return {"group": t.transfer_group, "counterpart_transaction_id": None, "counterpart_account": None}
+    acct = db.get(BankAccount, other.bank_account_id)
+    return {"group": t.transfer_group, "direction": "OUT" if t.transaction_type == "WITHDRAWAL" else "IN",
+            "counterpart_transaction_id": other.id,
+            "counterpart_account": {"id": acct.id, "label": f"{acct.account_name} - {bank.masked(acct)}"}}
 
 
 def review_out(db: Session, r: FiscalYearReview, brief: bool = False) -> dict:
@@ -259,6 +275,24 @@ def _apply_reviews(db: Session, ctx, alloc: TransactionAllocation, plan: _Plan, 
                                 category=plan.category, natural_fiscal_year_id=natural_id, status="PENDING"))
 
 
+NO_ATTACHMENT_FIELDS = {"no_attachment", "no_attachment_reason"}
+TRANSFER_EDITABLE_FIELDS = {"clear_date", "notes"} | NO_ATTACHMENT_FIELDS
+
+
+def _apply_no_attachment(t: RegisterTransaction, ctx, flag: bool | None, reason: str | None) -> None:
+    """v1.2: record that no supporting attachment will be provided (e.g. bank-initiated interest deposits)."""
+    if flag is None:
+        if t.no_attachment:
+            t.no_attachment_reason = reason
+        return
+    if flag and not t.no_attachment:
+        t.no_attachment_set_at, t.no_attachment_set_by_user_id = utcnow(), ctx.user.id
+    t.no_attachment = bool(flag)
+    t.no_attachment_reason = reason if flag else None
+    if not flag:
+        t.no_attachment_set_at = t.no_attachment_set_by_user_id = None
+
+
 # ------------------------------------------------------------------ create
 def create(db: Session, ctx, data) -> RegisterTransaction:
     acct = _account_for_register(db, ctx, data.bank_account_id)
@@ -272,6 +306,8 @@ def create(db: Session, ctx, data) -> RegisterTransaction:
                             parent_entity_id=parent_entity.id if parent_entity else None,
                             check_number=data.check_number or None, notes=data.notes, status="ACTIVE",
                             created_by_user_id=ctx.user.id, updated_by_user_id=ctx.user.id)
+    if data.no_attachment:
+        _apply_no_attachment(t, ctx, True, data.no_attachment_reason)
     if data.create_as_void:
         return _create_zero_void(db, ctx, t, data)
     if data.void_reason:
@@ -301,7 +337,7 @@ def create(db: Session, ctx, data) -> RegisterTransaction:
     return t
 
 
-def _zero_void_fiscal_year(db: Session, ctx, d: dt.date, fiscal_year_id: int | None) -> FiscalYear:
+def budget_zero_fiscal_year(db: Session, ctx, d: dt.date, fiscal_year_id: int | None) -> FiscalYear:
     """Fiscal Year whose protected Budget 0 carries a zero-dollar VOID record dated `d`."""
     if fiscal_year_id is not None:
         fy = get_scoped(db, FiscalYear, fiscal_year_id, ctx, "Fiscal Year")
@@ -332,7 +368,7 @@ def _create_zero_void(db: Session, ctx, t: RegisterTransaction, data) -> Registe
     if data.allocations:
         raise validation("A zero-dollar VOID record has no user allocations; Budget 0 is used automatically.",
                          "allocations")
-    fy = _zero_void_fiscal_year(db, ctx, t.transaction_date, data.fiscal_year_id)
+    fy = budget_zero_fiscal_year(db, ctx, t.transaction_date, data.fiscal_year_id)
     b0 = bsvc.budget_zero_for(db, fy)
     t.status = "VOID"
     t.void_reason = data.void_reason
@@ -360,6 +396,9 @@ def update(db: Session, ctx, t: RegisterTransaction, data) -> RegisterTransactio
         raise conflict("ACCOUNT_CLOSED", "The Bank Account is closed.")
     before = snapshot(t)
     f = data.model_fields_set - {"confirmations"}
+    if t.transfer_group and f - TRANSFER_EDITABLE_FIELDS:
+        raise conflict("TRANSFER_LOCKED", "Transfer transactions only allow Clear Date, Notes and the no-attachment "
+                                          "flag to be edited. Void the transfer and enter it again to change it.")
     warnings: list[Warning_] = []
     new_type = data.transaction_type if "transaction_type" in f and data.transaction_type else t.transaction_type
     new_date = data.transaction_date if "transaction_date" in f and data.transaction_date else t.transaction_date
@@ -408,7 +447,7 @@ def update(db: Session, ctx, t: RegisterTransaction, data) -> RegisterTransactio
             db, ctx, txn_type=new_type, txn_date=new_date, parent_entity_id=parent_for_plan, allocs_in=allocs_in,
             existing=existing, date_changed=date_changed, keep_entity_ids=keep_ids)
         warnings.extend(pw)
-    if t.clear_date is not None and f:
+    if t.clear_date is not None and f - NO_ATTACHMENT_FIELDS:  # the documentation flag is not a financial edit
         warnings.insert(0, Warning_("CLEARED_EDIT", "This transaction has cleared the bank. Editing a cleared "
                                                     "transaction is fully audited; confirm to continue."))
     require_confirmations(warnings, data.confirmations)
@@ -416,6 +455,8 @@ def update(db: Session, ctx, t: RegisterTransaction, data) -> RegisterTransactio
     t.transaction_type, t.transaction_date, t.clear_date, t.check_number = new_type, new_date, new_clear, new_check
     if "notes" in f:
         t.notes = data.notes
+    if f & NO_ATTACHMENT_FIELDS:
+        _apply_no_attachment(t, ctx, data.no_attachment if "no_attachment" in f else None, data.no_attachment_reason)
     t.parent_entity_id = new_entity_id
     if plans is not None:
         kept = set()
@@ -454,26 +495,31 @@ def update(db: Session, ctx, t: RegisterTransaction, data) -> RegisterTransactio
 
 
 def void(db: Session, ctx, t: RegisterTransaction, reason: str, confirm: bool) -> RegisterTransaction:
-    """BR-066..071."""
-    if t.status == "VOID":
-        raise conflict("TRANSACTION_VOID", "The transaction is already VOID; voiding is irreversible.")
-    if is_closed_protected(db, t):
-        raise conflict("FISCAL_YEAR_CLOSED", "A transaction affecting a Closed Fiscal Year cannot be voided.")
-    if db.get(BankAccount, t.bank_account_id).status != "ACTIVE":
-        raise conflict("ACCOUNT_CLOSED", "The Bank Account is closed.")
+    """BR-066..071. Voiding one leg of a transfer voids both legs together (v1.2)."""
+    from .transfers import legs as transfer_legs
+    group = transfer_legs(db, t)
+    for leg in group:
+        if leg.status == "VOID":
+            raise conflict("TRANSACTION_VOID", "The transaction is already VOID; voiding is irreversible.")
+        if is_closed_protected(db, leg):
+            raise conflict("FISCAL_YEAR_CLOSED", "A transaction affecting a Closed Fiscal Year cannot be voided.")
+        if db.get(BankAccount, leg.bank_account_id).status != "ACTIVE":
+            raise conflict("ACCOUNT_CLOSED", "The Bank Account is closed.")
     if not (reason or "").strip():
         raise validation("A Void Reason is required.", "reason")
     if not confirm:
         raise AppError(409, "CONFIRMATION_REQUIRED", "Voiding is irreversible and requires confirmation.",
                        warnings=[{"code": "IRREVERSIBLE", "message": "Void cannot be reversed.", "details": {}}])
-    before = snapshot(t)
-    t.status = "VOID"
-    t.void_reason = reason
-    t.voided_at = utcnow()
-    t.voided_by_user_id = ctx.user.id
-    t.updated_by_user_id = ctx.user.id
-    db.flush()
-    audit.record(db, ctx, "TRANSACTION_VOIDED", "register_transaction", t.id, before, snapshot(t))
+    for leg in group:
+        before = snapshot(leg)
+        leg.status = "VOID"
+        leg.void_reason = reason
+        leg.voided_at = utcnow()
+        leg.voided_by_user_id = ctx.user.id
+        leg.updated_by_user_id = ctx.user.id
+        db.flush()
+        audit.record(db, ctx, "TRANSACTION_VOIDED", "register_transaction", leg.id, before,
+                     {**snapshot(leg), "voided_with_transfer_leg": [x.id for x in group if x.id != leg.id] or None})
     return t
 
 
@@ -498,7 +544,7 @@ def correct_void_date(db: Session, ctx, t: RegisterTransaction, new_date: dt.dat
     before = snapshot(t)
     moved_to = None
     if is_zero_dollar_void(t):
-        fy = _zero_void_fiscal_year(db, ctx, new_date, fiscal_year_id)
+        fy = budget_zero_fiscal_year(db, ctx, new_date, fiscal_year_id)
         b0 = bsvc.budget_zero_for(db, fy)
         for a in t.live_allocations:
             if a.budget_id != b0.id:

@@ -10,7 +10,8 @@ from sqlalchemy.orm import Session
 from ..deps import Ctx, get_db, require
 from ..errors import AppError
 from ..models import BankAccount, FiscalYear, FiscalYearReview, RegisterTransaction, TransactionAllocation
-from ..schemas import NoteIn, ReviewResolveIn, TransactionCreateIn, TransactionUpdateIn, VoidDateIn, VoidIn
+from ..schemas import (NoteIn, ReviewResolveIn, TransactionCreateIn, TransactionUpdateIn, TransferIn, VoidDateIn,
+                       VoidIn)
 from ..services import register as svc
 from ..services.common import get_scoped
 
@@ -58,6 +59,14 @@ def create_txn(body: TransactionCreateIn, db: Session = Depends(get_db), ctx: Ct
     t = svc.create(db, ctx, body)
     db.commit()
     return svc.out(db, t)
+
+
+@router.post("/transfers", status_code=201)
+def create_transfer(body: TransferIn, db: Session = Depends(get_db), ctx: Ctx = Depends(require("transaction.manage"))):
+    from ..services import transfers
+    legs = transfers.create(db, ctx, body)
+    db.commit()
+    return {"withdrawal": svc.out(db, legs[0]), "deposit": svc.out(db, legs[1])}
 
 
 @router.patch("/transactions/{txn_id}")

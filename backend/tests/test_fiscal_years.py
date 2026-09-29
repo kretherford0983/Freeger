@@ -198,7 +198,9 @@ def test_ac_fy_012_closure_warnings_budget0_not_warning(env, base):
     env.ru.post("/api/transactions", {"bank_account_id": base["acct"]["id"], "transaction_type": "WITHDRAWAL",
                                       "transaction_date": "2026-08-01", "check_number": "1001",
                                       "create_as_void": True, "void_reason": "Damaged check"})
-    _ready_to_close(env, base)
+    t = _ready_to_close(env, base)
+    env.ru.c.post(f"/api/attachments?owner_type=transaction&owner_id={t['id']}",
+                  files={"file": ("receipt.pdf", PDF_BYTES)}, headers={"X-CSRF-Token": env.ru.csrf})
     w = {x["code"] for x in env.bm.get(f"/api/fiscal-years/{fy}/closure-check").json()["warnings"]}
     assert w == set()
     # voided normal transaction + over budget -> warnings

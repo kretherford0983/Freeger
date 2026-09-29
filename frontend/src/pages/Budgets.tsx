@@ -58,7 +58,7 @@ export default function Budgets() {
           <BudgetSection title="Income" rows={tree.income} summary={tree.income_summary} fyStatus={fy.status} actions={actions} />
           <BudgetSection title="Expense" rows={tree.expense} summary={tree.expense_summary} fyStatus={fy.status} actions={actions} />
           {tree.budget_zero ? (
-            <p className="muted">Protected Budget 0 (exceptional non-budget activity): actual {money(tree.budget_zero.actual)}</p>
+            <p className="muted">Protected Budget 0 (non-budget activity such as transfers): inflows {money(tree.budget_zero.inflow)} · outflows {money(tree.budget_zero.outflow)}</p>
           ) : null}
         </>
       ) : fyId ? <Loading /> : null}

@@ -1,5 +1,10 @@
 # Acceptance-criteria results
 
+> **v1.2.0 update:** change requests CR-002…CR-006 (reports, transfers, no-attachment flag, documentation review,
+> searchable entity picker) added; see implementation-notes.md §1a. Full regression: **135 backend tests and 11 E2E
+> tests pass** (E2E also passes against the portable and PyInstaller Linux packages). All baseline criteria keep
+> their status. Note for AC-FY-012: closure warnings now also include documentation-review warnings.
+>
 > **v1.1.1 update:** change request CR-001 (correct the date of a VOID transaction) was added after the baseline run;
 > see implementation-notes.md §1a. All criteria below were re-run: 119 backend tests and 8 E2E tests pass.
 > AC-REG-015/016/017 remain Pass — VOID stays irreversible, has zero financial effect, and general editing is still refused.

@@ -266,6 +266,9 @@ def closure_check(db: Session, fy: FiscalYear) -> dict:
     if voided_ids:
         warnings.append({"code": "VOIDED_TRANSACTIONS", "message": f"{len(voided_ids)} voided transaction(s).",
                          "transaction_ids": voided_ids})
+    # v1.2 documentation review: warnings only, never blockers (CR-005)
+    from .documentation import closure_warnings as doc_warnings
+    warnings.extend(doc_warnings(db, fy))
     return {"can_close": not blockers, "blockers": blockers, "warnings": warnings}
 
 
