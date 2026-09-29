@@ -137,7 +137,7 @@ function TxnDetail({ t, manage, onEdit, onVoid, onVoidDate, onChanged }: { t: an
         {t.closed_fiscal_year_protected ? <><dt>Protection</dt><dd>Affects a Closed Fiscal Year – financial fields are immutable.</dd></> : null}
       </dl>
       <table className="table compact">
-        <thead><tr><th>Fiscal Year</th><th>Budget</th><th>Entity</th><th>Invoice #</th><th>Description</th><th className="num">Amount</th><th>Review</th><th>Notes</th></tr></thead>
+        <thead><tr><th>Fiscal Year</th><th>Budget</th><th>Entity</th><th>Invoice #</th><th>Description</th><th className="num">Amount</th><th>Review</th><th>Notes</th><th>Docs</th></tr></thead>
         <tbody>
           {t.allocations.map((a: any) => (
             <tr key={a.id}>
@@ -146,6 +146,7 @@ function TxnDetail({ t, manage, onEdit, onVoid, onVoidDate, onChanged }: { t: an
               <td className="num">{money(a.amount)}</td>
               <td>{a.reviews.map((r: any) => `${r.category === "CROSS_FY" ? "Cross-FY" : "No FY"}: ${r.status}`).join("; ")}</td>
               <td>{a.notes || ""}</td>
+              <td>{a.attachment_count ? `📎${a.attachment_count}` : a.no_attachment ? <span className="badge grey" title={a.no_attachment_reason || ""}>No attachment</span> : ""}</td>
             </tr>
           ))}
         </tbody>
@@ -169,8 +170,8 @@ function TxnDetail({ t, manage, onEdit, onVoid, onVoidDate, onChanged }: { t: an
   );
 }
 
-type Alloc = { id?: number; fiscal_year_id: string; budget_id: string; entity_id: string; invoice_number: string; description: string; amount: string; notes: string };
-const blankAlloc = (fy = ""): Alloc => ({ fiscal_year_id: fy, budget_id: "", entity_id: "", invoice_number: "", description: "", amount: "", notes: "" });
+type Alloc = { id?: number; fiscal_year_id: string; budget_id: string; entity_id: string; invoice_number: string; description: string; amount: string; notes: string; no_attachment: boolean; no_attachment_reason: string };
+const blankAlloc = (fy = ""): Alloc => ({ fiscal_year_id: fy, budget_id: "", entity_id: "", invoice_number: "", description: "", amount: "", notes: "", no_attachment: false, no_attachment_reason: "" });
 
 function useBudgetOptions(fyIds: string[], type: string) {
   const [cache, setCache] = useState<Record<string, any[]>>({});
@@ -193,10 +194,12 @@ function TxnForm({ account, txn, fys, onClose, onSaved }: { account: any; txn: a
     entity_id: txn?.entity && !txn.entity.is_system ? String(txn.entity.id) : "", check_number: txn?.check_number || "", notes: txn?.notes || "",
     no_attachment: !!txn?.no_attachment, no_attachment_reason: txn?.no_attachment_reason || "",
   });
-  const [noAttDlg, setNoAttDlg] = useState(false);
+  // null = closed, -1 = whole transaction, n = allocation n
+  const [noAttDlg, setNoAttDlg] = useState<number | null>(null);
   const [allocs, setAllocs] = useState<Alloc[]>(txn ? txn.allocations.map((a: any) => ({
     id: a.id, fiscal_year_id: String(a.budget.fiscal_year.id), budget_id: String(a.budget.id), entity_id: a.entity ? String(a.entity.id) : "",
     invoice_number: a.invoice_number || "", description: a.description || "", amount: a.amount, notes: a.notes || "",
+    no_attachment: !!a.no_attachment, no_attachment_reason: a.no_attachment_reason || "",
   })) : [blankAlloc()]);
   const [split, setSplit] = useState(txn ? txn.allocations.length > 1 : false);
   const [nat, setNat] = useState<any>(null);
@@ -247,6 +250,7 @@ function TxnForm({ account, txn, fys, onClose, onSaved }: { account: any; txn: a
       ...(a.id ? { id: a.id } : {}), budget_id: Number(a.budget_id), fiscal_year_id: a.fiscal_year_id ? Number(a.fiscal_year_id) : null,
       entity_id: type === "DEPOSIT" && a.entity_id ? Number(a.entity_id) : null,
       invoice_number: type === "WITHDRAWAL" ? a.invoice_number || null : null, description: a.description || null, amount: a.amount, notes: a.notes || null,
+      no_attachment: split ? a.no_attachment : false, no_attachment_reason: split && a.no_attachment ? a.no_attachment_reason || null : null,
     }));
     const header = {
       transaction_date: h.transaction_date, clear_date: h.clear_date || null, entity_id: h.entity_id ? Number(h.entity_id) : null,
@@ -319,6 +323,16 @@ function TxnForm({ account, txn, fys, onClose, onSaved }: { account: any; txn: a
                 <Field label="Description"><input maxLength={500} value={a.description} onChange={(e) => upd(i, "description", e.target.value)} /></Field>
                 <Field label="Notes"><input value={a.notes} onChange={(e) => upd(i, "notes", e.target.value)} /></Field>
               </div>
+              {split ? (
+                <div className="row">
+                  <label className="check">
+                    <input type="checkbox" aria-label={`Allocation ${i + 1} no attachment`} checked={a.no_attachment}
+                      onChange={(e) => (e.target.checked ? setNoAttDlg(i) : setAllocs(allocs.map((x, j) => (j === i ? { ...x, no_attachment: false, no_attachment_reason: "" } : x))))} />
+                    No attachment will be provided for this allocation
+                  </label>
+                  {a.no_attachment ? <Field label={`Allocation ${i + 1} reason (optional)`}><input maxLength={500} value={a.no_attachment_reason} onChange={(e) => setAllocs(allocs.map((x, j) => (j === i ? { ...x, no_attachment_reason: e.target.value } : x)))} /></Field> : null}
+                </div>
+              ) : null}
             </div>
           );
         })}
@@ -329,7 +343,7 @@ function TxnForm({ account, txn, fys, onClose, onSaved }: { account: any; txn: a
         </div>
         <Field label="Notes"><textarea value={h.notes} onChange={(e) => setH({ ...h, notes: e.target.value })} /></Field>
         <label className="check">
-          <input type="checkbox" checked={h.no_attachment} onChange={(e) => (e.target.checked ? setNoAttDlg(true) : setH({ ...h, no_attachment: false, no_attachment_reason: "" }))} />
+          <input type="checkbox" checked={h.no_attachment} onChange={(e) => (e.target.checked ? setNoAttDlg(-1) : setH({ ...h, no_attachment: false, no_attachment_reason: "" }))} />
           No attachment will be provided
         </label>
         {h.no_attachment ? (
@@ -338,10 +352,15 @@ function TxnForm({ account, txn, fys, onClose, onSaved }: { account: any; txn: a
         <div className="actions"><button type="button" onClick={onClose}>Cancel</button><button className="primary" type="submit">Save</button></div>
       </form>
       {dialog}
-      {noAttDlg ? (
-        <Modal title="No attachment?" onClose={() => setNoAttDlg(false)}>
+      {noAttDlg !== null ? (
+        <Modal title="No attachment?" onClose={() => setNoAttDlg(null)}>
           <div className="alert warn" role="alert">Transactions should have supporting documentation (receipt, invoice, statement). Only mark this when no document is available — for example interest or other amounts deposited directly by the bank. The transaction will be listed as a Fiscal Year review warning.</div>
-          <div className="actions"><button onClick={() => setNoAttDlg(false)}>Cancel</button><button className="primary" onClick={() => { setH({ ...h, no_attachment: true }); setNoAttDlg(false); }}>Mark as no attachment</button></div>
+          {noAttDlg >= 0 ? <p>This applies to allocation {noAttDlg + 1} only. (If the transaction itself has an attachment or is marked, its allocations do not need one.)</p> : null}
+          <div className="actions"><button onClick={() => setNoAttDlg(null)}>Cancel</button><button className="primary" onClick={() => {
+            if (noAttDlg === -1) setH({ ...h, no_attachment: true });
+            else setAllocs(allocs.map((x, j) => (j === noAttDlg ? { ...x, no_attachment: true } : x)));
+            setNoAttDlg(null);
+          }}>Mark as no attachment</button></div>
         </Modal>
       ) : null}
       {typeDlg ? (
@@ -384,7 +403,10 @@ function VoidForm({ txn, onClose, onSaved }: any) {
 // v1.2 CR-003: transfer between two register-enabled accounts; descriptions are generated by the server.
 function TransferForm({ accounts, fromId, fys, onClose, onSaved }: any) {
   const active = accounts.filter((a: any) => a.status === "ACTIVE");
-  const [f, setF] = useState({ from: String(fromId || active[0]?.id || ""), to: "", amount: "", transaction_date: todayIso(), clear_date: "", notes: "", fiscal_year_id: "" });
+  const [f, setF] = useState({ from: String(fromId || active[0]?.id || ""), to: "", amount: "", transaction_date: todayIso(), clear_date: "", entity_id: "", notes: "", fiscal_year_id: "" });
+  const [entities, setEntities] = useState<any[]>([]);
+  useEffect(() => { api.get("/api/entities?status=active").then(setEntities); }, []);
+  const ent = entities.find((x) => String(x.id) === f.entity_id);
   const [err, setErr] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const from = active.find((a: any) => String(a.id) === f.from);
@@ -396,6 +418,7 @@ function TransferForm({ accounts, fromId, fys, onClose, onSaved }: any) {
     try {
       await api.post("/api/transfers", { from_account_id: Number(f.from), to_account_id: Number(f.to), amount: f.amount,
         transaction_date: f.transaction_date, clear_date: f.clear_date || null, notes: f.notes || null,
+        entity_id: f.entity_id ? Number(f.entity_id) : null,
         fiscal_year_id: f.fiscal_year_id ? Number(f.fiscal_year_id) : null });
       onSaved();
     } catch (x) { setErr(x); } finally { setBusy(false); }
@@ -428,10 +451,11 @@ function TransferForm({ accounts, fromId, fys, onClose, onSaved }: any) {
             {fys.filter((y: any) => y.status !== "CLOSED").map((y: any) => <option key={y.id} value={y.id}>{y.label}</option>)}
           </select>
         </Field>
+        <EntityPicker label="Entity" entities={entities} value={f.entity_id} onChange={(v) => setF({ ...f, entity_id: v })} placeholder="Type to search (optional)" />
         <Field label="Notes (optional)"><input maxLength={4000} value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} /></Field>
         {from && to ? (
           <div className="alert info">
-            A <b>withdrawal</b> will be recorded in {from.label} (“Transfer to {to.account_number_masked} for …”) and a <b>deposit</b> in {to.label} (“Transfer from {from.account_number_masked} for …”). Both use protected Budget 0, so budgets are not affected. Clear dates can be adjusted per account afterwards.
+            A <b>withdrawal</b> will be recorded in {from.label} (“Transfer to {to.account_number_masked} for {ent ? ent.display_name : "your organization"}”) and a <b>deposit</b> in {to.label} (“Transfer from {from.account_number_masked} for {ent ? ent.display_name : "your organization"}”). Both use protected Budget 0, so budgets are not affected. Clear dates can be adjusted per account afterwards.
           </div>
         ) : null}
         <div className="actions"><button type="button" onClick={onClose}>Cancel</button><button className="primary" type="submit" disabled={busy || !f.to}>Record transfer</button></div>

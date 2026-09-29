@@ -67,7 +67,7 @@ function DocumentationReview({ fyId }: { fyId: number }) {
                 <td>{i.entity?.display_name || i.description || ""}</td><td className="num">{money(i.total)}</td>
                 <td>{i.category === "NO_ATTACHMENT_MARKED"
                   ? <><span className="badge grey">No attachment</span> {i.no_attachment_reason || ""}</>
-                  : <><span className="badge yellow">Missing attachment</span>{i.is_split ? ` ${i.allocations_without_attachment.length} of ${i.allocation_count} allocations undocumented` : ""}</>}</td>
+                  : <><span className="badge yellow">Missing attachment</span>{i.is_split && i.allocations_without_documentation.length ? ` ${i.allocations_without_documentation.length} of ${i.allocation_count} allocations undocumented` : ""}</>}</td>
               </tr>
             ))}
           </tbody>

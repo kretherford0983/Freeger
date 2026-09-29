@@ -256,6 +256,8 @@ class AllocationIn(In):
     description: OptStr(500) = None
     amount: Amount
     notes: OptStr(4000) = None
+    no_attachment: bool | None = None  # v1.2.1 per-allocation "no attachment will be provided"
+    no_attachment_reason: OptStr(500) = None
 
 
 class TransactionCreateIn(In):
@@ -297,6 +299,7 @@ class TransferIn(In):
     amount: Amount
     transaction_date: OptDate = None
     clear_date: OptDate = None
+    entity_id: int | None = None  # v1.2.1: recorded on both legs; used in the generated description
     notes: OptStr(4000) = None
     fiscal_year_id: int | None = None
 

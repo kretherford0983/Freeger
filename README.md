@@ -37,9 +37,10 @@ The first launch shows the **Initialization Wizard** (workspace name, administra
 confirmation). No default credentials exist. The Administrator then creates Financial users (Budget Manager /
 Budget User / Register User) and Auditors under **Users**.
 
-Since 1.2.0: **Reports** (printable End of Year Audit PDF with attachments after each transaction; Entity activity
-report with CSV), **Transfer…** between register accounts, a searchable entity picker, a "no attachment will be
-provided" flag and a Fiscal Year **documentation review** (see CHANGELOG.md).
+Since 1.2: **Reports** (printable End of Year Audit PDF — title, FY review, budgets, then one page per transaction
+with its attachments reproduced at page width; Entity activity report with CSV), **Transfer…** between register
+accounts (with Entity), a searchable entity picker, "no attachment will be provided" flags on transactions and split
+allocations, and a Fiscal Year **documentation review** (see CHANGELOG.md; current version 1.2.1).
 
 Useful options: `--mode server --host 0.0.0.0 --port 8765 --data-dir DIR --no-browser` (see configuration docs).
 

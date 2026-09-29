@@ -278,6 +278,11 @@ class TransactionAllocation(Base):
     description: Mapped[str | None] = mapped_column(String(500), nullable=True)
     amount_cents: Mapped[int] = mapped_column(BigInteger)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # v1.2.1 (migration 0004) - per-allocation "no attachment will be provided" marker
+    no_attachment: Mapped[bool] = mapped_column(Boolean, default=False, server_default=sa_false(), nullable=False)
+    no_attachment_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    no_attachment_set_at: Mapped[dt.datetime | None] = mapped_column(DateTime, nullable=True)
+    no_attachment_set_by_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Allocations removed from a transaction during an edit are retained (never hard deleted).
     removed_at: Mapped[dt.datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow)

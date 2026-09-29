@@ -1,16 +1,19 @@
-"""v1.2 Fiscal Year documentation review (change request CR-005).
+"""Fiscal Year documentation review (change request CR-005, rule revised in v1.2.1).
 
-Lists ACTIVE transactions that affect a Fiscal Year and either
-  * lack supporting attachments ("MISSING_ATTACHMENTS"), or
-  * are explicitly marked "no attachment will be provided" ("NO_ATTACHMENT_MARKED").
+Lists ACTIVE transactions that affect a Fiscal Year and either lack supporting documentation
+("MISSING_ATTACHMENTS") or are documented by a "no attachment will be provided" marker ("NO_ATTACHMENT_MARKED").
 These are Fiscal Year review *warnings*; they never block approval or closure.
 
-Attachment rule (as specified):
-  * single allocation: missing when neither the transaction nor its allocation has an attachment;
-  * split transaction: missing when (the parent has 0 attachments and not every child has one)
-    or (no child has an attachment). If every child has an attachment the parent needs none.
+Rule (as specified by the product owner):
+    IF the parent (transaction) has no attachment AND the parent has no no-attachment indicator
+    THEN every child (allocation) must have either an attachment or its own no-attachment indicator
+    ELSE (parent has an attachment OR parent has the indicator)
+         children need neither and are not subject to documentation review.
+A normal (unsplit) transaction is the same rule with a single child.
 """
 from __future__ import annotations
+
+from dataclasses import dataclass
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -20,21 +23,23 @@ from ..money import fmt
 from .common import entity_brief
 
 
-def split_is_documented(parent_count: int, child_counts: list[int]) -> bool:
-    """Single place encoding the split-transaction documentation rule (see module docstring)."""
-    every_child = all(c > 0 for c in child_counts)
-    any_child = any(c > 0 for c in child_counts)
-    if every_child:
-        return True
-    if parent_count == 0:
-        return False
-    return any_child
+@dataclass(frozen=True)
+class Child:
+    attachments: int
+    no_attachment: bool
 
 
-def is_documented(parent_count: int, child_counts: list[int]) -> bool:
-    if len(child_counts) <= 1:
-        return parent_count + sum(child_counts) > 0
-    return split_is_documented(parent_count, child_counts)
+def classify(parent_attachments: int, parent_no_attachment: bool, children: list[Child]) -> str | None:
+    """Returns None (documented), "MISSING_ATTACHMENTS" or "NO_ATTACHMENT_MARKED"."""
+    if parent_attachments > 0:
+        return None
+    if parent_no_attachment:
+        return "NO_ATTACHMENT_MARKED"
+    if any(c.attachments == 0 and not c.no_attachment for c in children):
+        return "MISSING_ATTACHMENTS"
+    if any(c.attachments == 0 and c.no_attachment for c in children):
+        return "NO_ATTACHMENT_MARKED"
+    return None
 
 
 def _counts(db: Session, txn_ids: list[int], alloc_ids: list[int]) -> tuple[dict[int, int], dict[int, int]]:
@@ -75,12 +80,9 @@ def review(db: Session, fy: FiscalYear) -> list[dict]:
     for t in txns:
         allocs = t.live_allocations
         parent = tc.get(t.id, 0)
-        children = [ac.get(a.id, 0) for a in allocs]
-        if t.no_attachment:
-            category = "NO_ATTACHMENT_MARKED"
-        elif not is_documented(parent, children):
-            category = "MISSING_ATTACHMENTS"
-        else:
+        children = [Child(ac.get(a.id, 0), bool(a.no_attachment)) for a in allocs]
+        category = classify(parent, bool(t.no_attachment), children)
+        if category is None:
             continue
         acct = accounts.get(t.bank_account_id) or db.get(BankAccount, t.bank_account_id)
         accounts[t.bank_account_id] = acct
@@ -91,9 +93,16 @@ def review(db: Session, fy: FiscalYear) -> list[dict]:
             "is_transfer": t.transfer_group is not None,
             "bank_account": {"id": acct.id, "label": f"{acct.account_name} - {masked(acct)}"},
             "entity": entity_brief(t.parent_entity), "parent_attachment_count": parent,
-            "allocations_without_attachment": [a.id for a, c in zip(allocs, children) if c == 0],
+            "parent_no_attachment": bool(t.no_attachment),
+            "allocations_without_documentation": ([] if parent or t.no_attachment else
+                                                  [a.id for a, c in zip(allocs, children)
+                                                   if c.attachments == 0 and not c.no_attachment]),
+            "allocations_marked_no_attachment": ([] if parent or t.no_attachment else
+                                                 [a.id for a, c in zip(allocs, children)
+                                                  if c.attachments == 0 and c.no_attachment]),
             "allocation_count": len(allocs),
-            "no_attachment_reason": t.no_attachment_reason,
+            "no_attachment_reason": t.no_attachment_reason or "; ".join(
+                a.no_attachment_reason for a in allocs if a.no_attachment and a.no_attachment_reason) or None,
             "description": "; ".join(a.description for a in allocs if a.description)[:300] or None,
         })
     return items

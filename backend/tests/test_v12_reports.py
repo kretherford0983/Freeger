@@ -56,27 +56,37 @@ def test_cr002_audit_report_structure_and_attachment_order(env, base):
     r = env.auditor.get(f"/api/reports/audit?fiscal_year_id={fy}")
     assert r.status_code == 200 and r.headers["content-type"] == "application/pdf"
     assert "inline" in r.headers["content-disposition"] and "FY2027-end-of-year-audit-report.pdf" in r.headers["content-disposition"]
+    import os
+    if os.environ.get("FM_DUMP_PDF"):
+        open(os.environ["FM_DUMP_PDF"], "wb").write(r.content)
     texts = page_texts(r.content)
     joined = "\n".join(texts)
-    assert "End of Year Audit Report" in texts[0] and "Fiscal Year Budget" in texts[0]
-    assert "1000 Operations" in joined and "4000 Donations" in joined
-    # every transaction (incl. VOID and the cross-FY one) appears, in date order within the account
-    order = [first_page(texts, f"Transaction #{t['id']} —") for t in (outside, t1, t2, t3, v)]
-    assert order == sorted(order)
-    # t1's attachments immediately follow t1 and precede t2
+    # page 1 title, page 2 Fiscal Year Review introduction, page 3.. budgets
+    assert "End of Year Audit Report" in texts[0] and "Fiscal Year FY2027" in texts[0] and "Budgets" not in texts[0]
+    assert "Fiscal Year Review" in texts[1] and "Documentation review" in texts[1] and "Closure readiness" in texts[1]
+    assert "Fiscal Year Budgets" in texts[2] and "1000 Operations" in texts[2] and "4000 Donations" in texts[2]
+    # every transaction (incl. VOID and the cross-FY one) starts its own page, in date order within the account
+    order = [first_page(texts, f"Transaction #{t['id']}\n") for t in (outside, t1, t2, t3, v)]
+    assert order == sorted(order) and len(set(order)) == 5 and order[0] > 2
+    for i in order:
+        head = texts[i].split("\n")[0]
+        assert head.startswith("Transaction #")
+        for field in ("Transaction date", "Entity", "Transaction type", "Amount", "Description", "Clear Date", "Notes"):
+            assert field in texts[i], (i, field)
+    # t1's attachments are rendered (not just listed) after t1's details and before t2
     p_t1, p_t2 = order[1], order[2]
     p_inv = first_page(texts, "RENTINVOICE page 1")
-    assert p_t1 < p_inv < p_t2 and "RENTINVOICE page 2" in texts[p_inv + 1]
-    p_png = first_page(texts, "Attachment 2 of 2")
+    assert p_t1 <= p_inv < p_t2 and "RENTINVOICE page 2" in texts[p_inv + 1]
+    p_png = first_page(texts, "Attachment 2 of 2 (transaction)")
     assert p_inv < p_png < p_t2
-    # allocation attachment follows t2
-    assert p_t2 < first_page(texts, "GIFTLETTER page 1") < order[3]
-    # details
-    t1_text = "\n".join(texts[p_t1:p_inv])
-    for s in ["Office rent Aug", "Paid by check", "1001", "2026-08-03", "rent-invoice.pdf", "SHA-256 verified"]:
-        assert s in joined
-    assert "<img src='/etc/passwd'/> Vendor & Co" in t1_text  # user markup rendered literally, not interpreted
-    assert "Parent note <b>not bold</b>" in t1_text
+    # allocation attachment is drawn under t2's details
+    assert p_t2 <= first_page(texts, "GIFTLETTER page 1") < order[3]
+    t1_page = texts[p_t1]
+    assert "Office rent Aug" in t1_page and "2026-08-03" in t1_page and "Withdrawal" in t1_page and "$12.34" in t1_page
+    for s_ in ["Paid by check", "1001", "rent-invoice.pdf", "SHA-256 verified"]:
+        assert s_ in joined
+    assert "<img src='/etc/passwd'/> Vendor & Co" in t1_page  # user markup rendered literally, not interpreted
+    assert "Parent note <b>not bold</b>" in t1_page
     assert "Bank interest" in texts[order[3]] and "VOID" in texts[order[4]] and "Duplicate" in texts[order[4]]
     # FY supporting documentation at the end
     assert first_page(texts, "BOARDMINUTES page 1") > order[4]
@@ -94,7 +104,7 @@ def test_cr002_audit_report_account_filter_void_toggle_and_empty(env, base):
     t = env.txn(other["id"], "WITHDRAWAL", [{"budget_id": base["exp_leaf"], "amount": "4.00"}])
     env.ru.post(f"/api/transactions/{t['id']}/void", {"reason": "x", "confirm_irreversible": True})
     j = "\n".join(page_texts(env.bu.get(f"/api/reports/audit?fiscal_year_id={fy}&bank_account_id={other['id']}").content))
-    assert f"Transaction #{t['id']} —" in j and "Transaction #1 —" not in j
+    assert f"Transaction #{t['id']}\n" in j and "Transaction #1\n" not in j
     j = "\n".join(page_texts(env.bu.get(f"/api/reports/audit?fiscal_year_id={fy}&bank_account_id={other['id']}"
                                         f"&include_void=false").content))
     assert "No transactions for this Fiscal Year." in " ".join(j.split())
@@ -173,6 +183,28 @@ def test_cr002_entity_activity_report(env, base):
     assert "'=HYPERLINK(\"http://x\")" in labels and "=HYPERLINK(\"http://x\")" not in labels
     # validation
     assert env.bu.get(f"/api/reports/entity-activity?bank_account_id={a}").status_code == 422
-    assert env.bu.get(f"/api/reports/entity-activity?date_from=2026-09-01&date_to=2026-01-01").status_code == 422
-    assert env.bu.get(f"/api/reports/entity-activity?date_from=2026-09-01&date_to=2026-10-01&format=xml").status_code == 422
-    assert env.bu.get(f"/api/reports/entity-activity?bank_account_id=99999&date_from=2026-09-01&date_to=2026-10-01").status_code == 422
+    assert env.bu.get("/api/reports/entity-activity?date_from=2026-09-01&date_to=2026-01-01").status_code == 422
+    assert env.bu.get("/api/reports/entity-activity?date_from=2026-09-01&date_to=2026-10-01&format=xml").status_code == 422
+    assert env.bu.get("/api/reports/entity-activity?bank_account_id=99999&date_from=2026-09-01&date_to=2026-10-01").status_code == 422
+
+
+def test_cr002_attachments_rendered_within_letter_page_width(env, base):
+    """v1.2.1: every page is US Letter; wide images and landscape/odd-size PDFs are scaled into the page width."""
+    from reportlab.lib.pagesizes import landscape, legal, letter
+    t = env.txn(base["acct"]["id"], "WITHDRAWAL", [{"budget_id": base["exp_leaf"], "amount": "9.00",
+                                                    "description": "Wide docs"}])
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=landscape(legal))
+    c.drawString(72, 300, "LANDSCAPEDOC page 1")
+    c.save()
+    up(env, "transaction", t["id"], "landscape.pdf", buf.getvalue())
+    up(env, "transaction", t["id"], "wide.png", png_bytes((2400, 600)))
+    pdf = env.bu.get(f"/api/reports/audit?fiscal_year_id={base['fy']['id']}").content
+    reader = PdfReader(io.BytesIO(pdf))
+    assert all((round(float(p.mediabox.width)), round(float(p.mediabox.height))) == (round(letter[0]), round(letter[1]))
+               for p in reader.pages)
+    texts = [p.extract_text() or "" for p in reader.pages]
+    p_t = first_page(texts, f"Transaction #{t['id']}\n")
+    # the landscape PDF is drawn on the transaction's own page, under the details
+    assert "LANDSCAPEDOC page 1" in texts[p_t] and "Wide docs" in texts[p_t]
+    assert any("Attachment 2 of 2 (transaction)" in x for x in texts[p_t:])

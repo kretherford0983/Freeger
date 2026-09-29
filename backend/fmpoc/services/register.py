@@ -24,6 +24,7 @@ BUDGET_TYPE_FOR = {"DEPOSIT": "INCOME", "WITHDRAWAL": "EXPENSE"}
 def alloc_snapshot(a: TransactionAllocation) -> dict:
     return {"id": a.id, "budget_id": a.budget_id, "entity_id": a.entity_id, "invoice_number": a.invoice_number,
             "description": a.description, "amount": fmt(a.amount_cents), "notes": a.notes,
+            "no_attachment": bool(a.no_attachment), "no_attachment_reason": a.no_attachment_reason,
             "removed": a.removed_at is not None}
 
 
@@ -279,7 +280,21 @@ NO_ATTACHMENT_FIELDS = {"no_attachment", "no_attachment_reason"}
 TRANSFER_EDITABLE_FIELDS = {"clear_date", "notes"} | NO_ATTACHMENT_FIELDS
 
 
-def _apply_no_attachment(t: RegisterTransaction, ctx, flag: bool | None, reason: str | None) -> None:
+def _allocations_financially_changed(plans: list, existing: dict) -> bool:
+    """True when an allocation edit changes anything other than the documentation (no-attachment) markers."""
+    kept = {p.existing.id for p in plans if p.existing is not None}
+    if len(kept) != len(existing) or any(p.existing is None for p in plans):
+        return True
+    for p in plans:
+        ex = p.existing
+        if (ex.budget_id != p.budget.id or ex.amount_cents != p.amount or ex.entity_id != p.entity_id
+                or (ex.invoice_number or None) != (p.data.invoice_number or None)
+                or (ex.description or None) != (p.data.description or None) or (ex.notes or None) != (p.data.notes or None)):
+            return True
+    return False
+
+
+def _apply_no_attachment(t, ctx, flag: bool | None, reason: str | None) -> None:
     """v1.2: record that no supporting attachment will be provided (e.g. bank-initiated interest deposits)."""
     if flag is None:
         if t.no_attachment:
@@ -325,6 +340,8 @@ def create(db: Session, ctx, data) -> RegisterTransaction:
                                   invoice_number=p.data.invoice_number or None, description=p.data.description,
                                   amount_cents=p.amount, notes=p.data.notes,
                                   created_by_user_id=ctx.user.id, updated_by_user_id=ctx.user.id)
+        if p.data.no_attachment:
+            _apply_no_attachment(a, ctx, True, p.data.no_attachment_reason)
         db.add(a)
         db.flush()
         _apply_reviews(db, ctx, a, p, natural_id)
@@ -447,7 +464,10 @@ def update(db: Session, ctx, t: RegisterTransaction, data) -> RegisterTransactio
             db, ctx, txn_type=new_type, txn_date=new_date, parent_entity_id=parent_for_plan, allocs_in=allocs_in,
             existing=existing, date_changed=date_changed, keep_entity_ids=keep_ids)
         warnings.extend(pw)
-    if t.clear_date is not None and f - NO_ATTACHMENT_FIELDS:  # the documentation flag is not a financial edit
+    fin_fields = f - NO_ATTACHMENT_FIELDS  # documentation flags are not financial edits
+    if plans is not None and "allocations" in fin_fields and not _allocations_financially_changed(plans, existing):
+        fin_fields = fin_fields - {"allocations"}
+    if t.clear_date is not None and fin_fields:
         warnings.insert(0, Warning_("CLEARED_EDIT", "This transaction has cleared the bank. Editing a cleared "
                                                     "transaction is fully audited; confirm to continue."))
     require_confirmations(warnings, data.confirmations)
@@ -470,6 +490,9 @@ def update(db: Session, ctx, t: RegisterTransaction, data) -> RegisterTransactio
             a.budget_id, a.entity_id, a.amount_cents = p.budget.id, p.entity_id, p.amount
             a.invoice_number = p.data.invoice_number or None
             a.description, a.notes = p.data.description, p.data.notes
+            if "no_attachment" in p.data.model_fields_set or "no_attachment_reason" in p.data.model_fields_set:
+                _apply_no_attachment(a, ctx, p.data.no_attachment if "no_attachment" in p.data.model_fields_set else None,
+                                     p.data.no_attachment_reason)
             a.updated_by_user_id = ctx.user.id
             db.flush()
             _apply_reviews(db, ctx, a, p, natural_id)

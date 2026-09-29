@@ -129,7 +129,12 @@ def store(db: Session, ctx, settings, owner_type: str, owner_id: int, filename: 
         db.flush()
         audit.record(db, ctx, "ATTACHMENT_ADDED", "attachment", att.id, None, snapshot(att))
         # v1.2: documentation now exists, so a "no attachment will be provided" marker no longer applies
-        txn = _txn if owner_type != "fiscal_year" else None
+        if owner_type == "allocation" and owner.no_attachment:
+            owner.no_attachment, owner.no_attachment_reason = False, None
+            owner.no_attachment_set_at = owner.no_attachment_set_by_user_id = None
+            audit.record(db, ctx, "ALLOCATION_NO_ATTACHMENT_CLEARED", "transaction_allocation", owner.id,
+                         {"no_attachment": True}, {"no_attachment": False, "attachment_id": att.id})
+        txn = _txn if owner_type == "transaction" else None
         if txn is not None and txn.no_attachment:
             txn.no_attachment, txn.no_attachment_reason = False, None
             txn.no_attachment_set_at = txn.no_attachment_set_by_user_id = None

@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.2.1 — 2026-09-29
+Corrections requested by the product owner after reviewing 1.2.0:
+- **CR-002 — End of Year Audit PDF layout.** Page 1 is a title page; page 2 is the *Fiscal Year Review*
+  introduction (activity summary per account, closure readiness, documentation review); pages 3–n list the budgets;
+  then **every transaction gets at least one page** with its headline fields at the top — *Transaction date, Entity,
+  Transaction type, Amount, Description, Clear Date, Notes* — and **each attachment reproduced underneath, scaled to
+  the 8.5×11 page width** (images drawn; PDF attachments embedded page by page as vector content, landscape/legal
+  pages scaled to fit). Every page of the report is US Letter. The transaction index page was removed. The Entity
+  activity report and its CSV are unchanged.
+- **CR-003 — Transfers.** The transfer form has an **Entity** field; the generated descriptions read
+  `Transfer to|from <masked account> for <selected Entity>` (the organization/workspace name when no Entity is chosen),
+  and the Entity is recorded on both legs. Legs remain locked together (voiding one voids both) as before.
+- **CR-005 — Split documentation rule** is now exactly: if the transaction (parent) has **no** attachment **and** is
+  not marked "no attachment", every allocation (child) needs an attachment **or its own "no attachment" mark**;
+  if the parent has an attachment or the mark, the allocations need neither and are not reviewed.
+  Split allocations therefore get their own **"No attachment will be provided for this allocation"** checkbox
+  (with the same warning and optional reason); uploading a file to that allocation clears it automatically.
+
+Upgrade notes: database migration `0004` **adds** four columns to `transaction_allocation` (per-allocation
+no-attachment flag, reason, who/when); existing rows are not changed. `config.toml`, the key and attachments are
+untouched. See docs/upgrade.md.
+
 ## 1.2.0 — 2026-09-29
 New features (change requests CR-002 … CR-006):
 - **Reports** (new menu item for all financial roles and Auditors):

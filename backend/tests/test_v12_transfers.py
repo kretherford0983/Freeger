@@ -108,3 +108,19 @@ def test_cr003_transfer_listed_as_documentation_warning(env, base):
     items = env.bu.get(f"/api/fiscal-years/{base['fy']['id']}/documentation-review").json()["items"]
     cats = {i["transaction_id"]: (i["category"], i["is_transfer"]) for i in items}
     assert cats[r["withdrawal"]["id"]] == ("NO_ATTACHMENT_MARKED", True)
+
+
+def test_cr003_transfer_entity_used_in_description(env, base):
+    """v1.2.1: the selected Entity is recorded on both legs and named in the generated descriptions."""
+    dst = env.account(opening="0.00")
+    org = env.entity("Friends of the Library")
+    r = transfer(env, base["acct"]["id"], dst["id"], entity_id=org["id"], amount="75.00")
+    w, d = r["withdrawal"], r["deposit"]
+    assert w["allocations"][0]["description"] == f"Transfer to {dst['account_number_masked']} for Friends of the Library"
+    assert d["allocations"][0]["description"] == f"Transfer from {base['acct']['account_number_masked']} for Friends of the Library"
+    assert w["entity"]["id"] == d["entity"]["id"] == org["id"]
+    assert w["status"] == d["status"] == "ACTIVE"
+    # inactive / hidden entities are refused
+    env.ru.post(f"/api/entities/{org['id']}/inactivate", {})
+    transfer(env, base["acct"]["id"], dst["id"], entity_id=org["id"], expect=422)
+    transfer(env, base["acct"]["id"], dst["id"], entity_id=99999, expect=422)

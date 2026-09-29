@@ -17,11 +17,10 @@ import hashlib
 import io
 import os
 import tempfile
-from dataclasses import dataclass, field
 from xml.sax.saxutils import escape
 
 from PIL import Image as PILImage
-from pypdf import PdfReader, PdfWriter
+from pypdf import PdfReader, PdfWriter, Transformation
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_RIGHT
 from reportlab.lib.pagesizes import letter
@@ -29,8 +28,9 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas as rl_canvas
-from reportlab.platypus import (Image, KeepTogether, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table,
+from reportlab.platypus import (Flowable, KeepTogether, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table,
                                 TableStyle)
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
@@ -66,12 +66,17 @@ S = {
     "small": ParagraphStyle("s", parent=_ss["BodyText"], fontName=_FONT, fontSize=7.5, leading=9.5),
     "cell": ParagraphStyle("c", parent=_ss["BodyText"], fontName=_FONT, fontSize=7.5, leading=9),
     "cellr": ParagraphStyle("cr", parent=_ss["BodyText"], fontName=_FONT, fontSize=7.5, leading=9, alignment=TA_RIGHT),
+    "h3": ParagraphStyle("h3", parent=_ss["BodyText"], fontName=_FONT, fontSize=9, leading=11.5),
+    "metak": ParagraphStyle("mk", parent=_ss["BodyText"], fontName=_FONT_BOLD, fontSize=10, leading=13),
+    "metav": ParagraphStyle("mv", parent=_ss["BodyText"], fontName=_FONT, fontSize=10, leading=13),
+    "cover_org": ParagraphStyle("co", parent=_ss["Title"], fontName=_FONT, fontSize=16, leading=20),
+    "cover_title": ParagraphStyle("ct", parent=_ss["Title"], fontName=_FONT_BOLD, fontSize=28, leading=34),
+    "cover_sub": ParagraphStyle("cs", parent=_ss["Title"], fontName=_FONT, fontSize=14, leading=19, spaceAfter=0),
     "cellb": ParagraphStyle("cb", parent=_ss["BodyText"], fontName=_FONT_BOLD, fontSize=7.5, leading=9),
 }
 PAGE_W, PAGE_H = letter
 MARGIN = 0.6 * inch
 FRAME_W = PAGE_W - 2 * MARGIN
-FRAME_H = PAGE_H - 2 * MARGIN - 0.3 * inch
 
 
 def P(text, style="body") -> Paragraph:
@@ -109,57 +114,109 @@ def _grid(data, widths, header_rows=1, zebra=True, extra=None) -> Table:
     return t
 
 
-def _kv(rows: list[tuple[str, object]], w1=1.45 * inch) -> Table:
-    data = [[PM(f"<b>{escape(k)}</b>", "cell"), P(v, "cell")] for k, v in rows]
-    t = Table(data, colWidths=[w1, FRAME_W - w1])
+def _kv(rows: list[tuple[str, object]], w1=1.45 * inch, style="cell") -> Table:
+    data = [[PM(f"<b>{escape(k)}</b>", style), P(v, style)] for k, v in rows]
+    t = Table(data, colWidths=[w1, FRAME_W - 12 - w1])
     t.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 2),
                            ("TOPPADDING", (0, 0), (-1, -1), 1), ("BOTTOMPADDING", (0, 0), (-1, -1), 1)]))
     return t
 
 
 # --------------------------------------------------------------------------- PDF assembly
-@dataclass
-class _Doc:
-    """Accumulates PDF parts in order and records a footer label for every resulting page."""
-    writer: PdfWriter = field(default_factory=PdfWriter)
-    labels: list[str] = field(default_factory=list)
+class _Mark(Flowable):
+    """Zero-size flowable that sets the footer label for the page it lands on (and later pages)."""
 
-    def add_flowables(self, flowables: list, label: str) -> None:
+    def __init__(self, doc: "_AuditDoc", label: str):
+        super().__init__()
+        self._d, self._label = doc, label
+
+    def wrap(self, aw, ah):
+        return 0, 0
+
+    def draw(self):
+        self._d.current_label = self._label
+        self._d.page_labels[self.canv.getPageNumber()] = self._label
+
+
+BODY_H = PAGE_H - MARGIN - (MARGIN + 0.25 * inch) - 12 - 4  # usable frame height (frame padding + safety)
+
+
+class _Block(Flowable):
+    """Caption flowables followed by attachment content scaled to the page frame width.
+
+    The content keeps its aspect ratio and is as wide as the frame (height-limited for tall content). If the space
+    left on the current page holds it at >= ``min_ratio`` of that size it is shrunk to fit there, so an attachment
+    can sit directly under the transaction details; otherwise the whole block moves to the next page.
+    """
+
+    def __init__(self, head: list, iw: float, ih: float, draw_fn, min_ratio: float = 0.6):
+        super().__init__()
+        self.head, self.iw, self.ih, self._draw_fn, self.min_ratio = head, max(iw, 1.0), max(ih, 1.0), draw_fn, min_ratio
+
+    def wrap(self, aw, ah):
+        self.hs = []
+        hh = 0.0
+        for f in self.head:
+            _, h = f.wrap(aw, ah)
+            sb, sa = f.getSpaceBefore(), f.getSpaceAfter()
+            self.hs.append((f, h, sb, sa))
+            hh += h + sb + sa
+        s = min(aw / self.iw, (BODY_H - hh) / self.ih)
+        fw, fh = self.iw * s, self.ih * s
+        if hh + fh > ah and ah - hh >= fh * self.min_ratio:
+            r = (ah - hh) / fh
+            fw, fh = fw * r, fh * r
+        self.aw, self.fw, self.fh, self.hh = aw, fw, fh, hh
+        self.width, self.height = aw, hh + fh
+        return self.width, self.height
+
+    def drawOn(self, canvas, x, y, _sW=0):
+        cur = y + self.height
+        for f, h, sb, sa in self.hs:
+            cur -= sb + h
+            f.drawOn(canvas, x, cur)
+            cur -= sa
+        self._draw_fn(canvas, x + (self.aw - self.fw) / 2, y, self.fw, self.fh)
+
+
+class _AuditDoc(SimpleDocTemplate):
+    def __init__(self, buf, **kw):
+        super().__init__(buf, pagesize=letter, leftMargin=MARGIN, rightMargin=MARGIN, topMargin=MARGIN,
+                         bottomMargin=MARGIN + 0.25 * inch, **kw)
+        self.current_label = ""
+        self.page_labels: dict[int, str] = {}
+        self.slots: list[tuple[int, float, float, float, float, object]] = []  # page, x, y, w, h, pypdf page
+
+    def afterPage(self):
+        self.page_labels.setdefault(self.page, self.current_label)
+
+
+def _stamp_and_write(reader_bytes: bytes, doc: _AuditDoc, path: str, title: str) -> int:
+    """Merges the reserved PDF-attachment slots (vector, scaled) and stamps footers."""
+    writer = PdfWriter(clone_from=PdfReader(io.BytesIO(reader_bytes)))
+    for page_no, x, y, w, h, src in doc.slots:
+        box = src.cropbox
+        sw, sh = float(box.width), float(box.height)
+        s = min(w / sw, h / sh)
+        op = (Transformation().translate(-float(box.left), -float(box.bottom)).scale(s, s)
+              .translate(x + (w - sw * s) / 2, y + (h - sh * s) / 2))
+        writer.pages[page_no - 1].merge_transformed_page(src, op, over=True)
+    total = len(writer.pages)
+    for i, page in enumerate(writer.pages):
+        w, h = float(page.mediabox.width), float(page.mediabox.height)
         buf = io.BytesIO()
-        SimpleDocTemplate(buf, pagesize=letter, leftMargin=MARGIN, rightMargin=MARGIN, topMargin=MARGIN,
-                          bottomMargin=MARGIN + 0.25 * inch, title="End of Year Audit Report").build(flowables)
+        c = rl_canvas.Canvas(buf, pagesize=(w, h))
+        c.setFont(_FONT, 7)
+        c.setFillColor(colors.HexColor("#444444"))
+        c.drawString(18, 10, f"{title}  ·  {doc.page_labels.get(i + 1, '')}"[:160])
+        c.drawRightString(w - 18, 10, f"Page {i + 1} of {total}")
+        c.save()
         buf.seek(0)
-        for page in PdfReader(buf).pages:
-            self.writer.add_page(page)
-            self.labels.append(label)
-
-    def add_pdf(self, data: bytes, label: str) -> int:
-        reader = PdfReader(io.BytesIO(data))
-        if reader.is_encrypted:
-            reader.decrypt("")
-        n = 0
-        for page in reader.pages:
-            self.writer.add_page(page)
-            self.labels.append(label)
-            n += 1
-        return n
-
-    def finish(self, path: str, title: str) -> None:
-        total = len(self.writer.pages)
-        for i, page in enumerate(self.writer.pages):
-            w, h = float(page.mediabox.width), float(page.mediabox.height)
-            buf = io.BytesIO()
-            c = rl_canvas.Canvas(buf, pagesize=(w, h))
-            c.setFont(_FONT, 7)
-            c.setFillColor(colors.HexColor("#444444"))
-            c.drawString(18, 10, f"{title}  ·  {self.labels[i]}"[:160])
-            c.drawRightString(w - 18, 10, f"Page {i + 1} of {total}")
-            c.save()
-            buf.seek(0)
-            page.merge_page(PdfReader(buf).pages[0])
-        self.writer.add_metadata({"/Title": title, "/Producer": "Financial Management POC"})
-        with open(path, "wb") as fh:
-            self.writer.write(fh)
+        page.merge_page(PdfReader(buf).pages[0])
+    writer.add_metadata({"/Title": title, "/Producer": "Financial Management POC"})
+    with open(path, "wb") as fh:
+        writer.write(fh)
+    return total
 
 
 def _attachment_bytes(settings, a: Attachment) -> tuple[bytes | None, str]:
@@ -173,19 +230,58 @@ def _attachment_bytes(settings, a: Attachment) -> tuple[bytes | None, str]:
     return data, "SHA-256 verified"
 
 
-def _image_flowables(data: bytes, caption: list) -> list:
-    with PILImage.open(io.BytesIO(data)) as im:
-        w, h = im.size
-    avail_h = FRAME_H - 1.1 * inch
-    scale = min(FRAME_W / w, avail_h / h, 1.0 if w < 200 else 10)
-    return [PageBreak(), *caption, Spacer(1, 6), Image(io.BytesIO(data), width=w * scale, height=h * scale)]
+def _frame_box(canvas, x, y, w, h):
+    canvas.saveState()
+    canvas.setStrokeColor(colors.HexColor("#c3c9d0"))
+    canvas.setLineWidth(0.5)
+    canvas.rect(x - 1, y - 1, w + 2, h + 2)
+    canvas.restoreState()
 
 
-def _attachment_caption(label: str, a: Attachment, integrity: str, users: dict[int, str]) -> list:
-    return [PM(f"<b>{escape(label)}</b>", "h2"),
-            _kv([("File", a.original_filename), ("Type / size", f"{a.mime_type} · {a.size_bytes:,} bytes"),
-                 ("Uploaded", f"{a.uploaded_at:%Y-%m-%d %H:%M} UTC by {users.get(a.uploaded_by_user_id, '?')}"),
-                 ("SHA-256", f"{a.sha256}  ({integrity})")])]
+def _attachment_flowables(doc: _AuditDoc, settings, a: Attachment, heading: str, users: dict[int, str]) -> list:
+    """Caption line followed by the attachment's content rendered within the page width."""
+    data, integrity = _attachment_bytes(settings, a)
+    cap = PM(f"<b>{escape(heading)}</b> — {escape(a.original_filename)}", "h3")
+    meta = P(f"{a.mime_type} · {a.size_bytes:,} bytes · uploaded {a.uploaded_at:%Y-%m-%d %H:%M} UTC by "
+             f"{users.get(a.uploaded_by_user_id, '?')} · SHA-256 {a.sha256} ({integrity})", "small")
+    head = [Spacer(1, 6), cap, meta, Spacer(1, 3)]
+    if data is None:
+        return head + [P(f"Attachment content unavailable: {integrity}.", "body")]
+    if a.mime_type.startswith("image/"):
+        try:
+            with PILImage.open(io.BytesIO(data)) as im:
+                iw, ih = im.size
+
+            def draw_img(canvas, x, y, w, h, _d=data):
+                canvas.drawImage(ImageReader(io.BytesIO(_d)), x, y, w, h, preserveAspectRatio=True, mask="auto")
+                _frame_box(canvas, x, y, w, h)
+            return [_Block(head, iw, ih, draw_img)]
+        except Exception:
+            return head + [P("Image could not be rendered.", "body")]
+    try:
+        reader = PdfReader(io.BytesIO(data))
+        if reader.is_encrypted and not reader.decrypt(""):
+            raise ValueError("encrypted")
+        pages = list(reader.pages)
+        if not pages:
+            raise ValueError("no pages")
+        for p in pages:
+            p.transfer_rotation_to_content()
+            _ = p.cropbox.width  # validate the page box
+    except Exception:
+        return head + [P("This PDF could not be embedded (malformed or protected). The stored file is retained and "
+                         "identified by its SHA-256 above.", "body")]
+    out: list = []
+    for n, p in enumerate(pages):
+        def draw_pdf(canvas, x, y, w, h, _p=p):
+            doc.slots.append((canvas.getPageNumber(), x, y, w, h, _p))
+            _frame_box(canvas, x, y, w, h)
+        pw, ph = float(p.cropbox.width), float(p.cropbox.height)
+        if n == 0:
+            out.append(_Block(head + ([P(f"Page 1 of {len(pages)}", "small")] if len(pages) > 1 else []), pw, ph, draw_pdf))
+        else:
+            out.append(_Block([Spacer(1, 6), P(f"{heading} — page {n + 1} of {len(pages)}", "small")], pw, ph, draw_pdf))
+    return out
 
 
 # --------------------------------------------------------------------------- data selection
@@ -224,37 +320,30 @@ def _attachments_for(db: Session, t: RegisterTransaction) -> tuple[list[Attachme
 
 
 # --------------------------------------------------------------------------- End of Year Audit report
-def build_audit_report(db: Session, ctx, settings, fy: FiscalYear, account_id: int | None = None,
-                       include_void: bool = True) -> tuple[str, str, dict]:
-    """Returns (temp file path, download filename, summary). Caller deletes the file."""
-    ws = db.get(Workspace, ctx.workspace_id)
-    users = {u.id: u.username for u in db.scalars(select(User).where(User.workspace_id == ctx.workspace_id))}
-    accts = {a.id: a for a in db.scalars(select(BankAccount).where(BankAccount.workspace_id == ctx.workspace_id))}
-    if account_id is not None and account_id not in accts:
-        raise validation("Bank Account not found.", "bank_account_id")
-    title = f"End of Year Audit Report — {fy.display_name} — {ws.name}"
-    doc = _Doc()
-    tree = bsvc.tree(db, fy)
-    check = closure_check(db, fy)
-    txns = audit_transactions(db, ctx.workspace_id, fy, account_id, include_void)
-    doc_items = {i["transaction_id"]: i for i in documentation_review(db, fy)}
-    fy_atts = list(db.scalars(select(Attachment).where(Attachment.fiscal_year_id == fy.id, Attachment.active.is_(True))
-                              .order_by(Attachment.id)))
-    now = utcnow()
+def _txn_description(t: RegisterTransaction) -> str:
+    live = t.live_allocations
+    descs = [a.description for a in live if a.description]
+    if len(live) <= 1:
+        return descs[0] if descs else "—"
+    return "\n".join(f"{i + 1}. {a.description or '(no description)'} — {money(a.amount_cents)}" for i, a in enumerate(live))
 
-    # ---- cover + budget
-    f: list = [PM(escape(ws.name), "h1"), PM("End of Year Audit Report", "title"), Spacer(1, 6),
-               _kv([("Fiscal Year", f"{fy.display_name} ({fy.start_date} – {fy.end_date})"),
-                    ("Status", fy.status.title()),
-                    ("Approved", f"{fy.approved_at:%Y-%m-%d %H:%M} UTC by {users.get(fy.approved_by_user_id, '?')}"
-                     if fy.approved_at else "—"),
-                    ("Closed", f"{fy.closed_at:%Y-%m-%d %H:%M} UTC by {users.get(fy.closed_by_user_id, '?')}"
-                     if fy.closed_at else "—"),
-                    ("Accounts", accts[account_id].account_name + " - " + bank.masked(accts[account_id])
-                     if account_id else "All register-enabled accounts"),
-                    ("Transactions", f"{len(txns)} ({'including' if include_void else 'excluding'} VOID)"),
-                    ("Generated", f"{now:%Y-%m-%d %H:%M} UTC by {ctx.user.username}")]),
-               Spacer(1, 10), PM("Fiscal Year Budget", "h1")]
+
+def _meta_table(rows: list[tuple[str, object]]) -> Table:
+    """The seven headline transaction fields, printed large at the top of each transaction page."""
+    w1 = 1.55 * inch
+    data = [[PM(f"<b>{escape(k)}</b>", "metak"), P(v, "metav")] for k, v in rows]
+    t = Table(data, colWidths=[w1, FRAME_W - 12 - w1])
+    t.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"),
+                           ("BOX", (0, 0), (-1, -1), 0.6, colors.HexColor("#6b7682")),
+                           ("LINEBELOW", (0, 0), (-1, -2), 0.25, colors.HexColor("#c3c9d0")),
+                           ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#eef1f5")),
+                           ("LEFTPADDING", (0, 0), (-1, -1), 5), ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+                           ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3)]))
+    return t
+
+
+def _budget_section(tree: dict) -> list:
+    f: list = [PM("Fiscal Year Budgets", "h1")]
     qn = [q["name"] for q in tree["quarters"]]
     for label, rows, summ in (("Income", tree["income"], tree["income_summary"]),
                               ("Expense", tree["expense"], tree["expense_summary"])):
@@ -270,152 +359,207 @@ def build_audit_report(db: Session, ctx, settings, fy: FiscalYear, account_id: i
                      *[P(money(q), "cellr") for q in summ["quarters"]], PM(f"<b>{money(summ['actual'])}</b>", "cellr"),
                      PM(f"<b>{money(summ['remaining'])}</b>", "cellr")])
         if len(data) == 2:
-            data.insert(1, [P(f"No {label.lower()} budgets.", "cell")] + [""] * 8)
-        f.append(_grid(data, [2.0 * inch, 1.05 * inch, 0.75 * inch] + [0.52 * inch] * 4 + [0.7 * inch, 0.72 * inch]))
-        f.append(Spacer(1, 6))
+            data.insert(1, [P(f"No {label.lower()} budgets.", "cell")] + [""] * (len(qn) + 4))
+        f.append(_grid(data, [1.95 * inch, 1.0 * inch, 0.75 * inch] + [0.52 * inch] * len(qn) + [0.7 * inch, 0.72 * inch]))
+        f.append(Spacer(1, 8))
     if tree["budget_zero"]:
         b0 = tree["budget_zero"]
-        f.append(P(f"Protected Budget 0 (non-budget activity such as transfers): inflows {money(b0.get('inflow'))}, "
-                   f"outflows {money(b0.get('outflow'))}.", "small"))
-    f += [Spacer(1, 8), PM("Closure readiness and review", "h2")]
-    items = [f"Blocker: {b['message']}" for b in check["blockers"]] + [f"Warning: {w['message']}" for w in check["warnings"]]
-    f += [P(x, "small") for x in (items or ["No blockers or warnings."])]
-    # transaction index
-    f += [PageBreak(), PM("Transaction index", "h1"),
-          P("Each transaction below starts on a new page and is immediately followed by all of its attachments.", "small"),
-          Spacer(1, 4)]
-    idx = [[PM(f"<b>{h}</b>", "cell") for h in ("#", "Date", "Account", "Type", "Entity", "Amount", "Status", "Att.")]]
-    att_cache = {}
-    for t in txns:
-        att_cache[t.id] = _attachments_for(db, t)
-        n_att = len(att_cache[t.id][0]) + sum(len(v) for v in att_cache[t.id][1].values())
-        a = accts[t.bank_account_id]
-        idx.append([P(t.id, "cell"), P(t.transaction_date, "cell"), P(f"{a.account_name} {bank.masked(a)}", "cell"),
-                    P(t.transaction_type.title(), "cell"), P(t.parent_entity.display_name if t.parent_entity else "", "cell"),
-                    P(money(t.total_cents), "cellr"), P(t.status + ("" if t.clear_date or t.status == "VOID" else " (uncleared)"), "cell"),
-                    P(n_att if n_att else ("none*" if t.no_attachment else "0"), "cell")])
-    if len(idx) == 1:
-        f.append(P("No transactions for this Fiscal Year.", "body"))
-    else:
-        f.append(_grid(idx, [0.45 * inch, 0.75 * inch, 1.75 * inch, 0.8 * inch, 1.55 * inch, 0.85 * inch, 0.85 * inch,
-                             0.4 * inch]))
-    f.append(P("* marked 'no attachment will be provided'", "small"))
-    doc.add_flowables(f, "Budget and index")
+        f.append(P(f"Protected Budget 0 (non-budget activity such as transfers between accounts): inflows "
+                   f"{money(b0.get('inflow'))}, outflows {money(b0.get('outflow'))}.", "small"))
+    return f
 
-    # ---- transactions, each followed by its attachments
+
+def _long_date(d: dt.date) -> str:
+    return f"{d:%B} {d.day}, {d.year}"  # portable (no %-d on Windows)
+
+
+def _id_list(ids: list[int], limit: int = 60) -> str:
+    s = ", ".join(f"#{i}" for i in ids[:limit])
+    return s + (f" and {len(ids) - limit} more" if len(ids) > limit else "")
+
+
+def build_audit_report(db: Session, ctx, settings, fy: FiscalYear, account_id: int | None = None,
+                       include_void: bool = True) -> tuple[str, str, dict]:
+    """Returns (temp file path, download filename, summary). Caller deletes the file.
+
+    Layout (v1.2.1, CR-002): page 1 title page; page 2 Fiscal Year Review introduction; pages 3-n budgets; then at
+    least one page per transaction - the headline fields at the top and every attachment rendered underneath within
+    the 8.5x11 page width; finally the Fiscal Year supporting documents.
+    """
+    ws = db.get(Workspace, ctx.workspace_id)
+    users = {u.id: u.username for u in db.scalars(select(User).where(User.workspace_id == ctx.workspace_id))}
+    accts = {a.id: a for a in db.scalars(select(BankAccount).where(BankAccount.workspace_id == ctx.workspace_id))}
+    if account_id is not None and account_id not in accts:
+        raise validation("Bank Account not found.", "bank_account_id")
+    title = f"End of Year Audit Report — {fy.display_name} — {ws.name}"
+    buf = io.BytesIO()
+    doc = _AuditDoc(buf, title="End of Year Audit Report", author=ws.name)
+    tree = bsvc.tree(db, fy)
+    check = closure_check(db, fy)
+    txns = audit_transactions(db, ctx.workspace_id, fy, account_id, include_void)
+    doc_review = documentation_review(db, fy)
+    doc_items = {i["transaction_id"]: i for i in doc_review}
+    fy_atts = list(db.scalars(select(Attachment).where(Attachment.fiscal_year_id == fy.id, Attachment.active.is_(True))
+                              .order_by(Attachment.id)))
+    att_cache = {t.id: _attachments_for(db, t) for t in txns}
+    now = utcnow()
+    scope = (accts[account_id].account_name + " - " + bank.masked(accts[account_id]) if account_id
+             else "All register-enabled accounts")
+
+    # ---- page 1: title page
+    f: list = [_Mark(doc, "Title"), Spacer(1, 1.6 * inch), PM(escape(ws.name), "cover_org"), Spacer(1, 10),
+               PM("End of Year Audit Report", "cover_title"), Spacer(1, 6),
+               PM(f"Fiscal Year {escape(fy.display_name)}", "cover_sub"),
+               PM(f"{_long_date(fy.start_date)} – {_long_date(fy.end_date)}", "cover_sub"), Spacer(1, 1.2 * inch),
+               _kv([("Fiscal Year status", fy.status.title()),
+                    ("Approved", f"{fy.approved_at:%Y-%m-%d %H:%M} UTC by {users.get(fy.approved_by_user_id, '?')}"
+                     if fy.approved_at else "—"),
+                    ("Closed", f"{fy.closed_at:%Y-%m-%d %H:%M} UTC by {users.get(fy.closed_by_user_id, '?')}"
+                     if fy.closed_at else "—"),
+                    ("Accounts", scope),
+                    ("Transactions", f"{len(txns)} ({'including' if include_void else 'excluding'} VOID)"),
+                    ("Generated", f"{now:%Y-%m-%d %H:%M} UTC by {ctx.user.username}")], w1=1.6 * inch),
+               PageBreak()]
+
+    # ---- page 2: Fiscal Year Review introduction
+    active = [t for t in txns if t.status == "ACTIVE"]
+    dep = sum(t.total_cents for t in active if t.transaction_type == "DEPOSIT")
+    wd = sum(t.total_cents for t in active if t.transaction_type == "WITHDRAWAL")
+    n_att = sum(len(v[0]) + sum(len(x) for x in v[1].values()) for v in att_cache.values())
+    missing = [i["transaction_id"] for i in doc_review if i["category"] == "MISSING_ATTACHMENTS"]
+    marked = [i["transaction_id"] for i in doc_review if i["category"] == "NO_ATTACHMENT_MARKED"]
+    in_report = {t.id for t in txns}
+    per_acct: dict[int, list[int]] = {}
+    for t in active:
+        per_acct.setdefault(t.bank_account_id, [0, 0, 0])
+        row = per_acct[t.bank_account_id]
+        row[0] += 1
+        row[1 if t.transaction_type == "DEPOSIT" else 2] += t.total_cents
+    f += [_Mark(doc, "Fiscal Year Review"), PM("Fiscal Year Review", "h1"),
+          P(f"This report documents Fiscal Year {fy.display_name} ({fy.start_date} to {fy.end_date}) for {ws.name}. "
+            "It is organised as follows: this review summary; the Fiscal Year budgets (page 3 onward); then every "
+            "transaction of the year on its own page(s), with the transaction details at the top and each supporting "
+            "attachment reproduced beneath them; and finally the Fiscal Year supporting documents.", "body"),
+          Spacer(1, 8), PM("Activity summary", "h2"),
+          _kv([("Transactions", f"{len(txns)} in this report — {len(active)} active, {len(txns) - len(active)} VOID"),
+               ("Deposits (active)", money(dep)), ("Withdrawals (active)", money(wd)), ("Net", money(dep - wd)),
+               ("Attachments", f"{n_att} transaction/allocation attachment(s); {len(fy_atts)} Fiscal Year document(s)")])]
+    if per_acct:
+        data = [[PM(f"<b>{h}</b>", "cell") for h in ("Account", "Transactions", "Deposits", "Withdrawals")]]
+        for aid, (n, d, w) in sorted(per_acct.items(), key=lambda kv: accts[kv[0]].account_name.lower()):
+            a = accts[aid]
+            data.append([P(f"{a.account_name} - {bank.masked(a)}", "cell"), P(n, "cellr"), P(money(d), "cellr"),
+                         P(money(w), "cellr")])
+        f += [Spacer(1, 4), _grid(data, [3.4 * inch, 1.0 * inch, 1.3 * inch, 1.3 * inch])]
+    f += [Spacer(1, 8), PM("Closure readiness", "h2")]
+    items = [f"Blocker: {b['message']}" for b in check["blockers"]] + [f"Warning: {w['message']}" for w in check["warnings"]]
+    f += [P("• " + x, "body") for x in (items or ["No blockers or warnings."])]
+    f += [Spacer(1, 8), PM("Documentation review", "h2"),
+          P("A transaction is documented when it has an attachment or is marked 'no attachment will be provided'. "
+            "When the transaction itself has neither, every allocation (child) must have an attachment or its own "
+            "marker. These items are review warnings; they do not block closure.", "small"), Spacer(1, 2)]
+    if not missing and not marked:
+        f.append(P("• All applicable transactions are documented by attachments.", "body"))
+    if missing:
+        f.append(P(f"• Missing supporting attachments ({len(missing)}): {_id_list(missing)}", "body"))
+    if marked:
+        f.append(P(f"• Marked 'no attachment will be provided' ({len(marked)}): {_id_list(marked)}", "body"))
+    outside = [i for i in missing + marked if i not in in_report]
+    if outside:
+        f.append(P(f"({len(outside)} of these are outside this report's account/VOID filter.)", "small"))
+    f.append(PageBreak())
+
+    # ---- pages 3-n: budgets
+    f += [_Mark(doc, "Budgets")] + _budget_section(tree) + [PageBreak()]
+
+    # ---- one or more pages per transaction
+    if not txns:
+        f += [_Mark(doc, "Transactions"), PM("Transactions", "h1"), P("No transactions for this Fiscal Year.", "body")]
     for t in txns:
         a = accts[t.bank_account_id]
-        label = f"Transaction #{t.id}"
         parent_atts, by_alloc, removed = att_cache[t.id]
         live = t.live_allocations
-        flow: list = [PM(f"Transaction #{t.id} — {escape(t.transaction_type.title())} — {escape(money(t.total_cents))}"
-                         + (" — <font color='#b3261e'>VOID</font>" if t.status == "VOID" else ""), "h1")]
-        kv = [("Account", f"{a.account_name} - {bank.masked(a)}"),
-              ("Transaction date", t.transaction_date), ("Clear/Post date", t.clear_date or "Uncleared"),
-              ("Entry timestamp", f"{t.entry_timestamp:%Y-%m-%d %H:%M:%S} UTC (by {users.get(t.created_by_user_id, '?')})"),
-              ("Entity", f"{t.parent_entity.display_name} ({t.parent_entity.entity_number})" if t.parent_entity else "—"),
-              ("Check number", t.check_number or "—"), ("Status", t.status)]
-        if t.status == "VOID":
-            kv.append(("Void", f"{t.void_reason} — {t.voided_at:%Y-%m-%d %H:%M} UTC by {users.get(t.voided_by_user_id, '?')}"
-                       if t.voided_at else t.void_reason))
+        void = t.status == "VOID"
+        f += [_Mark(doc, f"Transaction #{t.id}"),
+              PM(f"Transaction #{t.id}" + (" — <font color='#b3261e'>VOID</font>" if void else ""), "h1"),
+              P(f"{a.account_name} - {bank.masked(a)}", "small"), Spacer(1, 4)]
+        ent = t.parent_entity
+        f.append(_meta_table([
+            ("Transaction date", t.transaction_date),
+            ("Entity", f"{ent.display_name} ({ent.entity_number})" if ent else "—"),
+            ("Transaction type", t.transaction_type.title()),
+            ("Amount", money(t.total_cents)),
+            ("Description", _txn_description(t)),
+            ("Clear Date", t.clear_date or "Uncleared"),
+            ("Notes", t.notes or "—")]))
+        extra = [("Status", t.status), ("Check number", t.check_number or "—"),
+                 ("Entered", f"{t.entry_timestamp:%Y-%m-%d %H:%M} UTC by {users.get(t.created_by_user_id, '?')}")]
+        if void:
+            extra.append(("Void", f"{t.void_reason} — {t.voided_at:%Y-%m-%d %H:%M} UTC by "
+                                  f"{users.get(t.voided_by_user_id, '?')}" if t.voided_at else t.void_reason))
         if t.transfer_group:
             other = db.scalar(select(RegisterTransaction).where(RegisterTransaction.transfer_group == t.transfer_group,
                                                                 RegisterTransaction.id != t.id))
             if other is not None:
                 oa = accts[other.bank_account_id]
-                kv.append(("Transfer", f"{'to' if t.transaction_type == 'WITHDRAWAL' else 'from'} {oa.account_name} "
-                                       f"{bank.masked(oa)} (transaction #{other.id})"))
+                extra.append(("Transfer", f"{'to' if t.transaction_type == 'WITHDRAWAL' else 'from'} {oa.account_name} "
+                                          f"{bank.masked(oa)} (transaction #{other.id})"))
         if t.no_attachment:
-            kv.append(("Documentation", f"Marked 'no attachment will be provided': {t.no_attachment_reason or '(no reason)'}"))
+            extra.append(("Documentation", f"Marked 'no attachment will be provided': {t.no_attachment_reason or '(no reason)'}"))
         di = doc_items.get(t.id)
         if di and di["category"] == "MISSING_ATTACHMENTS":
-            kv.append(("Documentation review", "WARNING: supporting attachments missing"))
-        kv.append(("Notes", t.notes or "—"))
-        flow += [_kv(kv), Spacer(1, 6), PM("Allocations", "h2")]
-        rows = [[PM(f"<b>{h}</b>", "cell") for h in ("Fiscal Year / Budget", "Entity", "Invoice #", "Description",
-                                                     "Notes", "Amount", "Review")]]
+            extra.append(("Documentation review", "WARNING: supporting attachments missing"))
+        f += [Spacer(1, 4), _kv(extra, w1=1.2 * inch, style="small")]
+        # allocations (budget detail) - compact
+        rows = [[PM(f"<b>{h}</b>", "cell") for h in ("Budget", "Entity", "Invoice #", "Description / notes", "Docs",
+                                                     "Amount")]]
         for al in live:
             b = al.budget
             parent = db.get(Budget, b.parent_budget_id) if b.parent_budget_id else None
             lbl = budget_label(parent, None) if b.is_other and parent and not bsvc.children_of(db, parent)[0] else budget_label(b, parent)
             fyb = db.get(FiscalYear, b.fiscal_year_id)
             revs = db.scalars(select(FiscalYearReview).where(FiscalYearReview.transaction_allocation_id == al.id)).all()
+            desc = " — ".join(x for x in (al.description, al.notes) if x)
+            if revs:
+                desc += ("\n" if desc else "") + "Review: " + "; ".join(
+                    f"{r.category} {r.status}" + (f" ({r.review_note})" if r.review_note else "") for r in revs)
+            docs = (f"{len(by_alloc.get(al.id, []))} att." if by_alloc.get(al.id) else
+                    ("No attachment" + (f": {al.no_attachment_reason}" if al.no_attachment_reason else "")
+                     if al.no_attachment else "—"))
             rows.append([P(f"{fyb.display_name} / {lbl}", "cell"), P(al.entity.display_name if al.entity else "", "cell"),
-                         P(al.invoice_number or "", "cell"), P(al.description or "", "cell"), P(al.notes or "", "cell"),
-                         P(money(al.amount_cents), "cellr"),
-                         P("; ".join(f"{r.category} {r.status}" + (f" ({r.review_note})" if r.review_note else "") for r in revs), "cell")])
-        flow.append(_grid(rows, [1.55 * inch, 1.0 * inch, 0.7 * inch, 1.45 * inch, 1.2 * inch, 0.7 * inch, 0.7 * inch]))
+                         P(al.invoice_number or "", "cell"), P(desc, "cell"), P(docs, "cell"),
+                         P(money(al.amount_cents), "cellr")])
+        f += [Spacer(1, 4), _grid(rows, [1.7 * inch, 1.1 * inch, 0.65 * inch, 2.05 * inch, 0.75 * inch, 0.8 * inch])]
         ordered: list[tuple[str, Attachment]] = [("transaction", x) for x in parent_atts]
-        for al in live:
-            ordered += [(f"allocation {al.id}", x) for x in by_alloc.get(al.id, [])]
-        flow += [Spacer(1, 6), PM("Attachments", "h2")]
-        if ordered:
-            flow.append(_grid([[PM(f"<b>{h}</b>", "cell") for h in ("#", "File", "Attached to", "Type", "SHA-256")]] +
-                              [[P(i + 1, "cell"), P(x.original_filename, "cell"), P(k, "cell"), P(x.mime_type, "cell"),
-                                P(x.sha256, "small")] for i, (k, x) in enumerate(ordered)],
-                              [0.3 * inch, 2.0 * inch, 1.0 * inch, 1.0 * inch, 3.0 * inch]))
-        else:
-            flow.append(P("No attachments." + (" Marked 'no attachment will be provided'." if t.no_attachment else ""), "small"))
-        if removed:
-            flow.append(P("Removed attachments (retained in history, not reproduced): " + ", ".join(
-                f"{x.original_filename} (removed {x.removed_at:%Y-%m-%d})" for x in removed), "small"))
-        # images are appended inside this part; PDFs are merged right after, in attachment order
-        pending_pdf: list[tuple[str, Attachment, bytes, str]] = []
-
-        def flush_part():
-            doc.add_flowables(flow, label)
-            flow.clear()
-
+        for i, al in enumerate(live):
+            ordered += [(f"allocation {i + 1}" if len(live) > 1 else "allocation", x) for x in by_alloc.get(al.id, [])]
+        if not ordered:
+            f += [Spacer(1, 6), P("No attachments." + (" Marked 'no attachment will be provided'." if t.no_attachment
+                                                       else ""), "small")]
         for i, (k, x) in enumerate(ordered):
-            cap_label = f"{label} · Attachment {i + 1} of {len(ordered)}"
-            data, integrity = _attachment_bytes(settings, x)
-            cap = _attachment_caption(cap_label, x, integrity, users)
-            if data is None:
-                flow += [PageBreak(), *cap, P(f"Attachment content unavailable: {integrity}.", "body")]
-                continue
-            if x.mime_type.startswith("image/"):
-                try:
-                    flow += _image_flowables(data, cap)
-                except Exception:
-                    flow += [PageBreak(), *cap, P("Image could not be rendered.", "body")]
-                continue
-            # PDF: caption page is part of the flowables, then the attachment pages are merged in order
-            flow += [PageBreak(), *cap, P("The attachment's pages follow.", "small")]
-            flush_part()
-            try:
-                doc.add_pdf(data, f"{cap_label}: {x.original_filename}")
-            except Exception:
-                doc.add_flowables([*cap, P("This PDF could not be embedded (malformed or protected). The stored file "
-                                           "is retained and identified by its SHA-256 above.", "body")], cap_label)
-        if flow:
-            flush_part()
-        del pending_pdf
+            f += _attachment_flowables(doc, settings, x, f"Attachment {i + 1} of {len(ordered)} ({k})", users)
+        if removed:
+            f += [Spacer(1, 4), P("Removed attachments (retained in history, not reproduced): " + ", ".join(
+                f"{x.original_filename} (removed {x.removed_at:%Y-%m-%d})" for x in removed), "small")]
+        f.append(PageBreak())
 
     # ---- Fiscal Year supporting documentation
-    ff: list = [PM("Fiscal Year supporting documentation", "h1")]
+    f += [_Mark(doc, "Supporting documentation"), PM("Fiscal Year supporting documentation", "h1")]
     if not fy_atts:
-        ff.append(P("No Fiscal Year supporting attachments.", "body"))
-    doc.add_flowables(ff, "Supporting documentation")
+        f.append(P("No Fiscal Year supporting attachments.", "body"))
     for i, x in enumerate(fy_atts):
-        cap_label = f"FY document {i + 1} of {len(fy_atts)}"
-        data, integrity = _attachment_bytes(settings, x)
-        cap = _attachment_caption(cap_label, x, integrity, users)
-        if data is None:
-            doc.add_flowables([*cap, P(f"Attachment content unavailable: {integrity}.", "body")], cap_label)
-        elif x.mime_type.startswith("image/"):
-            doc.add_flowables(_image_flowables(data, cap)[1:], cap_label)
-        else:
-            doc.add_flowables([*cap, P("The document's pages follow.", "small")], cap_label)
-            try:
-                doc.add_pdf(data, f"{cap_label}: {x.original_filename}")
-            except Exception:
-                doc.add_flowables([P("This PDF could not be embedded.", "body")], cap_label)
+        f += _attachment_flowables(doc, settings, x, f"FY document {i + 1} of {len(fy_atts)}", users)
 
+    doc.build(f)
     fd, path = tempfile.mkstemp(prefix="fmpoc-audit-", suffix=".pdf")
     os.close(fd)
-    doc.finish(path, title)
+    try:
+        pages = _stamp_and_write(buf.getvalue(), doc, path, title)
+    except Exception:
+        os.unlink(path)
+        raise
     fname = f"{fy.display_name}-end-of-year-audit-report.pdf"
-    return path, fname, {"transactions": len(txns), "pages": len(doc.labels)}
+    return path, fname, {"transactions": len(txns), "pages": pages}
 
 
 # --------------------------------------------------------------------------- Entity activity report

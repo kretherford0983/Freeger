@@ -295,17 +295,48 @@ test("CR-003: transfer between two register accounts from the register", async (
   await d.getByLabel("Amount").fill("300.00");
   await d.getByLabel("Transaction date").fill("2026-11-01");
   await d.getByLabel("Clear date (blank = uncleared)").fill("2026-11-02");
-  await expect(d).toContainText("Transfer to ******7777");
+  const ent = d.getByRole("combobox", { name: "Entity" });
+  await ent.fill("beta");
+  await page.getByRole("listbox").getByRole("option", { name: /Beta Services/ }).click();
+  await expect(ent).toHaveValue("Beta Services");
+  await expect(d).toContainText("Transfer to ******7777 for Beta Services");
   await d.getByRole("button", { name: "Record transfer" }).click();
   await expect(d).toHaveCount(0);
   const row = page.getByRole("row", { name: /2026-11-01/ }).first();
   await expect(row).toContainText("Transfer");
-  await expect(row).toContainText("Transfer to ******7777 for E2E Org");
+  await expect(row).toContainText("Transfer to ******7777 for Beta Services");
   await expect(row).toContainText("$300.00");
   await page.getByLabel("Register bank account").selectOption({ label: "Savings - ******7777" });
   const dep = page.getByRole("row", { name: /2026-11-01/ }).first();
-  await expect(dep).toContainText("Transfer from ******9012 for E2E Org");
+  await expect(dep).toContainText("Transfer from ******9012 for Beta Services");
   await expect(dep).toContainText("$300.00");
+});
+
+test("CR-005: per-allocation 'no attachment' flag on a split transaction", async ({ page }) => {
+  await login(page, "ru1", "Brand-New-Pass-99");
+  await page.getByRole("link", { name: "Register" }).click();
+  await page.getByRole("button", { name: "New transaction" }).click();
+  const t = page.getByRole("dialog", { name: /New transaction/ });
+  await t.getByLabel("Transaction date").fill("2026-11-05");
+  await t.getByRole("button", { name: "Split transaction" }).click();
+  for (const [i, amt] of [[1, "4.00"], [2, "6.00"]] as const) {
+    await t.getByLabel(`Allocation ${i} Fiscal Year`).selectOption({ label: "FY2027 — Draft" });
+    const sel = t.getByLabel(`Allocation ${i} Budget`);
+    await sel.selectOption((await sel.locator("option", { hasText: "1000-01 Travel" }).getAttribute("value"))!);
+    await t.getByLabel(`Allocation ${i} Amount`).fill(amt);
+  }
+  await t.getByLabel("Allocation 1 no attachment").click();
+  const warn = page.getByRole("dialog", { name: "No attachment?" });
+  await expect(warn).toContainText("allocation 1 only");
+  await warn.getByRole("button", { name: "Mark as no attachment" }).click();
+  await expect(t.getByLabel("Allocation 1 no attachment")).toBeChecked();
+  await expect(t.getByLabel("Allocation 2 no attachment")).not.toBeChecked();
+  await t.getByLabel("Allocation 1 reason (optional)").fill("Split postage - no receipt");
+  await t.getByRole("button", { name: "Save" }).click();
+  await expect(t).toHaveCount(0);
+  const row = page.getByRole("row", { name: /2026-11-05/ }).first();
+  await expect(row).toContainText("$10.00");
+  // parent has neither an attachment nor the flag and allocation 2 is undocumented -> listed as missing (checked below)
 });
 
 test("CR-002 / CR-005: reports page, audit PDF and entity report; documentation review warnings", async ({ page }) => {
@@ -328,5 +359,8 @@ test("CR-002 / CR-005: reports page, audit PDF and entity report; documentation 
   const review = page.getByRole("heading", { name: /Documentation review/ }).locator("..");
   await expect(review).toContainText("No attachment");
   await expect(review).toContainText("Monthly bank service fee - auto debit");
+  const splitRow = review.getByRole("row", { name: /2026-11-05/ });
+  await expect(splitRow).toContainText("Missing attachment");
+  await expect(splitRow).toContainText("1 of 2 allocations undocumented");
   await expect(page.getByText(/transaction\(s\) are marked 'no attachment will be provided'/)).toBeVisible();
 });

@@ -1,5 +1,10 @@
 # Acceptance-criteria results
 
+> **v1.2.1 update:** product-owner corrections to CR-002 (audit PDF layout with attachments rendered at page width),
+> CR-003 (transfer Entity) and CR-005 (split documentation rule + per-allocation no-attachment flag, migration 0004);
+> see implementation-notes.md §1a. Full regression: **138 backend tests and 12 E2E tests pass**; `pip-audit` and
+> `npm audit` report no vulnerabilities. All baseline criteria keep their status.
+>
 > **v1.2.0 update:** change requests CR-002…CR-006 (reports, transfers, no-attachment flag, documentation review,
 > searchable entity picker) added; see implementation-notes.md §1a. Full regression: **135 backend tests and 11 E2E
 > tests pass** (E2E also passes against the portable and PyInstaller Linux packages). All baseline criteria keep
