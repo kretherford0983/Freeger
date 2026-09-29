@@ -1,6 +1,6 @@
-import { Fragment, useEffect, useState, type FormEvent } from "react";
-import { api, money, qs, todayIso } from "../api";
-import { Attachments, EntityPicker, ErrorBox, Field, Loading, Modal, useConfirmable } from "../components";
+import { Fragment, useEffect, useRef, useState, type FormEvent } from "react";
+import { api, money, newRequestKey, qs, todayIso } from "../api";
+import { allocationLabel, Attachments, EntityPicker, ErrorBox, Field, Loading, Modal, PendingFiles, useConfirmable, GuardedForm } from "../components";
 import { useMe } from "../App";
 import { EntityForm } from "./Entities";
 
@@ -15,6 +15,15 @@ export default function Register() {
   const [modal, setModal] = useState<any>(null);
   const [showReviews, setShowReviews] = useState(new URLSearchParams(window.location.search).has("reviews"));
   const manage = can("transaction.manage");
+  // CR-015: the pinned header's height positions the pinned table headings directly below it
+  const stickyRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = stickyRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => el.parentElement?.style.setProperty("--register-sticky-h", `${el.offsetHeight}px`));
+    ro.observe(el);
+    return () => ro.disconnect();
+  });
 
   useEffect(() => {
     Promise.all([api.get("/api/bank-accounts"), api.get("/api/fiscal-years"), api.get(`/api/fiscal-years/natural?date=${todayIso()}`)]).then(([a, y, nat]) => {
@@ -34,7 +43,8 @@ export default function Register() {
   const acct = data?.bank_account;
   const set = (k: string) => (e: any) => setF({ ...f, [k]: e.target.value });
   return (
-    <div>
+    <div className="register-page">
+      <div className="register-sticky" ref={stickyRef}>
       <div className="page-head">
         <h1>Register</h1>
         <Field label="Bank account">
@@ -65,15 +75,23 @@ export default function Register() {
         <Field label="To"><input type="date" value={f.date_to} onChange={set("date_to")} /></Field>
         <Field label="Search"><input value={f.search} onChange={set("search")} placeholder="Entity, description, invoice, check #, amount" /></Field>
       </div>
+      {data && acct ? (
+        <div className="tiles">
+          <div className="tile"><div className="tile-label">Starting balance{data.date_from ? ` (as of ${data.date_from})` : " (opening)"}</div><div className="tile-value">{money(data.starting_balance)}</div></div>
+          <div className="tile"><div className="tile-label">Ending balance{data.date_to ? ` (${data.date_to})` : ""}</div><div className="tile-value">{money(data.ending_balance)}</div></div>
+          <div className="tile"><div className="tile-label">Current balance</div><div className="tile-value">{money(data.current_balance)}</div></div>
+        </div>
+      ) : null}
+      </div>
       <ErrorBox error={err} />
-      {showReviews ? <Reviews canResolve={can("review.resolve")} onChange={load} /> : null}
+      {showReviews ? (
+        <Reviews canResolve={can("review.resolve")} canManage={manage && acct?.status === "ACTIVE"} account={acct} reloadKey={data}
+          onEnterCheck={(n) => setModal({ kind: "txn", txn: null, initial: { check_number: String(n) } })}
+          onZeroCheck={(n) => setModal({ kind: "zero", initial: { check_number: String(n) } })}
+          onChange={load} />
+      ) : null}
       {data && acct ? (
         <>
-          <div className="tiles">
-            <div className="tile"><div className="tile-label">Starting balance{data.date_from ? ` (as of ${data.date_from})` : " (opening)"}</div><div className="tile-value">{money(data.starting_balance)}</div></div>
-            <div className="tile"><div className="tile-label">Ending balance{data.date_to ? ` (${data.date_to})` : ""}</div><div className="tile-value">{money(data.ending_balance)}</div></div>
-            <div className="tile"><div className="tile-label">Current balance</div><div className="tile-value">{money(data.current_balance)}</div></div>
-          </div>
           <div className="table-wrap">
             <table className="table register">
               <thead>
@@ -94,7 +112,7 @@ export default function Register() {
                       <td>{t.attachment_count ? <span aria-label={`${t.attachment_count} attachments`}>📎{t.attachment_count}</span> : ""}</td>
                     </tr>
                     {open === t.id ? (
-                      <tr className="detail-row"><td colSpan={12}><TxnDetail t={t} manage={manage} onEdit={() => setModal({ kind: t.transfer ? "legedit" : "txn", txn: t })} onVoid={() => setModal({ kind: "void", txn: t })} onVoidDate={() => setModal({ kind: "voiddate", txn: t })} onChanged={load} /></td></tr>
+                      <tr className="detail-row"><td colSpan={12}><TxnDetail t={t} manage={manage} onEdit={() => setModal({ kind: t.transfer ? "legedit" : "txn", txn: t })} onVoid={() => setModal({ kind: "void", txn: t })} onVoidDate={() => setModal({ kind: "voiddate", txn: t })} onVoidCheck={() => setModal({ kind: "voidcheck", txn: t })} onChanged={load} /></td></tr>
                     ) : null}
                   </Fragment>
                 ))}
@@ -103,17 +121,18 @@ export default function Register() {
           </div>
         </>
       ) : f.bank_account_id ? <Loading /> : null}
-      {modal?.kind === "txn" ? <TxnForm account={acct} txn={modal.txn} fys={fys} onClose={() => setModal(null)} onSaved={() => { setModal(null); load(); }} /> : null}
+      {modal?.kind === "txn" ? <TxnForm account={acct} txn={modal.txn} initial={modal.initial} fys={fys} onClose={() => setModal(null)} onSaved={() => { setModal(null); load(); }} /> : null}
       {modal?.kind === "void" ? <VoidForm txn={modal.txn} onClose={() => setModal(null)} onSaved={() => { setModal(null); load(); }} /> : null}
       {modal?.kind === "transfer" ? <TransferForm accounts={accounts} fromId={acct?.id} fys={fys} onClose={() => setModal(null)} onSaved={() => { setModal(null); load(); }} /> : null}
       {modal?.kind === "legedit" ? <TransferLegForm txn={modal.txn} onClose={() => setModal(null)} onSaved={() => { setModal(null); load(); }} /> : null}
       {modal?.kind === "voiddate" ? <VoidDateForm txn={modal.txn} fys={fys} onClose={() => setModal(null)} onSaved={() => { setModal(null); load(); }} /> : null}
-      {modal?.kind === "zero" ? <ZeroVoidForm account={acct} fys={fys} onClose={() => setModal(null)} onSaved={() => { setModal(null); load(); }} /> : null}
+      {modal?.kind === "voidcheck" ? <VoidCheckForm txn={modal.txn} onClose={() => setModal(null)} onSaved={() => { setModal(null); load(); }} /> : null}
+      {modal?.kind === "zero" ? <ZeroVoidForm account={acct} initial={modal.initial} fys={fys} onClose={() => setModal(null)} onSaved={() => { setModal(null); load(); }} /> : null}
     </div>
   );
 }
 
-function TxnDetail({ t, manage, onEdit, onVoid, onVoidDate, onChanged }: { t: any; manage: boolean; onEdit: () => void; onVoid: () => void; onVoidDate: () => void; onChanged: () => void }) {
+function TxnDetail({ t, manage, onEdit, onVoid, onVoidDate, onVoidCheck, onChanged }: { t: any; manage: boolean; onEdit: () => void; onVoid: () => void; onVoidDate: () => void; onVoidCheck: () => void; onChanged: () => void }) {
   const [note, setNote] = useState("");
   const [err, setErr] = useState<unknown>(null);
   const editable = manage && t.status === "ACTIVE" && !t.closed_fiscal_year_protected;
@@ -155,23 +174,24 @@ function TxnDetail({ t, manage, onEdit, onVoid, onVoidDate, onChanged }: { t: an
         {editable ? <button onClick={onEdit}>Edit</button> : null}
         {editable ? <button className="danger" onClick={onVoid}>Void…</button> : null}
         {manage && t.status === "VOID" && !t.closed_fiscal_year_protected ? <button onClick={onVoidDate}>Correct date…</button> : null}
+        {manage && t.status === "VOID" && t.transaction_type === "WITHDRAWAL" && !t.transfer && !t.closed_fiscal_year_protected ? <button onClick={onVoidCheck}>Correct check number…</button> : null}
       </div>
       <Attachments ownerType="transaction" ownerId={t.id} canUpload={manage} canRemove={editable} title="Transaction attachments" />
       {t.allocations.length > 1 ? t.allocations.map((a: any) => (
-        <Attachments key={a.id} ownerType="allocation" ownerId={a.id} canUpload={manage} canRemove={editable} title={`Allocation attachments – ${a.budget.label}`} />
+        <Attachments key={a.id} ownerType="allocation" ownerId={a.id} canUpload={manage} canRemove={editable} title={allocationLabel(t, a)} />
       )) : null}
       {manage ? (
-        <form onSubmit={addNote} className="row">
+        <GuardedForm onSubmit={addNote} className="row">
           <Field label="Add supporting note"><input required maxLength={4000} value={note} onChange={(e) => setNote(e.target.value)} /></Field>
           <button type="submit">Add note</button>
-        </form>
+        </GuardedForm>
       ) : null}
     </div>
   );
 }
 
-type Alloc = { id?: number; fiscal_year_id: string; budget_id: string; entity_id: string; invoice_number: string; description: string; amount: string; notes: string; no_attachment: boolean; no_attachment_reason: string };
-const blankAlloc = (fy = ""): Alloc => ({ fiscal_year_id: fy, budget_id: "", entity_id: "", invoice_number: "", description: "", amount: "", notes: "", no_attachment: false, no_attachment_reason: "" });
+type Alloc = { id?: number; fiscal_year_id: string; budget_id: string; entity_id: string; invoice_number: string; description: string; amount: string; notes: string; no_attachment: boolean; no_attachment_reason: string; files: File[] };
+const blankAlloc = (fy = ""): Alloc => ({ fiscal_year_id: fy, budget_id: "", entity_id: "", invoice_number: "", description: "", amount: "", notes: "", no_attachment: false, no_attachment_reason: "", files: [] });
 
 function useBudgetOptions(fyIds: string[], type: string) {
   const [cache, setCache] = useState<Record<string, any[]>>({});
@@ -186,12 +206,12 @@ function useBudgetOptions(fyIds: string[], type: string) {
   return (fy: string, t: string) => cache[`${fy}:${t}`] || [];
 }
 
-function TxnForm({ account, txn, fys, onClose, onSaved }: { account: any; txn: any; fys: any[]; onClose: () => void; onSaved: () => void }) {
+function TxnForm({ account, txn, initial, fys, onClose, onSaved }: { account: any; txn: any; initial?: { check_number?: string }; fys: any[]; onClose: () => void; onSaved: () => void }) {
   const isNew = !txn;
   const [type, setType] = useState<string>(txn?.transaction_type || "WITHDRAWAL");
   const [h, setH] = useState({
     transaction_date: txn?.transaction_date || todayIso(), clear_date: txn?.clear_date || "",
-    entity_id: txn?.entity && !txn.entity.is_system ? String(txn.entity.id) : "", check_number: txn?.check_number || "", notes: txn?.notes || "",
+    entity_id: txn?.entity && !txn.entity.is_system ? String(txn.entity.id) : "", check_number: txn?.check_number || initial?.check_number || "", notes: txn?.notes || "",
     no_attachment: !!txn?.no_attachment, no_attachment_reason: txn?.no_attachment_reason || "",
   });
   // null = closed, -1 = whole transaction, n = allocation n
@@ -199,8 +219,10 @@ function TxnForm({ account, txn, fys, onClose, onSaved }: { account: any; txn: a
   const [allocs, setAllocs] = useState<Alloc[]>(txn ? txn.allocations.map((a: any) => ({
     id: a.id, fiscal_year_id: String(a.budget.fiscal_year.id), budget_id: String(a.budget.id), entity_id: a.entity ? String(a.entity.id) : "",
     invoice_number: a.invoice_number || "", description: a.description || "", amount: a.amount, notes: a.notes || "",
-    no_attachment: !!a.no_attachment, no_attachment_reason: a.no_attachment_reason || "",
+    no_attachment: !!a.no_attachment, no_attachment_reason: a.no_attachment_reason || "", files: [],
   })) : [blankAlloc()]);
+  const [parentFiles, setParentFiles] = useState<File[]>([]);
+  const [uploadIssues, setUploadIssues] = useState<null | { id: number; failed: string[] }>(null);
   const [split, setSplit] = useState(txn ? txn.allocations.length > 1 : false);
   const [nat, setNat] = useState<any>(null);
   const [entities, setEntities] = useState<any[]>([]);
@@ -208,6 +230,7 @@ function TxnForm({ account, txn, fys, onClose, onSaved }: { account: any; txn: a
   const [typeDlg, setTypeDlg] = useState<string | null>(null);
   const [newEnt, setNewEnt] = useState(false);
   const { run, dialog } = useConfirmable();
+  const requestKey = useRef(newRequestKey()).current; // CR-011: repeated submits of this form create one transaction
   const loadEntities = () => api.get("/api/entities?status=active").then(setEntities);
   useEffect(() => { loadEntities(); }, []);
   useEffect(() => {
@@ -259,14 +282,44 @@ function TxnForm({ account, txn, fys, onClose, onSaved }: { account: any; txn: a
     };
     try {
       const r = await run((confirmations) => isNew
-        ? api.post("/api/transactions", { bank_account_id: account.id, transaction_type: type, ...header, allocations, confirmations })
+        ? api.post("/api/transactions", { bank_account_id: account.id, transaction_type: type, ...header, allocations, confirmations, request_key: requestKey })
         : api.patch(`/api/transactions/${txn.id}`, { ...(type !== txn.transaction_type ? { transaction_type: type } : {}), ...header, allocations, confirmations }));
-      if (r) onSaved();
+      if (!r) return;
+      // CR-010: upload the files chosen in the form now that the transaction (and its allocations) exist
+      const saved: any = r;
+      const known = new Set(allocs.filter((a) => a.id).map((a) => a.id));
+      const created = saved.allocations.filter((x: any) => !known.has(x.id));
+      const jobs: [string, number, File][] = parentFiles.map((f) => ["transaction", saved.id, f]);
+      if (split) {
+        allocs.forEach((a) => {
+          const id = a.id ?? created.shift()?.id;
+          if (id) a.files.forEach((f) => jobs.push(["allocation", id, f]));
+        });
+      }
+      const failed: string[] = [];
+      for (const [ot, oid, f] of jobs) {
+        try { await api.upload(`/api/attachments${qs({ owner_type: ot, owner_id: oid })}`, f); }
+        catch (x: any) { failed.push(`${f.name}: ${x?.message || "upload failed"}`); }
+      }
+      if (failed.length) setUploadIssues({ id: saved.id, failed });
+      else onSaved();
     } catch (x) { setErr(x); }
   };
+  if (uploadIssues) {
+    return (
+      <Modal title={`Transaction #${uploadIssues.id} saved`} onClose={onSaved}>
+        <div className="alert warn" role="alert">
+          <p>The transaction was saved, but these files could not be uploaded:</p>
+          <ul>{uploadIssues.failed.map((m) => <li key={m}>{m}</li>)}</ul>
+          <p>Open the transaction in the register to add them again.</p>
+        </div>
+        <div className="actions"><button className="primary" onClick={onSaved}>Close</button></div>
+      </Modal>
+    );
+  }
   return (
     <Modal title={isNew ? `New transaction – ${account.label}` : `Edit transaction #${txn.id}`} onClose={onClose} wide>
-      <form onSubmit={submit}>
+      <GuardedForm onSubmit={submit}>
         <ErrorBox error={err} />
         {txn?.cleared ? <div className="alert warn">This transaction has cleared. Saving changes requires confirmation and is fully audited.</div> : null}
         <p className="muted">Bank account: <b>{account.label}</b> (cannot be changed after creation; wrong-account entries must be voided and re-entered).</p>
@@ -330,6 +383,7 @@ function TxnForm({ account, txn, fys, onClose, onSaved }: { account: any; txn: a
                       onChange={(e) => (e.target.checked ? setNoAttDlg(i) : setAllocs(allocs.map((x, j) => (j === i ? { ...x, no_attachment: false, no_attachment_reason: "" } : x))))} />
                     No attachment will be provided for this allocation
                   </label>
+                  <PendingFiles label={`Allocation ${i + 1} attachments`} files={a.files} onChange={(fl) => setAllocs(allocs.map((x, j) => (j === i ? { ...x, files: fl } : x)))} />
                   {a.no_attachment ? <Field label={`Allocation ${i + 1} reason (optional)`}><input maxLength={500} value={a.no_attachment_reason} onChange={(e) => setAllocs(allocs.map((x, j) => (j === i ? { ...x, no_attachment_reason: e.target.value } : x)))} /></Field> : null}
                 </div>
               ) : null}
@@ -342,6 +396,7 @@ function TxnForm({ account, txn, fys, onClose, onSaved }: { account: any; txn: a
           <span className="total">Total (derived from allocations): <b>{money(total.toFixed(2))}</b></span>
         </div>
         <Field label="Notes"><textarea value={h.notes} onChange={(e) => setH({ ...h, notes: e.target.value })} /></Field>
+        <PendingFiles label="Transaction attachments" files={parentFiles} onChange={setParentFiles} />
         <label className="check">
           <input type="checkbox" checked={h.no_attachment} onChange={(e) => (e.target.checked ? setNoAttDlg(-1) : setH({ ...h, no_attachment: false, no_attachment_reason: "" }))} />
           No attachment will be provided
@@ -350,7 +405,7 @@ function TxnForm({ account, txn, fys, onClose, onSaved }: { account: any; txn: a
           <Field label="Reason no attachment is available (optional)"><input maxLength={500} value={h.no_attachment_reason} onChange={(e) => setH({ ...h, no_attachment_reason: e.target.value })} placeholder="e.g. Bank interest - direct deposit" /></Field>
         ) : null}
         <div className="actions"><button type="button" onClick={onClose}>Cancel</button><button className="primary" type="submit">Save</button></div>
-      </form>
+      </GuardedForm>
       {dialog}
       {noAttDlg !== null ? (
         <Modal title="No attachment?" onClose={() => setNoAttDlg(null)}>
@@ -388,14 +443,14 @@ function VoidForm({ txn, onClose, onSaved }: any) {
   };
   return (
     <Modal title={`Void transaction #${txn.id}`} onClose={onClose}>
-      <form onSubmit={submit}>
+      <GuardedForm onSubmit={submit}>
         <ErrorBox error={err} />
         {txn.transfer ? <div className="alert warn">This is one side of a transfer. <b>Both</b> the withdrawal and the deposit will be voided.</div> : null}
         <div className="alert warn">Voiding is <b>irreversible</b>. The transaction stays visible as VOID with its allocations and attachments, but no longer affects bank balances or budget actuals.</div>
         <Field label="Void reason (required)"><textarea required value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
         <Field label='Type VOID to confirm'><input value={typed} onChange={(e) => setTyped(e.target.value)} /></Field>
         <div className="actions"><button type="button" onClick={onClose}>Cancel</button><button className="primary danger" type="submit" disabled={typed !== "VOID" || !reason.trim()}>Void transaction</button></div>
-      </form>
+      </GuardedForm>
     </Modal>
   );
 }
@@ -409,6 +464,7 @@ function TransferForm({ accounts, fromId, fys, onClose, onSaved }: any) {
   const ent = entities.find((x) => String(x.id) === f.entity_id);
   const [err, setErr] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
+  const requestKey = useRef(newRequestKey()).current;
   const from = active.find((a: any) => String(a.id) === f.from);
   const to = active.find((a: any) => String(a.id) === f.to);
   const submit = async (e: FormEvent) => {
@@ -419,13 +475,13 @@ function TransferForm({ accounts, fromId, fys, onClose, onSaved }: any) {
       await api.post("/api/transfers", { from_account_id: Number(f.from), to_account_id: Number(f.to), amount: f.amount,
         transaction_date: f.transaction_date, clear_date: f.clear_date || null, notes: f.notes || null,
         entity_id: f.entity_id ? Number(f.entity_id) : null,
-        fiscal_year_id: f.fiscal_year_id ? Number(f.fiscal_year_id) : null });
+        fiscal_year_id: f.fiscal_year_id ? Number(f.fiscal_year_id) : null, request_key: requestKey });
       onSaved();
     } catch (x) { setErr(x); } finally { setBusy(false); }
   };
   return (
     <Modal title="Transfer between accounts" onClose={onClose}>
-      <form onSubmit={submit}>
+      <GuardedForm onSubmit={submit}>
         <ErrorBox error={err} />
         <div className="row">
           <Field label="From account">
@@ -459,7 +515,7 @@ function TransferForm({ accounts, fromId, fys, onClose, onSaved }: any) {
           </div>
         ) : null}
         <div className="actions"><button type="button" onClick={onClose}>Cancel</button><button className="primary" type="submit" disabled={busy || !f.to}>Record transfer</button></div>
-      </form>
+      </GuardedForm>
     </Modal>
   );
 }
@@ -478,14 +534,42 @@ function TransferLegForm({ txn, onClose, onSaved }: any) {
   };
   return (
     <Modal title={`Edit transfer leg #${txn.id}`} onClose={onClose}>
-      <form onSubmit={submit}>
+      <GuardedForm onSubmit={submit}>
         <ErrorBox error={err} />
         <p className="muted">Only the clear date and notes of a transfer can be edited. To change the amount, date or accounts, void the transfer and record it again.</p>
         <Field label="Clear/Post date (blank = uncleared)"><input type="date" value={clear} onChange={(e) => setClear(e.target.value)} /></Field>
         <Field label="Notes"><textarea value={notes} onChange={(e) => setNotes(e.target.value)} /></Field>
         <div className="actions"><button type="button" onClick={onClose}>Cancel</button><button className="primary" type="submit">Save</button></div>
-      </form>
+      </GuardedForm>
       {dialog}
+    </Modal>
+  );
+}
+
+// v1.3 CR-011: a VOID record keeps its check number reserved; a wrongly entered number is corrected (cleared or
+// changed) here, which releases it. A new number must not be used elsewhere in the account.
+function VoidCheckForm({ txn, onClose, onSaved }: any) {
+  const [num, setNum] = useState(txn.check_number || "");
+  const [reason, setReason] = useState("");
+  const [err, setErr] = useState<unknown>(null);
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    setErr(null);
+    try {
+      await api.post(`/api/transactions/${txn.id}/void-check-number`, { check_number: num.trim() || null, reason });
+      onSaved();
+    } catch (x) { setErr(x); }
+  };
+  return (
+    <Modal title={`Correct check number of VOID transaction #${txn.id}`} onClose={onClose}>
+      <GuardedForm onSubmit={submit}>
+        <ErrorBox error={err} />
+        <p>A voided check keeps its number so it is never reused. Correct it only if the wrong number was entered —
+          leave the box empty to release the number. The correction is noted on the record and audited.</p>
+        <Field label="Check number (blank = none)"><input maxLength={20} pattern="[A-Za-z0-9-]*" value={num} onChange={(e) => setNum(e.target.value)} /></Field>
+        <Field label="Reason (required)"><input required maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
+        <div className="actions"><button type="button" onClick={onClose}>Cancel</button><button className="primary" type="submit" disabled={(num.trim() || "") === (txn.check_number || "")}>Save check number</button></div>
+      </GuardedForm>
     </Modal>
   );
 }
@@ -507,7 +591,7 @@ function VoidDateForm({ txn, fys, onClose, onSaved }: any) {
   };
   return (
     <Modal title={`Correct date of VOID transaction #${txn.id}`} onClose={onClose}>
-      <form onSubmit={submit}>
+      <GuardedForm onSubmit={submit}>
         <ErrorBox error={err} />
         <p>Only the Transaction Date changes. The record stays VOID with no balance or budget effect; the change is audited.
           {txn.zero_dollar_void ? " For a zero-dollar record, Budget 0 moves to the Fiscal Year covering the new date." : ""}</p>
@@ -522,26 +606,27 @@ function VoidDateForm({ txn, fys, onClose, onSaved }: any) {
         ) : null}
         <Field label="Reason (optional)"><input maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
         <div className="actions"><button type="button" onClick={onClose}>Cancel</button><button className="primary" type="submit" disabled={date === txn.transaction_date && !fy}>Save date</button></div>
-      </form>
+      </GuardedForm>
     </Modal>
   );
 }
 
-function ZeroVoidForm({ account, fys, onClose, onSaved }: any) {
-  const [f, setF] = useState({ transaction_type: "WITHDRAWAL", transaction_date: todayIso(), check_number: "", void_reason: "", fiscal_year_id: "" });
+function ZeroVoidForm({ account, initial, fys, onClose, onSaved }: any) {
+  const [f, setF] = useState({ transaction_type: "WITHDRAWAL", transaction_date: todayIso(), check_number: initial?.check_number || "", void_reason: "", fiscal_year_id: "" });
   const [err, setErr] = useState<unknown>(null);
+  const requestKey = useRef(newRequestKey()).current;
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     try {
       await api.post("/api/transactions", { bank_account_id: account.id, transaction_type: f.transaction_type, transaction_date: f.transaction_date,
         check_number: f.transaction_type === "WITHDRAWAL" ? f.check_number || null : null, create_as_void: true, void_reason: f.void_reason,
-        fiscal_year_id: f.fiscal_year_id ? Number(f.fiscal_year_id) : null });
+        fiscal_year_id: f.fiscal_year_id ? Number(f.fiscal_year_id) : null, request_key: requestKey });
       onSaved();
     } catch (x) { setErr(x); }
   };
   return (
     <Modal title="Zero-dollar VOID accountability record" onClose={onClose}>
-      <form onSubmit={submit}>
+      <GuardedForm onSubmit={submit}>
         <ErrorBox error={err} />
         <p>Documents e.g. a physically damaged unused check. Created directly as VOID for $0.00 using protected Budget 0.</p>
         <div className="row">
@@ -557,12 +642,15 @@ function ZeroVoidForm({ account, fys, onClose, onSaved }: any) {
         </Field>
         <Field label="Void reason (required)"><textarea required value={f.void_reason} onChange={(e) => setF({ ...f, void_reason: e.target.value })} /></Field>
         <div className="actions"><button type="button" onClick={onClose}>Cancel</button><button className="primary" type="submit">Create VOID record</button></div>
-      </form>
+      </GuardedForm>
     </Modal>
   );
 }
 
-function Reviews({ canResolve, onChange }: { canResolve: boolean; onChange: () => void }) {
+function Reviews({ canResolve, canManage, account, reloadKey, onEnterCheck, onZeroCheck, onChange }: {
+  canResolve: boolean; canManage: boolean; account: any; reloadKey: unknown;
+  onEnterCheck: (n: number) => void; onZeroCheck: (n: number) => void; onChange: () => void;
+}) {
   const [items, setItems] = useState<any[] | null>(null);
   const [err, setErr] = useState<unknown>(null);
   const load = () => api.get("/api/fiscal-year-reviews").then(setItems, setErr);
@@ -591,6 +679,7 @@ function Reviews({ canResolve, onChange }: { canResolve: boolean; onChange: () =
         </table>
       )}
       <p className="hint">To reassign instead, edit the transaction and select a budget in the correct Fiscal Year.</p>
+      {account ? <MissingChecks account={account} canManage={canManage} reloadKey={reloadKey} onEnter={onEnterCheck} onZero={onZeroCheck} /> : null}
       {target ? (
         <Modal title={`Confirm review for transaction #${target.transaction_id}`} onClose={() => setTarget(null)}>
           <p>Confirm that this allocation to <b>{target.budget.label}</b> ({target.budget.fiscal_year.display_name}) is intentional.</p>
@@ -599,5 +688,72 @@ function Reviews({ canResolve, onChange }: { canResolve: boolean; onChange: () =
         </Modal>
       ) : null}
     </section>
+  );
+}
+
+// v1.3 CR-012: gaps in the check-number sequence of the selected account (warnings; they never block closing).
+function MissingChecks({ account, canManage, reloadKey, onEnter, onZero }: { account: any; canManage: boolean; reloadKey: unknown; onEnter: (n: number) => void; onZero: (n: number) => void }) {
+  const [d, setD] = useState<any>(null);
+  const [err, setErr] = useState<unknown>(null);
+  const [ack, setAck] = useState<any>(null);
+  const load = () => api.get(`/api/check-review${qs({ bank_account_id: account.id })}`).then(setD, setErr);
+  useEffect(() => { load(); }, [account.id, reloadKey]);
+  const nums = (m: any) => (m.count === 1 ? `${m.first_number}` : `${m.first_number}–${m.last_number} (${m.count.toLocaleString()} numbers)`);
+  return (
+    <div className="missing-checks">
+      <h3>Possible missing checks — {account.label}</h3>
+      <ErrorBox error={err} />
+      {!d ? <Loading /> : d.missing.length === 0 ? <p className="muted">No gaps in the check-number sequence.</p> : (
+        <table className="table compact">
+          <thead><tr><th>Check #</th><th>Recorded before</th><th>Recorded after</th><th /></tr></thead>
+          <tbody>
+            {d.missing.map((m: any) => (
+              <tr key={`${m.first_number}-${m.last_number}`}>
+                <td><b>{nums(m)}</b></td>
+                <td>#{m.before.check_number} · {m.before.transaction_date}</td>
+                <td>#{m.after.check_number} · {m.after.transaction_date}</td>
+                <td>
+                  {canManage && m.count === 1 ? <button className="small" onClick={() => onEnter(m.first_number)}>Enter transaction</button> : null}
+                  {canManage && m.count === 1 ? <button className="small" onClick={() => onZero(m.first_number)}>Record as VOID check</button> : null}
+                  {canManage ? <button className="small" onClick={() => setAck(m)}>Confirm not missing…</button> : null}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      <p className="hint">Checks are assumed to be used in order, from the lowest to the highest check number recorded in this account. Voided checks count as recorded.</p>
+      {d?.duplicates.length ? (
+        <>
+          <h3>Check numbers used more than once</h3>
+          <p className="hint">Recorded before duplicate check numbers were blocked. Correct the check number on the wrong record.</p>
+          <ul>{d.duplicates.map((x: any) => <li key={x.check_number}>Check #{x.check_number}: {x.transactions.map((t: any) => `#${t.transaction_id} (${t.transaction_date}${t.status === "VOID" ? ", VOID" : ""})`).join(", ")}</li>)}</ul>
+        </>
+      ) : null}
+      {ack ? <AckChecks account={account} item={ack} onClose={() => setAck(null)} onDone={() => { setAck(null); load(); }} /> : null}
+    </div>
+  );
+}
+
+function AckChecks({ account, item, onClose, onDone }: any) {
+  const [note, setNote] = useState("");
+  const [err, setErr] = useState<unknown>(null);
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    try {
+      await api.post("/api/check-review/acknowledge", { bank_account_id: account.id, first_number: item.first_number, last_number: item.last_number, note });
+      onDone();
+    } catch (x) { setErr(x); }
+  };
+  const label = item.count === 1 ? `check #${item.first_number}` : `checks #${item.first_number}–${item.last_number}`;
+  return (
+    <Modal title={`Confirm ${label} not missing`} onClose={onClose}>
+      <GuardedForm onSubmit={submit}>
+        <ErrorBox error={err} />
+        <p>Use this when no transaction exists for {label} — for example the check was destroyed or lost before use, or the numbers were skipped. If the check was written, enter it instead.</p>
+        <Field label="Note (required)"><input required maxLength={1000} value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. New checkbook started at 5001" /></Field>
+        <div className="actions"><button type="button" onClick={onClose}>Cancel</button><button className="primary" type="submit">Confirm not missing</button></div>
+      </GuardedForm>
+    </Modal>
   );
 }

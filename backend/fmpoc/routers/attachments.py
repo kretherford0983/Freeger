@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from ..deps import Ctx, get_db, require
 from ..errors import AppError
+from ..schemas import AttachmentTypeIn
 from ..services import attachments as svc
 
 router = APIRouter(prefix="/api", tags=["attachments"])
@@ -23,10 +24,11 @@ def list_attachments(owner_type: Owner, owner_id: int, include_removed: bool = F
 
 @router.post("/attachments", status_code=201)
 async def upload(request: Request, owner_type: Owner, owner_id: int, file: UploadFile = File(...),
+                 document_type: Literal["APPROVAL", "AUDIT_SIGNOFF", "UNSPECIFIED"] | None = None,
                  db: Session = Depends(get_db), ctx: Ctx = Depends(require("financial.view"))):
     svc.check_manage(ctx, owner_type)  # authorize before reading the body into memory
     data = await svc.read_limited(file)
-    a = svc.store(db, ctx, request.app.state.settings, owner_type, owner_id, file.filename, data)
+    a = svc.store(db, ctx, request.app.state.settings, owner_type, owner_id, file.filename, data, document_type)
     return svc.out(a)
 
 
@@ -58,5 +60,13 @@ def content(att_id: int, request: Request, download: bool = False, db: Session =
 @router.post("/attachments/{att_id}/remove")
 def remove(att_id: int, db: Session = Depends(get_db), ctx: Ctx = Depends(require("financial.view"))):
     a = svc.remove(db, ctx, svc.get(db, ctx, att_id))
+    db.commit()
+    return svc.out(a)
+
+
+@router.post("/attachments/{att_id}/document-type")
+def set_document_type(att_id: int, body: AttachmentTypeIn, db: Session = Depends(get_db),
+                      ctx: Ctx = Depends(require("fiscal_year.manage"))):
+    a = svc.set_document_type(db, ctx, svc.get(db, ctx, att_id), body.document_type)
     db.commit()
     return svc.out(a)

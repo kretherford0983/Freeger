@@ -42,6 +42,21 @@ def audit_report(request: Request, fiscal_year_id: int = Query(...), bank_accoun
                         background=BackgroundTask(lambda: os.path.exists(path) and os.unlink(path)))
 
 
+@router.get("/fy-close")
+def close_report(request: Request, fiscal_year_id: int = Query(...), download: bool = False,
+                 db: Session = Depends(get_db), ctx: Ctx = Depends(require("financial.view"))):
+    """v1.3 CR-008: Fiscal Year Close report (all accounts, VOID included, Fiscal Year documents up front)."""
+    fy = get_scoped(db, FiscalYear, fiscal_year_id, ctx, "Fiscal Year")
+    path, fname, summary = svc.build_audit_report(db, ctx, request.app.state.settings, fy, None, True, layout="close")
+    audit.record(db, ctx, "REPORT_GENERATED", "fiscal_year", fy.id, None, {"report": "FISCAL_YEAR_CLOSE", **summary})
+    db.commit()
+    headers = {"Content-Disposition": _disposition("attachment" if download else "inline", fname),
+               "Cache-Control": "private, no-store", "X-Frame-Options": "SAMEORIGIN",
+               "Content-Security-Policy": "default-src 'none'; frame-ancestors 'self'"}
+    return FileResponse(path, media_type="application/pdf", headers=headers,
+                        background=BackgroundTask(lambda: os.path.exists(path) and os.unlink(path)))
+
+
 @router.get("/entity-activity")
 def entity_activity(bank_account_id: int | None = None, fiscal_year_id: int | None = None,
                     date_from: dt.date | None = None, date_to: dt.date | None = None, entity_id: int | None = None,

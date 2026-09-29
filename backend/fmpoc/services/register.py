@@ -14,6 +14,7 @@ from ..models import (Attachment, BankAccount, Budget, Entity, FiscalYear, Fisca
 from ..money import fmt, parse_amount
 from . import bank_accounts as bank
 from . import budgets as bsvc
+from . import checks
 from .common import (budget_label, closest_fiscal_year, covering_fiscal_years, entity_brief, fy_brief, get_scoped)
 from .entities import multiple_entity
 
@@ -314,6 +315,7 @@ def create(db: Session, ctx, data) -> RegisterTransaction:
     txn_date = data.transaction_date or dt.date.today()  # BR-051 default
     if data.check_number and data.transaction_type != "WITHDRAWAL":
         raise validation("Check Number applies to Withdrawals only.", "check_number")
+    checks.assert_unused(db, ctx.workspace_id, acct.id, data.check_number)  # v1.3 CR-011 hard block
     parent_entity = _entity(db, ctx, data.entity_id, set())
     t = RegisterTransaction(workspace_id=ctx.workspace_id, bank_account_id=acct.id,
                             transaction_type=data.transaction_type, transaction_date=txn_date,
@@ -330,9 +332,15 @@ def create(db: Session, ctx, data) -> RegisterTransaction:
     plans, warnings, natural_id = _plan_allocations(
         db, ctx, txn_type=data.transaction_type, txn_date=txn_date, parent_entity_id=t.parent_entity_id,
         allocs_in=data.allocations, existing={}, date_changed=True, keep_entity_ids=set())
-    require_confirmations(warnings, data.confirmations)
     if data.transaction_type == "DEPOSIT":
         t.parent_entity_id = _deposit_parent_entity(db, ctx.workspace_id, plans, t.parent_entity_id)
+    dup = possible_duplicate(db, ctx.workspace_id, acct.id, txn_date, data.transaction_type,
+                             sum(p.amount for p in plans), t.parent_entity_id)
+    if dup is not None:
+        warnings.insert(0, Warning_("POSSIBLE_DUPLICATE",
+                                    f"Possible duplicate of transaction #{dup.id}: same account, date, type, amount "
+                                    f"and entity. Save anyway?", transaction_id=dup.id))
+    require_confirmations(warnings, data.confirmations)
     db.add(t)
     db.flush()
     for p in plans:
@@ -352,6 +360,19 @@ def create(db: Session, ctx, data) -> RegisterTransaction:
     audit.record(db, ctx, "TRANSACTION_CREATED", "register_transaction", t.id, None,
                  {**snapshot(t), "confirmed_warnings": [w.code for w in warnings]})
     return t
+
+
+def possible_duplicate(db: Session, ws_id: int, account_id: int, d: dt.date, txn_type: str, total: int,
+                       entity_id: int | None) -> RegisterTransaction | None:
+    """v1.3 CR-011: an ACTIVE transaction with the same account, date, type, amount and entity."""
+    q = select(RegisterTransaction).where(RegisterTransaction.workspace_id == ws_id,
+                                          RegisterTransaction.bank_account_id == account_id,
+                                          RegisterTransaction.transaction_date == d,
+                                          RegisterTransaction.transaction_type == txn_type,
+                                          RegisterTransaction.status == "ACTIVE",
+                                          RegisterTransaction.parent_entity_id.is_(None) if entity_id is None
+                                          else RegisterTransaction.parent_entity_id == entity_id)
+    return next((t for t in db.scalars(q.order_by(RegisterTransaction.id)) if t.total_cents == total), None)
 
 
 def budget_zero_fiscal_year(db: Session, ctx, d: dt.date, fiscal_year_id: int | None) -> FiscalYear:
@@ -433,6 +454,8 @@ def update(db: Session, ctx, t: RegisterTransaction, data) -> RegisterTransactio
             raise validation("Changing the transaction type requires re-selecting all allocations.", "allocations")
     if new_check and new_type != "WITHDRAWAL":
         raise validation("Check Number applies to Withdrawals only; clear it before changing to Deposit.", "check_number")
+    if "check_number" in f and checks.check_key(new_check) != checks.check_key(t.check_number):
+        checks.assert_unused(db, ctx.workspace_id, t.bank_account_id, new_check, exclude_id=t.id)
     keep_ids = {x for x in [t.parent_entity_id, *[a.entity_id for a in t.live_allocations]] if x}
     if "entity_id" in f and new_entity_id is not None:
         e = _entity(db, ctx, new_entity_id, keep_ids)
@@ -585,6 +608,36 @@ def correct_void_date(db: Session, ctx, t: RegisterTransaction, new_date: dt.dat
     db.refresh(t)
     audit.record(db, ctx, "TRANSACTION_VOID_DATE_CORRECTED", "register_transaction", t.id, before,
                  {**snapshot(t), "reason": reason, "budget_zero_fiscal_year": moved_to})
+    return t
+
+
+def correct_void_check_number(db: Session, ctx, t: RegisterTransaction, number: str | None,
+                              reason: str) -> RegisterTransaction:
+    """v1.3 CR-011: clear or change the check number of a VOID record (e.g. voided because the wrong number was
+    entered), releasing the old number. A new number must not be used by any other record in the account. Only the
+    check number changes; a stamped note records the correction on the record itself. Closed Fiscal Years stay
+    immutable."""
+    if t.status != "VOID":
+        raise conflict("NOT_VOID", "Check number correction here applies to VOID records; edit active transactions normally.")
+    if is_closed_protected(db, t):
+        raise conflict("FISCAL_YEAR_CLOSED", "The transaction affects a Closed Fiscal Year and is immutable.")
+    number = (number or "").strip() or None
+    if number and t.transaction_type != "WITHDRAWAL":
+        raise validation("Check Number applies to Withdrawals only.", "check_number")
+    if checks.check_key(number) == checks.check_key(t.check_number) and number == t.check_number:
+        raise conflict("NO_CHANGE", "The check number is unchanged.")
+    if checks.check_key(number) != checks.check_key(t.check_number):
+        checks.assert_unused(db, ctx.workspace_id, t.bank_account_id, number, exclude_id=t.id)
+    before = snapshot(t)
+    old = t.check_number
+    t.check_number = number
+    stamp = (f"[{utcnow().strftime('%Y-%m-%d %H:%M')} UTC {ctx.user.username}] Check number corrected from "
+             f"{old or '(none)'} to {number or '(none)'}: {reason}")
+    t.notes = f"{t.notes}\n{stamp}" if t.notes else stamp
+    t.updated_by_user_id = ctx.user.id
+    db.flush()
+    audit.record(db, ctx, "TRANSACTION_VOID_CHECK_NUMBER_CORRECTED", "register_transaction", t.id, before,
+                 {**snapshot(t), "old_check_number": old, "new_check_number": number, "reason": reason})
     return t
 
 

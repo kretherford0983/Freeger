@@ -1,6 +1,33 @@
-import React, { useEffect, useRef, useState, type ReactNode } from "react";
+import React, { useEffect, useRef, useState, type FormEvent, type FormHTMLAttributes, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { api, ApiError, type ApiWarning, qs } from "./api";
+
+/** v1.3 CR-011: a form that ignores further submits while one is being saved. All controls in the form are
+ *  disabled until the save (including any confirmation dialog it opens) finishes; the submit button reads "Saving…". */
+export function GuardedForm({ onSubmit, children, ...rest }: Omit<FormHTMLAttributes<HTMLFormElement>, "onSubmit"> & {
+  onSubmit: (e: FormEvent<HTMLFormElement>) => unknown;
+}) {
+  const busyRef = useRef(false);
+  const mounted = useRef(true);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => () => { mounted.current = false; }, []);
+  const handle = async (e: FormEvent<HTMLFormElement>) => {
+    if (busyRef.current) { e.preventDefault(); return; }
+    busyRef.current = true;
+    setBusy(true);
+    try {
+      await onSubmit(e);
+    } finally {
+      busyRef.current = false;
+      if (mounted.current) setBusy(false);
+    }
+  };
+  return (
+    <form {...rest} onSubmit={handle} aria-busy={busy || undefined}>
+      <fieldset className="form-guard" disabled={busy}>{children}</fieldset>
+    </form>
+  );
+}
 
 export function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -111,13 +138,18 @@ export function useConfirmable() {
       if (e instanceof ApiError && e.code === "CONFIRMATION_REQUIRED" && e.warnings.length) {
         return new Promise<T | undefined>((resolve, reject) => {
           setAck(false);
+          let done = false; // a double click on "Confirm and continue" must not submit twice
           setPending({
             warnings: e.warnings,
             retry: (codes) => {
+              if (done) return;
+              done = true;
               setPending(null);
               run(fn, [...acc, ...codes]).then(resolve, reject);
             },
             cancel: () => {
+              if (done) return;
+              done = true;
               setPending(null);
               resolve(undefined);
             },
@@ -193,21 +225,34 @@ export function Loading() {
 }
 
 // ------------------------------------------------------------------ attachments
-export function Attachments({ ownerType, ownerId, canUpload, canRemove, title = "Attachments" }: {
+export const FY_DOCUMENT_TYPES: [string, string][] = [["APPROVAL", "Approval document"], ["AUDIT_SIGNOFF", "Audit Signoff"], ["UNSPECIFIED", "Other document"]];
+
+export function Attachments({ ownerType, ownerId, canUpload, canRemove, title = "Attachments", documentTypes, canRetype, reloadKey, onChanged, hint }: {
   ownerType: "fiscal_year" | "transaction" | "allocation";
   ownerId: number;
   canUpload: boolean;
   canRemove: boolean;
   title?: string;
+  /** v1.3 CR-007: Fiscal Year document types shown in this list; the first is used for uploads. */
+  documentTypes?: string[];
+  canRetype?: boolean;
+  reloadKey?: number;
+  onChanged?: () => void;
+  hint?: ReactNode;
 }) {
-  const [items, setItems] = useState<any[]>([]);
+  const [all, setAll] = useState<any[]>([]);
   const [err, setErr] = useState<unknown>(null);
   const [viewIdx, setViewIdx] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
-  const load = () => api.get(`/api/attachments${qs({ owner_type: ownerType, owner_id: ownerId })}`).then(setItems, setErr);
+  const items = documentTypes ? all.filter((a) => documentTypes.includes(a.document_type || "UNSPECIFIED")) : all;
+  const load = () => api.get(`/api/attachments${qs({ owner_type: ownerType, owner_id: ownerId })}`).then(setAll, setErr);
   useEffect(() => {
     load();
-  }, [ownerType, ownerId]);
+  }, [ownerType, ownerId, reloadKey]);
+  const retype = async (id: number, t: string) => {
+    setErr(null);
+    try { await api.post(`/api/attachments/${id}/document-type`, { document_type: t }); await load(); onChanged?.(); } catch (e) { setErr(e); }
+  };
   const onFile = async (f: File | undefined) => {
     if (!f) return;
     setErr(null);
@@ -217,8 +262,9 @@ export function Attachments({ ownerType, ownerId, canUpload, canRemove, title = 
     }
     setBusy(true);
     try {
-      await api.upload(`/api/attachments${qs({ owner_type: ownerType, owner_id: ownerId })}`, f);
+      await api.upload(`/api/attachments${qs({ owner_type: ownerType, owner_id: ownerId, document_type: documentTypes?.[0] })}`, f);
       await load();
+      onChanged?.();
     } catch (e) {
       setErr(e);
     } finally {
@@ -229,7 +275,8 @@ export function Attachments({ ownerType, ownerId, canUpload, canRemove, title = 
     if (!window.confirm("Remove this attachment? It is retained in history.")) return;
     try {
       await api.post(`/api/attachments/${id}/remove`);
-      load();
+      await load();
+      onChanged?.();
     } catch (e) {
       setErr(e);
     }
@@ -238,6 +285,7 @@ export function Attachments({ ownerType, ownerId, canUpload, canRemove, title = 
   return (
     <section className="attachments">
       <h3>{title} ({items.length})</h3>
+      {hint}
       <ErrorBox error={err} />
       {items.length ? (
         <ul className="att-list">
@@ -246,7 +294,13 @@ export function Attachments({ ownerType, ownerId, canUpload, canRemove, title = 
               <button className="link" onClick={() => setViewIdx(i)}>{a.original_filename}</button>{" "}
               <span className="muted">{a.mime_type} · {(a.size_bytes / 1024).toFixed(1)} KB</span>{" "}
               <a href={`${a.content_url}?download=true`}>Download</a>
-              {canRemove ? <button className="small danger" onClick={() => remove(a.id)}>Remove</button> : null}
+              {a.system_generated ? <span className="badge grey">System generated</span> : null}
+              {canRetype && !a.system_generated ? (
+                <select className="small" aria-label={`Document type of ${a.original_filename}`} value={a.document_type || "UNSPECIFIED"} onChange={(e) => retype(a.id, e.target.value)}>
+                  {FY_DOCUMENT_TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                </select>
+              ) : null}
+              {canRemove && !a.system_generated ? <button className="small danger" onClick={() => remove(a.id)}>Remove</button> : null}
             </li>
           ))}
         </ul>
@@ -255,8 +309,8 @@ export function Attachments({ ownerType, ownerId, canUpload, canRemove, title = 
       )}
       {canUpload ? (
         <label className="upload">
-          <span>Add attachment (PDF, JPG, PNG; max 5 MB)</span>
-          <input type="file" accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png" disabled={busy}
+          <span>{documentTypes ? `Add ${(FY_DOCUMENT_TYPES.find(([v]) => v === documentTypes[0])?.[1] || "document").toLowerCase()}` : "Add attachment"} (PDF, JPG, PNG; max 5 MB)</span>
+          <input type="file" accept={ATTACH_ACCEPT} disabled={busy}
                  onChange={(e) => { onFile(e.target.files?.[0]); e.target.value = ""; }} />
         </label>
       ) : null}
@@ -276,6 +330,52 @@ export function Attachments({ ownerType, ownerId, canUpload, canRemove, title = 
       ) : null}
     </section>
   );
+}
+
+// ------------------------------------------------------------------ attachments chosen before saving (v1.3, CR-010)
+export const ATTACH_ACCEPT = ".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png";
+
+export function attachmentProblem(f: File): string | null {
+  if (!/\.(pdf|jpe?g|png)$/i.test(f.name)) return `${f.name}: only PDF, JPG and PNG files are accepted.`;
+  if (f.size > 5 * 1024 * 1024) return `${f.name}: attachments may not exceed 5 MB per file.`;
+  if (f.size === 0) return `${f.name}: the file is empty.`;
+  return null;
+}
+
+/** Files queued in a form; they are uploaded right after the record is saved. */
+export function PendingFiles({ label, files, onChange }: { label: string; files: File[]; onChange: (f: File[]) => void }) {
+  const [err, setErr] = useState<string | null>(null);
+  const add = (list: FileList | null) => {
+    const picked = Array.from(list || []);
+    const bad = picked.map(attachmentProblem).filter(Boolean) as string[];
+    setErr(bad.length ? bad.join(" ") : null);
+    onChange([...files, ...picked.filter((f) => !attachmentProblem(f))]);
+  };
+  return (
+    <div className="pending-files">
+      <label className="upload">
+        <span>{label} (PDF, JPG, PNG; max 5 MB each)</span>
+        <input type="file" multiple accept={ATTACH_ACCEPT} aria-label={label} onChange={(e) => { add(e.target.files); e.target.value = ""; }} />
+      </label>
+      {err ? <p className="warn-text" role="alert">{err}</p> : null}
+      {files.length ? (
+        <ul className="att-list">
+          {files.map((f, i) => (
+            <li key={`${f.name}-${i}`}>
+              {f.name} <span className="muted">{(f.size / 1024).toFixed(1)} KB · uploads when saved</span>{" "}
+              <button type="button" className="small" aria-label={`Remove ${f.name}`} onClick={() => onChange(files.filter((_, j) => j !== i))}>Remove</button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
+/** v1.3 CR-009: "<Entity> - <Budget>" label for a split allocation (entity falls back to the transaction's). */
+export function allocationLabel(t: any, a: any) {
+  const ent = a.entity?.display_name || (t.entity && !t.entity.is_system ? t.entity.display_name : "");
+  return ent ? `${ent} - ${a.budget.label}` : a.budget.label;
 }
 
 // ------------------------------------------------------------------ searchable entity picker (v1.2, CR-006)

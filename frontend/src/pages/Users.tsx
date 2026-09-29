@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api } from "../api";
-import { ErrorBox, Field, Loading, Modal } from "../components";
+import { ErrorBox, Field, Loading, Modal, GuardedForm } from "../components";
 import { useMe } from "../App";
 
 const ROLES: Record<string, [string, string][]> = {
@@ -78,7 +78,7 @@ function UserForm({ user, onClose, onSaved }: { user: any; onClose: () => void; 
   };
   return (
     <Modal title={isNew ? "New user" : `Edit ${user.username}`} onClose={onClose}>
-      <form onSubmit={submit}>
+      <GuardedForm onSubmit={submit}>
         <ErrorBox error={err} />
         {isNew ? <Field label="Username"><input required value={f.username} onChange={(e) => setF({ ...f, username: e.target.value })} /></Field> : null}
         <Field label="Email"><input required type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} /></Field>
@@ -100,7 +100,7 @@ function UserForm({ user, onClose, onSaved }: { user: any; onClose: () => void; 
         ) : null}
         {!isNew ? <label className="check"><input type="checkbox" checked={f.active} onChange={(e) => setF({ ...f, active: e.target.checked })} /> Active</label> : null}
         <div className="actions"><button type="button" onClick={onClose}>Cancel</button><button className="primary" type="submit">Save</button></div>
-      </form>
+      </GuardedForm>
     </Modal>
   );
 }
@@ -120,7 +120,7 @@ function ResetForm({ user, onClose }: { user: any; onClose: () => void }) {
   };
   return (
     <Modal title={`Reset password for ${user.username}`} onClose={onClose}>
-      <form onSubmit={submit}>
+      <GuardedForm onSubmit={submit}>
         <ErrorBox error={err} />
         {done ? <div className="alert ok">Password reset. The user's sessions were signed out.</div> : (
           <>
@@ -128,7 +128,7 @@ function ResetForm({ user, onClose }: { user: any; onClose: () => void }) {
             <div className="actions"><button type="button" onClick={onClose}>Cancel</button><button className="primary" type="submit">Reset</button></div>
           </>
         )}
-      </form>
+      </GuardedForm>
     </Modal>
   );
 }

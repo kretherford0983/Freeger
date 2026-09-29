@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, money, qs } from "../api";
-import { ErrorBox, Field, Loading, Modal } from "../components";
+import { ErrorBox, Field, Loading, Modal, GuardedForm } from "../components";
 import { useMe } from "../App";
 import { useRouter } from "../router";
 import { BudgetSection } from "./BudgetTable";
@@ -84,7 +84,7 @@ function BudgetForm({ fys, fyId, parent, onClose, onSaved }: any) {
   };
   return (
     <Modal title={parent ? `New sub-budget of ${parent.label}` : "New budget"} onClose={onClose}>
-      <form onSubmit={submit}>
+      <GuardedForm onSubmit={submit}>
         <ErrorBox error={err} />
         {!parent ? (
           <Field label="Fiscal Year">
@@ -101,7 +101,7 @@ function BudgetForm({ fys, fyId, parent, onClose, onSaved }: any) {
         <Field label="Amount"><input required inputMode="decimal" pattern="\d+(\.\d{1,2})?" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} /></Field>
         <Field label="Notes"><textarea value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} /></Field>
         <div className="actions"><button type="button" onClick={onClose}>Cancel</button><button className="primary" type="submit">Create</button></div>
-      </form>
+      </GuardedForm>
     </Modal>
   );
 }
@@ -118,13 +118,13 @@ function BudgetEdit({ row, onClose, onSaved }: any) {
   };
   return (
     <Modal title={`Edit ${row.label}`} onClose={onClose}>
-      <form onSubmit={submit}>
+      <GuardedForm onSubmit={submit}>
         <ErrorBox error={err} />
         <Field label="Name"><input required value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
         <Field label="Amount" hint="Other is recalculated automatically; sub-budgets may not exceed the parent."><input required value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} /></Field>
         <Field label="Notes"><textarea value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} /></Field>
         <div className="actions"><button type="button" onClick={onClose}>Cancel</button><button className="primary" type="submit">Save</button></div>
-      </form>
+      </GuardedForm>
     </Modal>
   );
 }
@@ -141,13 +141,13 @@ function ReasonForm({ row, action, title, onClose, onSaved }: any) {
   };
   return (
     <Modal title={title} onClose={onClose}>
-      <form onSubmit={submit}>
+      <GuardedForm onSubmit={submit}>
         <ErrorBox error={err} />
         {action === "reject" ? <p>A rejected budget's allowed amount becomes 0. Existing allocations are preserved.</p> : null}
         {action === "unlock" ? <p>Unlocking permits an authorized amendment and is audited.</p> : null}
         <Field label="Reason (required)"><textarea required value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
         <div className="actions"><button type="button" onClick={onClose}>Cancel</button><button className="primary" type="submit" disabled={!reason.trim()}>Confirm</button></div>
-      </form>
+      </GuardedForm>
     </Modal>
   );
 }

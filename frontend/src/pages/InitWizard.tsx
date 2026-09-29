@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, preAuthCsrf } from "../api";
-import { ErrorBox, Field } from "../components";
+import { ErrorBox, Field, GuardedForm } from "../components";
 
 export default function InitWizard({ onDone }: { onDone: () => void }) {
   const [f, setF] = useState({ workspace_name: "", admin_username: "", admin_email: "", password: "", password_confirmation: "" });
@@ -29,7 +29,7 @@ export default function InitWizard({ onDone }: { onDone: () => void }) {
   };
   return (
     <div className="center">
-      <form className="card auth-card" onSubmit={submit} aria-labelledby="init-title">
+      <GuardedForm className="card auth-card" onSubmit={submit} aria-labelledby="init-title">
         <h1 id="init-title">Initialization Wizard</h1>
         <p className="muted">This installation has not been initialized. Create the Workspace and the initial Administrator. No default credentials exist.</p>
         <ErrorBox error={err} />
@@ -42,7 +42,7 @@ export default function InitWizard({ onDone }: { onDone: () => void }) {
         <Field label="Password Confirmation"><input required type="password" autoComplete="new-password" value={f.password_confirmation} onChange={set("password_confirmation")} /></Field>
         <p className="hint">The POC does not provide backup/restore. Protect the application data directory (database, attachments and secrets) yourself.</p>
         <button className="primary" disabled={busy} type="submit">Initialize</button>
-      </form>
+      </GuardedForm>
     </div>
   );
 }

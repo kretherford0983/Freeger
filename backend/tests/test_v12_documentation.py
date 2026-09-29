@@ -78,20 +78,20 @@ def test_cr005_documentation_review_categories_and_non_blocking(env, base):
     up(env, "transaction", single_parent["id"])
     single_child = env.txn(a, "WITHDRAWAL", [{"budget_id": base["exp_leaf"], "amount": "3.00"}], clear_date="2026-08-02")
     up(env, "allocation", single_child["allocations"][0]["id"])
-    split_all_children = env.txn(a, "WITHDRAWAL", split, clear_date="2026-08-02")
+    split_all_children = env.txn(a, "WITHDRAWAL", split, clear_date="2026-08-02", confirmations=["POSSIBLE_DUPLICATE"])
     for al in split_all_children["allocations"]:
         up(env, "allocation", al["id"])
-    split_parent_only = env.txn(a, "WITHDRAWAL", split, clear_date="2026-08-02")
+    split_parent_only = env.txn(a, "WITHDRAWAL", split, clear_date="2026-08-02", confirmations=["POSSIBLE_DUPLICATE"])
     up(env, "transaction", split_parent_only["id"])
-    split_parent_one_child = env.txn(a, "WITHDRAWAL", split, clear_date="2026-08-02")
+    split_parent_one_child = env.txn(a, "WITHDRAWAL", split, clear_date="2026-08-02", confirmations=["POSSIBLE_DUPLICATE"])
     up(env, "transaction", split_parent_one_child["id"])
     up(env, "allocation", split_parent_one_child["allocations"][0]["id"])
-    split_one_child = env.txn(a, "WITHDRAWAL", split, clear_date="2026-08-02")
+    split_one_child = env.txn(a, "WITHDRAWAL", split, clear_date="2026-08-02", confirmations=["POSSIBLE_DUPLICATE"])
     up(env, "allocation", split_one_child["allocations"][0]["id"])
     child_flag_split = [dict(split[0]), dict(split[1], no_attachment=True, no_attachment_reason="Bank fee")]
-    split_child_flag = env.txn(a, "WITHDRAWAL", child_flag_split, clear_date="2026-08-02")
+    split_child_flag = env.txn(a, "WITHDRAWAL", child_flag_split, clear_date="2026-08-02", confirmations=["POSSIBLE_DUPLICATE"])
     up(env, "allocation", split_child_flag["allocations"][0]["id"])
-    split_parent_flag = env.txn(a, "WITHDRAWAL", split, clear_date="2026-08-02", no_attachment=True,
+    split_parent_flag = env.txn(a, "WITHDRAWAL", split, clear_date="2026-08-02", confirmations=["POSSIBLE_DUPLICATE"], no_attachment=True,
                                 no_attachment_reason="Lost receipt")
     marked = env.txn(a, "DEPOSIT", [{"budget_id": base["inc_leaf"], "amount": "0.50"}], clear_date="2026-08-02",
                      no_attachment=True, no_attachment_reason="Interest")
@@ -113,8 +113,8 @@ def test_cr005_documentation_review_categories_and_non_blocking(env, base):
     assert items[marked["id"]]["category"] == "NO_ATTACHMENT_MARKED" and items[marked["id"]]["no_attachment_reason"] == "Interest"
     assert voided["id"] not in items  # VOID transactions are not listed
     # warnings (not blockers) in the closure check
-    env.bm.post(f"/api/fiscal-years/{fy}/approve", {"confirm_irreversible": True})
-    up(env, "fiscal_year", fy, env.bm)
+    env.approve(fy)
+    env.fy_doc(fy, "AUDIT_SIGNOFF")
     chk = env.bm.get(f"/api/fiscal-years/{fy}/closure-check").json()
     codes = {w["code"]: w for w in chk["warnings"]}
     assert set(codes["MISSING_ATTACHMENTS"]["transaction_ids"]) == {single_none["id"], split_one_child["id"]}
@@ -152,7 +152,7 @@ def test_migration_0003_0004_preserve_existing_data(tmp_path):
     ver = con.execute("SELECT version_num FROM alembic_version").fetchone()[0]
     con.close()
     assert row == (7, "DEPOSIT", "ACTIVE", None, 0)
-    assert ver == "0004_allocation_no_attachment"
+    assert ver == "0005_v13"
 
 
 def test_cr005_allocation_flag_api_and_autoclear(env, base):

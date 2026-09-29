@@ -51,18 +51,35 @@ fieldset { border: 1px solid var(--border); border-radius: 6px; margin: 8px 0; p
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin: 12px 0; }
 .auth-card { width: 100%; max-width: 440px; }
 .auth-card button.primary { width: 100%; margin-top: 6px; }
-.shell { min-height: 100vh; display: flex; flex-direction: column; }
+/* v1.3 CR-013: top bar and left navigation stay in place; only the main content scrolls */
+.shell { height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+.shell > .topbar, .shell > .banner { flex-shrink: 0; }
 .topbar { display: flex; justify-content: space-between; align-items: center; padding: 10px 16px; background: var(--surface); border-bottom: 1px solid var(--border); gap: 12px; flex-wrap: wrap; }
 .brand { font-weight: 700; }
 .logo { color: var(--primary); }
 .userbox { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .small-link { font-size: 13px; }
 .body { display: flex; flex: 1; min-height: 0; }
-.sidenav { width: 190px; flex-shrink: 0; padding: 12px 8px; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; gap: 2px; }
-.sidenav a { padding: 8px 10px; border-radius: 6px; text-decoration: none; color: var(--text); }
-.sidenav a.active { background: var(--surface-2); font-weight: 600; box-shadow: inset 3px 0 0 var(--primary); }
-.content { flex: 1; padding: 16px 20px; min-width: 0; overflow-x: auto; }
-@media (max-width: 800px) { .body { flex-direction: column; } .sidenav { width: auto; flex-direction: row; flex-wrap: wrap; border-right: none; border-bottom: 1px solid var(--border); } }
+.sidenav { width: 200px; flex-shrink: 0; padding: 8px; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; gap: 2px; overflow-y: auto; overflow-x: hidden; transition: width .15s ease; }
+.sidenav a { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 6px; text-decoration: none; color: var(--text); white-space: nowrap; }
+.sidenav a:hover { background: var(--surface-2); }
+.sidenav a.active { background: var(--surface-2); font-weight: 600; box-shadow: inset 3px 0 0 var(--primary); color: var(--primary); }
+.sidenav a.active .nav-label { color: var(--text); }
+.nav-icon { flex-shrink: 0; }
+.nav-toggle { align-self: flex-end; padding: 2px 8px; margin-bottom: 4px; font-size: 15px; line-height: 1.2; background: none; }
+/* v1.3 CR-014: collapsed = icons only (names stay as tooltips / accessible labels) */
+.nav-collapsed .sidenav { width: 56px; }
+.nav-collapsed .sidenav .nav-label { display: none; }
+.nav-collapsed .sidenav a { justify-content: center; padding: 8px 0; }
+.nav-collapsed .nav-toggle { align-self: center; }
+.content { flex: 1; padding: 16px 20px; min-width: 0; overflow: auto; }
+@media (max-width: 800px) {
+  .sidenav { width: 56px; }
+  .sidenav .nav-label { display: none; }
+  .sidenav a { justify-content: center; padding: 8px 0; }
+  .nav-toggle { display: none; }
+  .content { padding: 12px; }
+}
 .page-head { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
 .page-head h1 { margin-right: auto; }
 .page-head .field { margin-bottom: 0; }
@@ -150,6 +167,9 @@ tr.child td.indent { padding-left: 28px; }
 .badge.grey { background: var(--grey-bg); color: var(--muted); }
 .report-options { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
 @media print {
+  .shell { height: auto; overflow: visible; }
+  .content { overflow: visible; }
+  .register-sticky { position: static !important; }
   .topbar, .sidenav, .no-print, .banner, button { display: none !important; }
   .content { padding: 0; }
   body, .content, .table { background: #fff !important; color: #000 !important; }
@@ -159,3 +179,28 @@ tr.child td.indent { padding-left: 28px; }
 .print-only { display: none; }
 a.button { display: inline-block; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); text-decoration: none; }
 a.button.primary { background: var(--primary); color: var(--primary-text); border-color: var(--primary); }
+
+/* v1.3 CR-011: forms are locked while saving */
+fieldset.form-guard { display: contents; border: 0; margin: 0; padding: 0; min-width: 0; }
+form[aria-busy="true"] { cursor: progress; }
+form[aria-busy="true"] button[type="submit"] { position: relative; color: transparent !important; }
+form[aria-busy="true"] button[type="submit"]::after { content: "Saving…"; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--text); }
+form[aria-busy="true"] button.primary[type="submit"]::after { color: var(--primary-text); }
+
+/* v1.3 CR-015: the register header (title, account, actions, filters, balances) and the column headings stay on
+   screen while the transactions scroll. Not pinned on small/short windows, where it would leave no room for rows. */
+.register-sticky { background: var(--bg); }
+.register-sticky .page-head h1 { margin-bottom: 4px; }
+.register-sticky .filters { margin: 4px 0; }
+.register-sticky .tiles { margin: 6px 0 4px; gap: 8px; }
+.register-sticky .tile { padding: 6px 10px; }
+.register-sticky .tile-value { font-size: 1.15rem; }
+@media (min-width: 800px) and (min-height: 650px) {
+  .register-sticky { position: sticky; top: -16px; z-index: 6; margin: -16px -20px 0; padding: 16px 20px 6px; border-bottom: 1px solid var(--border); }
+  .register-page .table-wrap { overflow: visible; }
+  .register-page table.register thead th { position: sticky; top: calc(var(--register-sticky-h, 0px) - 16px); z-index: 5; box-shadow: 0 1px 0 var(--border); }
+}
+.missing-checks { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 6px; }
+.fy-docs .attachments { margin-bottom: 10px; }
+.pending-files { margin: 4px 0; }
+select.small { padding: 1px 4px; font-size: 12px; margin-left: 6px; }

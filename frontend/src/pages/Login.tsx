@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, preAuthCsrf } from "../api";
-import { ErrorBox, Field } from "../components";
+import { ErrorBox, Field, GuardedForm } from "../components";
 
 export default function Login({ workspace, onLogin }: { workspace: string; onLogin: () => void }) {
   const [username, setU] = useState("");
@@ -23,14 +23,14 @@ export default function Login({ workspace, onLogin }: { workspace: string; onLog
   };
   return (
     <div className="center">
-      <form className="card auth-card" onSubmit={submit}>
+      <GuardedForm className="card auth-card" onSubmit={submit}>
         <h1>Sign in</h1>
         <p className="muted">{workspace}</p>
         <ErrorBox error={err} />
         <Field label="Username"><input required autoComplete="username" value={username} onChange={(e) => setU(e.target.value)} /></Field>
         <Field label="Password"><input required type="password" autoComplete="current-password" value={password} onChange={(e) => setP(e.target.value)} /></Field>
         <button className="primary" type="submit">Sign in</button>
-      </form>
+      </GuardedForm>
     </div>
   );
 }

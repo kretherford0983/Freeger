@@ -1,8 +1,9 @@
-"""v1.2 reporting (change request CR-002).
+"""Reporting (v1.2 CR-002; v1.3 CR-008).
 
-* End of Year Audit report - a single printable PDF: cover and Fiscal Year budget, then every transaction of the
-  year (all details, descriptions, notes, reviews) each immediately followed by its attachments (images rendered
-  as pages, PDF attachments merged page-for-page), then the Fiscal Year supporting documents.
+* End of Year Audit report - a single printable PDF: title, Fiscal Year review, budgets, then every transaction of
+  the year with its attachments reproduced beneath it.
+* Fiscal Year Close report - the same, with the Fiscal Year documents (approval, audit signoff, other) placed after
+  the review and before the budgets; generated on demand and automatically when the Fiscal Year is closed.
 * Entity activity report - how much each entity deposited and withdrew for an account in a date range.
 
 All user-controlled text is XML-escaped before it reaches reportlab's paragraph markup (prevents markup/<img>
@@ -373,34 +374,52 @@ def _long_date(d: dt.date) -> str:
     return f"{d:%B} {d.day}, {d.year}"  # portable (no %-d on Windows)
 
 
+def allocation_label(db: Session, t: RegisterTransaction, al: TransactionAllocation) -> str:
+    """v1.3 CR-009: "<Entity> - <Budget>" (entity falls back to the transaction's; budget label as in the UI)."""
+    from .register import _budget_info
+    ent = al.entity if al.entity is not None else t.parent_entity
+    budget = _budget_info(db, al.budget)["label"]
+    return f"{ent.display_name} - {budget}" if ent is not None and not ent.is_system else budget
+
+
 def _id_list(ids: list[int], limit: int = 60) -> str:
     s = ", ".join(f"#{i}" for i in ids[:limit])
     return s + (f" and {len(ids) - limit} more" if len(ids) > limit else "")
 
 
+FY_DOC_LABELS = {"APPROVAL": "Approval document", "AUDIT_SIGNOFF": "Audit Signoff", "UNSPECIFIED": "Other document"}
+
+
 def build_audit_report(db: Session, ctx, settings, fy: FiscalYear, account_id: int | None = None,
-                       include_void: bool = True) -> tuple[str, str, dict]:
+                       include_void: bool = True, layout: str = "audit") -> tuple[str, str, dict]:
     """Returns (temp file path, download filename, summary). Caller deletes the file.
 
-    Layout (v1.2.1, CR-002): page 1 title page; page 2 Fiscal Year Review introduction; pages 3-n budgets; then at
-    least one page per transaction - the headline fields at the top and every attachment rendered underneath within
-    the 8.5x11 page width; finally the Fiscal Year supporting documents.
+    Layout "audit" (v1.2.1 CR-002; v1.3 Q5): page 1 title page; page 2 Fiscal Year Review introduction; pages 3-n
+    budgets; then at least one page per transaction - the headline fields at the top and every attachment rendered
+    underneath within the 8.5x11 page width.
+    Layout "close" (v1.3 CR-008, Fiscal Year Close report): identical, with the Fiscal Year documents (Approval,
+    Audit Signoff, other) inserted after the Fiscal Year Review and before the budgets and transactions.
     """
+    close_layout = layout == "close"
+    report_name = "Fiscal Year Close Report" if close_layout else "End of Year Audit Report"
     ws = db.get(Workspace, ctx.workspace_id)
     users = {u.id: u.username for u in db.scalars(select(User).where(User.workspace_id == ctx.workspace_id))}
     accts = {a.id: a for a in db.scalars(select(BankAccount).where(BankAccount.workspace_id == ctx.workspace_id))}
     if account_id is not None and account_id not in accts:
         raise validation("Bank Account not found.", "bank_account_id")
-    title = f"End of Year Audit Report — {fy.display_name} — {ws.name}"
+    title = f"{report_name} — {fy.display_name} — {ws.name}"
     buf = io.BytesIO()
-    doc = _AuditDoc(buf, title="End of Year Audit Report", author=ws.name)
+    doc = _AuditDoc(buf, title=report_name, author=ws.name)
     tree = bsvc.tree(db, fy)
     check = closure_check(db, fy)
     txns = audit_transactions(db, ctx.workspace_id, fy, account_id, include_void)
     doc_review = documentation_review(db, fy)
     doc_items = {i["transaction_id"]: i for i in doc_review}
-    fy_atts = list(db.scalars(select(Attachment).where(Attachment.fiscal_year_id == fy.id, Attachment.active.is_(True))
+    fy_atts = list(db.scalars(select(Attachment).where(Attachment.fiscal_year_id == fy.id, Attachment.active.is_(True),
+                                                       Attachment.system_generated.is_(False))
                               .order_by(Attachment.id)))
+    order = {"APPROVAL": 0, "AUDIT_SIGNOFF": 1}
+    fy_atts.sort(key=lambda a: (order.get(a.document_type or "UNSPECIFIED", 2), a.id))
     att_cache = {t.id: _attachments_for(db, t) for t in txns}
     now = utcnow()
     scope = (accts[account_id].account_name + " - " + bank.masked(accts[account_id]) if account_id
@@ -408,7 +427,7 @@ def build_audit_report(db: Session, ctx, settings, fy: FiscalYear, account_id: i
 
     # ---- page 1: title page
     f: list = [_Mark(doc, "Title"), Spacer(1, 1.6 * inch), PM(escape(ws.name), "cover_org"), Spacer(1, 10),
-               PM("End of Year Audit Report", "cover_title"), Spacer(1, 6),
+               PM(report_name, "cover_title"), Spacer(1, 6),
                PM(f"Fiscal Year {escape(fy.display_name)}", "cover_sub"),
                PM(f"{_long_date(fy.start_date)} – {_long_date(fy.end_date)}", "cover_sub"), Spacer(1, 1.2 * inch),
                _kv([("Fiscal Year status", fy.status.title()),
@@ -437,9 +456,11 @@ def build_audit_report(db: Session, ctx, settings, fy: FiscalYear, account_id: i
         row[1 if t.transaction_type == "DEPOSIT" else 2] += t.total_cents
     f += [_Mark(doc, "Fiscal Year Review"), PM("Fiscal Year Review", "h1"),
           P(f"This report documents Fiscal Year {fy.display_name} ({fy.start_date} to {fy.end_date}) for {ws.name}. "
-            "It is organised as follows: this review summary; the Fiscal Year budgets (page 3 onward); then every "
-            "transaction of the year on its own page(s), with the transaction details at the top and each supporting "
-            "attachment reproduced beneath them; and finally the Fiscal Year supporting documents.", "body"),
+            "It is organised as follows: this review summary; "
+            + ("the Fiscal Year documents (approval, audit signoff and other supporting documents); the Fiscal Year "
+               "budgets; " if close_layout else "the Fiscal Year budgets (page 3 onward); ")
+            + "then every transaction of the year on its own page(s), with the transaction details at the top and each "
+              "supporting attachment reproduced beneath them.", "body"),
           Spacer(1, 8), PM("Activity summary", "h2"),
           _kv([("Transactions", f"{len(txns)} in this report — {len(active)} active, {len(txns) - len(active)} VOID"),
                ("Deposits (active)", money(dep)), ("Withdrawals (active)", money(wd)), ("Net", money(dep - wd)),
@@ -452,7 +473,12 @@ def build_audit_report(db: Session, ctx, settings, fy: FiscalYear, account_id: i
                          P(money(w), "cellr")])
         f += [Spacer(1, 4), _grid(data, [3.4 * inch, 1.0 * inch, 1.3 * inch, 1.3 * inch])]
     f += [Spacer(1, 8), PM("Closure readiness", "h2")]
-    items = [f"Blocker: {b['message']}" for b in check["blockers"]] + [f"Warning: {w['message']}" for w in check["warnings"]]
+    if fy.status == "CLOSED":
+        items = [f"The Fiscal Year is closed ({fy.closed_at:%Y-%m-%d %H:%M} UTC by {users.get(fy.closed_by_user_id, '?')})."
+                 if fy.closed_at else "The Fiscal Year is closed."]
+    else:
+        items = ([f"Blocker: {b['message']}" for b in check["blockers"]]
+                 + [f"Warning: {w['message']}" for w in check["warnings"]])
     f += [P("• " + x, "body") for x in (items or ["No blockers or warnings."])]
     f += [Spacer(1, 8), PM("Documentation review", "h2"),
           P("A transaction is documented when it has an attachment or is marked 'no attachment will be provided'. "
@@ -469,7 +495,25 @@ def build_audit_report(db: Session, ctx, settings, fy: FiscalYear, account_id: i
         f.append(P(f"({len(outside)} of these are outside this report's account/VOID filter.)", "small"))
     f.append(PageBreak())
 
-    # ---- pages 3-n: budgets
+    # ---- Close report only: Fiscal Year documents before the budgets and transactions (v1.3 CR-008)
+    if close_layout:
+        f += [_Mark(doc, "Fiscal Year documents"), PM("Fiscal Year documents", "h1")]
+        if fy.approval_no_attachment and not any(a.document_type == "APPROVAL" for a in fy_atts):
+            f.append(P("Approval document: none — the Fiscal Year is marked as having no approval document"
+                       + (f" ({fy.approval_no_attachment_reason})." if fy.approval_no_attachment_reason else "."), "body"))
+        if not fy_atts:
+            f.append(P("No Fiscal Year documents are attached.", "body"))
+        counts: dict[str, int] = {}
+        for x in fy_atts:
+            counts[x.document_type or "UNSPECIFIED"] = counts.get(x.document_type or "UNSPECIFIED", 0) + 1
+        seen: dict[str, int] = {}
+        for x in fy_atts:
+            kind = x.document_type or "UNSPECIFIED"
+            seen[kind] = seen.get(kind, 0) + 1
+            f += _attachment_flowables(doc, settings, x, f"{FY_DOC_LABELS[kind]} {seen[kind]} of {counts[kind]}", users)
+        f.append(PageBreak())
+
+    # ---- budgets
     f += [_Mark(doc, "Budgets")] + _budget_section(tree) + [PageBreak()]
 
     # ---- one or more pages per transaction
@@ -531,8 +575,8 @@ def build_audit_report(db: Session, ctx, settings, fy: FiscalYear, account_id: i
                          P(money(al.amount_cents), "cellr")])
         f += [Spacer(1, 4), _grid(rows, [1.7 * inch, 1.1 * inch, 0.65 * inch, 2.05 * inch, 0.75 * inch, 0.8 * inch])]
         ordered: list[tuple[str, Attachment]] = [("transaction", x) for x in parent_atts]
-        for i, al in enumerate(live):
-            ordered += [(f"allocation {i + 1}" if len(live) > 1 else "allocation", x) for x in by_alloc.get(al.id, [])]
+        for al in live:
+            ordered += [(allocation_label(db, t, al), x) for x in by_alloc.get(al.id, [])]
         if not ordered:
             f += [Spacer(1, 6), P("No attachments." + (" Marked 'no attachment will be provided'." if t.no_attachment
                                                        else ""), "small")]
@@ -543,13 +587,8 @@ def build_audit_report(db: Session, ctx, settings, fy: FiscalYear, account_id: i
                 f"{x.original_filename} (removed {x.removed_at:%Y-%m-%d})" for x in removed), "small")]
         f.append(PageBreak())
 
-    # ---- Fiscal Year supporting documentation
-    f += [_Mark(doc, "Supporting documentation"), PM("Fiscal Year supporting documentation", "h1")]
-    if not fy_atts:
-        f.append(P("No Fiscal Year supporting attachments.", "body"))
-    for i, x in enumerate(fy_atts):
-        f += _attachment_flowables(doc, settings, x, f"FY document {i + 1} of {len(fy_atts)}", users)
-
+    if f and isinstance(f[-1], PageBreak):
+        f.pop()  # no blank page at the end
     doc.build(f)
     fd, path = tempfile.mkstemp(prefix="fmpoc-audit-", suffix=".pdf")
     os.close(fd)
@@ -558,7 +597,7 @@ def build_audit_report(db: Session, ctx, settings, fy: FiscalYear, account_id: i
     except Exception:
         os.unlink(path)
         raise
-    fname = f"{fy.display_name}-end-of-year-audit-report.pdf"
+    fname = f"{fy.display_name}-{'fiscal-year-close' if close_layout else 'end-of-year-audit'}-report.pdf"
     return path, fname, {"transactions": len(txns), "pages": pages}
 
 
