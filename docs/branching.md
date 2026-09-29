@@ -9,13 +9,15 @@
 | Branch | Purpose | On every push/merge GitHub Actions… | Install with |
 |---|---|---|---|
 | `feature/*` | one enhancement / change request, branched from `develop` | runs all tests (`ci`) | — |
-| `develop` | integration of finished features | runs all tests and builds the packages (workflow-run artifacts, 14 days) | optional, for a quick look |
+| `develop` | integration of finished features | runs all tests and builds the packages (workflow-run artifacts, 7 days) | optional, for a quick look |
 | `test` | release candidate being tested | tests + packages + **GitHub pre-release** `v<version>-test.<n>` | test server |
 | `main` | production | tests + packages + **GitHub release** `v<version>` and git tag | production server |
 
 Packages in every build: `FinancialManagementPOC-linux-x64-portable.tar.gz` (servers), `FinancialManagementPOC-windows-x64.zip`,
 `install-server.sh`, `build-info.json` (version, branch, commit, run) and `SHA256SUMS.txt`. Each package is smoke-tested
 (started from a clean environment and checked for the expected version) before it is published.
+Workflow-run copies of the packages are kept 7 days (develop) or 1 day (test/main — the GitHub release keeps the
+permanent copy), so Actions artifact storage stays well within the GitHub Pro allowance (1 GB).
 
 ## Rules enforced by the pipeline (`scripts/check_promotion.sh`)
 - Pull requests into **develop** come from `feature/*` or `hotfix/*` (or a back-merge from `test`/`main`).
