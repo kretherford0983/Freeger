@@ -65,7 +65,9 @@ jobs:
         with:
           name: FinancialManagementPOC-${{ steps.meta.outputs.version }}-${{ github.ref_name }}-${{ github.run_number }}
           path: release/
-          retention-days: ${{ github.ref_name == 'develop' && 14 || 90 }}
+          # test/main packages are kept permanently on the GitHub release; the run copy only feeds the publish job.
+          # Short retention keeps Actions artifact storage (1 GB on GitHub Pro) well below the limit.
+          retention-days: ${{ github.ref_name == 'develop' && 7 || 1 }}
 
   publish:
     needs: package
