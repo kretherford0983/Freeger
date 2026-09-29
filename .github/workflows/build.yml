@@ -1,0 +1,108 @@
+# Builds installable packages whenever code lands in a long-lived branch:
+#   develop -> packages attached to the workflow run (artifacts, kept 14 days)
+#   test    -> GitHub pre-release  v<version>-test.<run number>   (install on the test server)
+#   main    -> GitHub release      v<version>  (+ git tag)          (install in production)
+# A release is created only once per version: if tag v<version> already exists the main build is packaged but not
+# re-released (pull requests into main are blocked earlier by scripts/check_promotion.sh when the version was not bumped).
+name: build
+on:
+  push:
+    branches: [develop, test, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  tests:
+    uses: ./.github/workflows/tests.yml
+
+  package:
+    needs: tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - id: meta
+        name: Version
+        run: echo "version=$(bash scripts/version.sh)" >> "$GITHUB_OUTPUT"
+      - name: Frontend production build
+        run: npm --prefix frontend ci && npm --prefix frontend run build
+      - name: Linux portable package (servers - use with packaging/linux/install-server.sh)
+        run: bash packaging/build_linux_portable.sh
+      - name: Windows portable package
+        run: bash packaging/build_windows_portable.sh
+      - name: Assemble release files
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          mkdir -p release
+          cp dist/FinancialManagementPOC-linux-x64-portable.tar.gz dist/FinancialManagementPOC-windows-x64.zip release/
+          cp packaging/linux/install-server.sh release/
+          printf '{"version":"%s","branch":"%s","commit":"%s","run":"%s","built_at":"%s"}\n' \
+            "$VERSION" "$GITHUB_REF_NAME" "$GITHUB_SHA" "$GITHUB_RUN_NUMBER" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > release/build-info.json
+          (cd release && sha256sum -- * > SHA256SUMS.txt && cat SHA256SUMS.txt)
+      - name: Smoke test the Linux package
+        run: |
+          mkdir -p "$RUNNER_TEMP/pkg" && tar -xzf release/FinancialManagementPOC-linux-x64-portable.tar.gz -C "$RUNNER_TEMP/pkg"
+          BIN=$(find "$RUNNER_TEMP/pkg" -maxdepth 2 -name FinancialManagementPOC -type f | head -1)
+          env -i HOME="$RUNNER_TEMP" PATH=/usr/bin:/bin "$BIN" --no-browser --port 8790 --data-dir "$RUNNER_TEMP/d" &
+          for i in $(seq 1 60); do curl -fs http://127.0.0.1:8790/api/health >/dev/null && break; sleep 1; done
+          STATUS=$(curl -fs http://127.0.0.1:8790/api/system/status); echo "$STATUS"
+          [[ "$STATUS" == *"\"version\":\"$(bash scripts/version.sh)\""* ]] || { echo "::error::package reports the wrong version"; exit 1; }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FinancialManagementPOC-${{ steps.meta.outputs.version }}-${{ github.ref_name }}-${{ github.run_number }}
+          path: release/
+          retention-days: ${{ github.ref_name == 'develop' && 14 || 90 }}
+
+  publish:
+    needs: package
+    if: github.ref_name == 'test' || github.ref_name == 'main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: FinancialManagementPOC-${{ needs.package.outputs.version }}-${{ github.ref_name }}-${{ github.run_number }}
+          path: release
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.package.outputs.version }}
+        run: |
+          bash scripts/release_notes.sh "$VERSION" > notes.md
+          if [ "$GITHUB_REF_NAME" = "test" ]; then
+            if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
+              echo "::notice::v$VERSION is already released - no test pre-release created (bump the version on develop)."
+              exit 0
+            fi
+            TAG="v$VERSION-test.$GITHUB_RUN_NUMBER"
+            printf '\n---\nTest build from branch `test` (commit %s). Install on the **test** server:\n```\nsudo bash install-server.sh FinancialManagementPOC-linux-x64-portable.tar.gz\n```\n' "$GITHUB_SHA" >> notes.md
+            gh release create "$TAG" release/* --target "$GITHUB_SHA" --prerelease \
+              --title "Freedger $VERSION (test build $GITHUB_RUN_NUMBER)" --notes-file notes.md
+          else
+            TAG="v$VERSION"
+            if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+              echo "::notice::$TAG already released - packages are attached to this workflow run only."
+              exit 0
+            fi
+            printf '\n---\nProduction release (commit %s). Upgrade: see docs/upgrade.md, then\n```\nsudo bash install-server.sh FinancialManagementPOC-linux-x64-portable.tar.gz\n```\n' "$GITHUB_SHA" >> notes.md
+            gh release create "$TAG" release/* --target "$GITHUB_SHA" --latest \
+              --title "Freedger $VERSION" --notes-file notes.md
+          fi

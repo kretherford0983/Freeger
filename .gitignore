@@ -10,3 +10,5 @@ frontend/e2e-screenshots/
 frontend/playwright-report/
 backend/fmpoc/static/
 *.sqlite3*
+Claude outputs/
+release/

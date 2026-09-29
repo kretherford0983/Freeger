@@ -1,89 +1,34 @@
+# Checks for work in progress and for every pull request into develop / test / main.
+# Pull requests must pass before they can be merged (enable "Require status checks" - see docs/branching.md).
 name: ci
-on: [push, pull_request, workflow_dispatch]
+on:
+  push:
+    branches: ["feature/**", "hotfix/**"]
+  pull_request:
+    branches: [develop, test, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  test:
+  promotion:
+    name: promotion-rules
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.12" }
-      - uses: actions/setup-node@v4
-        with: { node-version: "22" }
-      - run: pip install -r backend/requirements-dev.txt
-      - run: npm --prefix frontend ci
-      - name: Backend tests (AC-mapped, incl. security negative tests)
-        run: cd backend && python -m pytest -p no:warnings
-      - name: Frontend typecheck + production build
-        run: cd frontend && npx tsc --noEmit -p . && npm run build
-      - name: E2E UI tests
-        run: cd frontend && npx playwright install --with-deps chromium && FM_PYTHON=python npx playwright test
-      - name: Dependency vulnerability checks (AC-SEC-024)
-        run: bash scripts/security_check.sh
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with: { name: security-reports, path: build/security }
+        with:
+          fetch-depth: 0
+      - name: Check branch flow and version
+        env:
+          BASE: ${{ github.base_ref }}
+          HEAD: ${{ github.head_ref }}
+        run: bash scripts/check_promotion.sh "$BASE" "$HEAD"
 
-  build-linux:
-    needs: test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.12" }
-      - uses: actions/setup-node@v4
-        with: { node-version: "22" }
-      - run: bash packaging/build_linux.sh
-      - name: Smoke test packaged build with an empty environment (AC-DEP-002)
-        run: |
-          env -i HOME=$RUNNER_TEMP PATH=/nonexistent ./dist/FinancialManagementPOC/FinancialManagementPOC --no-browser --port 8790 --data-dir $RUNNER_TEMP/d &
-          for i in $(seq 1 60); do curl -fs http://127.0.0.1:8790/api/health && break; sleep 1; done
-          curl -fs http://127.0.0.1:8790/api/system/status | grep '"initialized":false'
-      - uses: actions/upload-artifact@v4
-        with: { name: FinancialManagementPOC-linux-x64, path: dist/FinancialManagementPOC-linux-x64.tar.gz }
-
-  build-windows:
-    needs: test
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.12" }
-      - uses: actions/setup-node@v4
-        with: { node-version: "22" }
-      - run: .\packaging\build_windows.ps1
-        shell: pwsh
-      - name: Smoke test packaged build (AC-DEP-001)
-        shell: pwsh
-        run: |
-          $env:PATH = "C:\Windows\System32;C:\Windows"
-          $p = Start-Process -PassThru -FilePath dist\FinancialManagementPOC\FinancialManagementPOC.exe -ArgumentList "--no-browser","--port","8790","--data-dir","$env:RUNNER_TEMP\d"
-          for ($i=0; $i -lt 60; $i++) { try { Invoke-RestMethod http://127.0.0.1:8790/api/health; break } catch { Start-Sleep 1 } }
-          if ((Invoke-RestMethod http://127.0.0.1:8790/api/system/status).initialized -ne $false) { throw "unexpected status" }
-          Stop-Process $p
-      - uses: actions/upload-artifact@v4
-        with: { name: FinancialManagementPOC-windows-x64-pyinstaller, path: dist/FinancialManagementPOC-windows-x64-pyinstaller.zip }
-
-  build-linux-portable:
-    needs: test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: "22" }
-      - run: npm --prefix frontend ci && npm --prefix frontend run build
-      - run: bash packaging/build_linux_portable.sh
-      - uses: actions/upload-artifact@v4
-        with: { name: FinancialManagementPOC-linux-x64-portable, path: dist/FinancialManagementPOC-linux-x64-portable.tar.gz }
-
-  build-windows-portable:
-    needs: test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: "22" }
-      - run: npm --prefix frontend ci && npm --prefix frontend run build
-      - run: bash packaging/build_windows_portable.sh
-      - uses: actions/upload-artifact@v4
-        with: { name: FinancialManagementPOC-windows-x64-portable, path: dist/FinancialManagementPOC-windows-x64.zip }
+  tests:
+    uses: ./.github/workflows/tests.yml
