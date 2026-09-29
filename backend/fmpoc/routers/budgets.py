@@ -1,0 +1,73 @@
+from __future__ import annotations
+
+from typing import Literal
+
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy.orm import Session
+
+from ..deps import Ctx, get_db, require
+from ..models import Budget, FiscalYear
+from ..schemas import BudgetCreateIn, BudgetUpdateIn, ReasonIn
+from ..services import budgets as svc
+from ..services.common import get_scoped
+
+router = APIRouter(prefix="/api/budgets", tags=["budgets"])
+
+
+@router.get("")
+def budget_tree(fiscal_year_id: int = Query(...), db: Session = Depends(get_db),
+                ctx: Ctx = Depends(require("financial.view"))):
+    return svc.tree(db, get_scoped(db, FiscalYear, fiscal_year_id, ctx, "Fiscal Year"))
+
+
+@router.get("/selectable")
+def selectable(fiscal_year_id: int = Query(...), transaction_type: Literal["DEPOSIT", "WITHDRAWAL"] | None = None,
+               db: Session = Depends(get_db), ctx: Ctx = Depends(require("financial.view"))):
+    return svc.selectable(db, ctx.workspace_id, get_scoped(db, FiscalYear, fiscal_year_id, ctx, "Fiscal Year"),
+                          transaction_type)
+
+
+@router.get("/{budget_id}")
+def get_budget(budget_id: int, db: Session = Depends(get_db), ctx: Ctx = Depends(require("financial.view"))):
+    b = get_scoped(db, Budget, budget_id, ctx, "Budget")
+    return {**svc.snapshot(b), "state": svc.state(b)}
+
+
+@router.post("", status_code=201)
+def create(body: BudgetCreateIn, db: Session = Depends(get_db), ctx: Ctx = Depends(require("budget.manage"))):
+    b = svc.create(db, ctx, body)
+    db.commit()
+    return {**svc.snapshot(b), "state": svc.state(b)}
+
+
+def _mut(fn):
+    def handler(budget_id: int, db: Session, ctx: Ctx, *args):
+        b = fn(db, ctx, get_scoped(db, Budget, budget_id, ctx, "Budget"), *args)
+        db.commit()
+        return {**svc.snapshot(b), "state": svc.state(b)}
+    return handler
+
+
+@router.patch("/{budget_id}")
+def update(budget_id: int, body: BudgetUpdateIn, db: Session = Depends(get_db), ctx: Ctx = Depends(require("budget.manage"))):
+    return _mut(svc.update)(budget_id, db, ctx, body)
+
+
+@router.post("/{budget_id}/reject")
+def reject(budget_id: int, body: ReasonIn, db: Session = Depends(get_db), ctx: Ctx = Depends(require("budget.manage"))):
+    return _mut(svc.reject)(budget_id, db, ctx, body.reason)
+
+
+@router.post("/{budget_id}/inactivate")
+def inactivate(budget_id: int, body: ReasonIn, db: Session = Depends(get_db), ctx: Ctx = Depends(require("budget.manage"))):
+    return _mut(svc.inactivate)(budget_id, db, ctx, body.reason)
+
+
+@router.post("/{budget_id}/unlock")
+def unlock(budget_id: int, body: ReasonIn, db: Session = Depends(get_db), ctx: Ctx = Depends(require("budget.manage"))):
+    return _mut(svc.unlock)(budget_id, db, ctx, body.reason)
+
+
+@router.post("/{budget_id}/lock")
+def lock(budget_id: int, db: Session = Depends(get_db), ctx: Ctx = Depends(require("budget.manage"))):
+    return _mut(svc.lock)(budget_id, db, ctx)

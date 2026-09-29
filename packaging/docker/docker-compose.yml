@@ -1,0 +1,22 @@
+# Example server deployment: Caddy terminates HTTPS and proxies to the app (only Caddy is published).
+# docker compose -f packaging/docker/docker-compose.yml up -d
+services:
+  app:
+    build: { context: ../.., dockerfile: packaging/docker/Dockerfile }
+    image: fmpoc:1.1.0
+    restart: unless-stopped
+    environment:
+      FM_SECURE_COOKIES: "true"        # cookies only over HTTPS (TLS terminated by Caddy)
+      FM_HSTS: "true"
+      FM_TRUSTED_PROXIES: "*"          # only the private compose network can reach the app port
+    volumes: [ "fmpoc-data:/data" ]
+    expose: [ "8765" ]
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports: [ "443:443", "80:80" ]
+    volumes: [ "./Caddyfile:/etc/caddy/Caddyfile:ro", "caddy-data:/data" ]
+    depends_on: [ app ]
+volumes:
+  fmpoc-data: {}
+  caddy-data: {}

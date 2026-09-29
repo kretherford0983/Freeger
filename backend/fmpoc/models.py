@@ -1,0 +1,339 @@
+"""SQLAlchemy ORM models (docs/07). Monetary values are stored as integer cents to avoid
+floating point storage in SQLite; the API exposes decimal strings with 2 places."""
+from __future__ import annotations
+
+import datetime as dt
+
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    Boolean,
+    Date,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    MetaData,
+    String,
+    Text,
+    UniqueConstraint,
+)
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+NAMING = {
+    "ix": "ix_%(column_0_label)s",
+    "uq": "uq_%(table_name)s_%(column_0_name)s",
+    "ck": "ck_%(table_name)s_%(constraint_name)s",
+    "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
+    "pk": "pk_%(table_name)s",
+}
+
+
+def utcnow() -> dt.datetime:
+    return dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
+
+
+class Base(DeclarativeBase):
+    metadata = MetaData(naming_convention=NAMING)
+
+
+# ---------------------------------------------------------------- workspace / security
+class Workspace(Base):
+    __tablename__ = "workspace"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(120))
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow)
+    # Bootstrap marker (BR-INIT-003 / docs/06 v1.1): set only in the same DB transaction that
+    # creates the admin, roles and seed records. Empty/partial DBs therefore remain uninitialized.
+    bootstrap_completed_at: Mapped[dt.datetime | None] = mapped_column(DateTime, nullable=True)
+    # Key check value of the portable encryption key; detects key/database mismatch.
+    key_check: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    next_entity_number: Mapped[int] = mapped_column(Integer, default=1)
+
+
+class Role(Base):
+    __tablename__ = "role"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    code: Mapped[str] = mapped_column(String(40), unique=True)
+    name: Mapped[str] = mapped_column(String(80))
+    security_domain: Mapped[str] = mapped_column(String(20))
+
+
+class User(Base):
+    __tablename__ = "app_user"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspace.id"), index=True)
+    username: Mapped[str] = mapped_column(String(64))
+    username_normalized: Mapped[str] = mapped_column(String(64))
+    email: Mapped[str] = mapped_column(String(254))
+    display_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    password_hash: Mapped[str] = mapped_column(String(255))
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    security_domain: Mapped[str] = mapped_column(String(20))  # ADMINISTRATOR | FINANCIAL | AUDITOR
+    theme: Mapped[str] = mapped_column(String(10), default="light")
+    password_changed_at: Mapped[dt.datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"), nullable=True)
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+    updated_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"), nullable=True)
+
+    roles: Mapped[list[Role]] = relationship(secondary="user_role", lazy="selectin")
+
+    __table_args__ = (UniqueConstraint("workspace_id", "username_normalized", name="uq_user_ws_username"),)
+
+    @property
+    def role_codes(self) -> set[str]:
+        return {r.code for r in self.roles}
+
+
+class UserRole(Base):
+    __tablename__ = "user_role"
+    user_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"), primary_key=True)
+    role_id: Mapped[int] = mapped_column(ForeignKey("role.id"), primary_key=True)
+
+
+class AuthSession(Base):
+    __tablename__ = "auth_session"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)  # sha256 of the cookie value
+    user_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"), index=True)
+    csrf_token: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow)
+    last_seen_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow)
+    expires_at: Mapped[dt.datetime] = mapped_column(DateTime)
+    revoked_at: Mapped[dt.datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+# ---------------------------------------------------------------- fiscal years / budgets
+class FiscalYear(Base):
+    __tablename__ = "fiscal_year"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspace.id"), index=True)
+    identifier: Mapped[str] = mapped_column(String(20))
+    display_name: Mapped[str] = mapped_column(String(24))
+    start_date: Mapped[dt.date] = mapped_column(Date, index=True)
+    end_date: Mapped[dt.date] = mapped_column(Date, index=True)
+    status: Mapped[str] = mapped_column(String(10), default="DRAFT", index=True)
+    approved_at: Mapped[dt.datetime | None] = mapped_column(DateTime, nullable=True)
+    approved_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"), nullable=True)
+    closed_at: Mapped[dt.datetime | None] = mapped_column(DateTime, nullable=True)
+    closed_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"), nullable=True)
+    exception_confirmed: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"), nullable=True)
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+    updated_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"), nullable=True)
+
+    __table_args__ = (UniqueConstraint("workspace_id", "identifier", name="uq_fy_ws_identifier"),)
+
+
+class Budget(Base):
+    __tablename__ = "budget"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspace.id"), index=True)
+    fiscal_year_id: Mapped[int] = mapped_column(ForeignKey("fiscal_year.id"), index=True)
+    parent_budget_id: Mapped[int | None] = mapped_column(ForeignKey("budget.id"), nullable=True, index=True)
+    parent_code: Mapped[str] = mapped_column(String(10))
+    child_code: Mapped[str | None] = mapped_column(String(6), nullable=True)
+    name: Mapped[str] = mapped_column(String(120))
+    budget_type: Mapped[str] = mapped_column(String(10))  # INCOME | EXPENSE
+    amount_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    requested_amount_cents: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    status: Mapped[str] = mapped_column(String(10), default="DRAFT")  # DRAFT|APPROVED|REJECTED|INACTIVE
+    locked: Mapped[bool] = mapped_column(Boolean, default=False)
+    system_managed: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_other: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_budget_zero: Mapped[bool] = mapped_column(Boolean, default=False)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"), nullable=True)
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+    updated_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"), nullable=True)
+
+    __table_args__ = (Index("ix_budget_fy_type_status", "fiscal_year_id", "budget_type", "status"),)
+
+
+# ---------------------------------------------------------------- entities / accounts
+class Entity(Base):
+    __tablename__ = "entity"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspace.id"), index=True)
+    entity_number: Mapped[str] = mapped_column(String(16))
+    entity_type: Mapped[str] = mapped_column(String(14))  # INDIVIDUAL | ORGANIZATION | SYSTEM
+    organization_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    primary_contact: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    address_line1: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    address_line2: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    city: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    state_region: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    postal_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    country: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    email: Mapped[str | None] = mapped_column(String(254), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_financial_institution: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    is_system: Mapped[bool] = mapped_column(Boolean, default=False)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    name_key: Mapped[str] = mapped_column(String(200), index=True)  # normalized name for duplicate search
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"), nullable=True)
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+    updated_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"), nullable=True)
+
+    __table_args__ = (UniqueConstraint("workspace_id", "entity_number", name="uq_entity_ws_number"),)
+
+    @property
+    def display_name(self) -> str:
+        if self.entity_type == "INDIVIDUAL":
+            return self.primary_contact or ""
+        return self.organization_name or ""
+
+
+class BankAccount(Base):
+    __tablename__ = "bank_account"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspace.id"), index=True)
+    financial_institution_entity_id: Mapped[int] = mapped_column(ForeignKey("entity.id"))
+    account_name: Mapped[str] = mapped_column(String(120))
+    account_type: Mapped[str] = mapped_column(String(30))
+    account_subtype: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    account_number_ciphertext: Mapped[str] = mapped_column(Text)
+    account_number_fingerprint: Mapped[str] = mapped_column(String(64))
+    account_number_visible_suffix: Mapped[str] = mapped_column(String(4))
+    register_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_primary: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    interest_rate: Mapped[str | None] = mapped_column(String(12), nullable=True)  # decimal percent string
+    opening_balance_cents: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    opening_balance_date: Mapped[dt.date | None] = mapped_column(Date, nullable=True)
+    manual_current_balance_cents: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    status: Mapped[str] = mapped_column(String(10), default="ACTIVE", index=True)  # ACTIVE | CLOSED
+    closed_date: Mapped[dt.date | None] = mapped_column(Date, nullable=True)
+    close_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"), nullable=True)
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+    updated_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"), nullable=True)
+
+    institution: Mapped[Entity] = relationship(lazy="joined")
+
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "account_number_fingerprint", name="uq_bank_ws_fingerprint"),
+    )
+
+
+# ---------------------------------------------------------------- register
+class RegisterTransaction(Base):
+    __tablename__ = "register_transaction"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspace.id"), index=True)
+    bank_account_id: Mapped[int] = mapped_column(ForeignKey("bank_account.id"), index=True)
+    transaction_type: Mapped[str] = mapped_column(String(10))  # DEPOSIT | WITHDRAWAL
+    transaction_date: Mapped[dt.date] = mapped_column(Date, index=True)
+    entry_timestamp: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow)
+    clear_date: Mapped[dt.date | None] = mapped_column(Date, nullable=True, index=True)
+    parent_entity_id: Mapped[int | None] = mapped_column(ForeignKey("entity.id"), nullable=True)
+    check_number: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    status: Mapped[str] = mapped_column(String(10), default="ACTIVE", index=True)  # ACTIVE | VOID
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    void_reason: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"), nullable=True)
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+    updated_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"), nullable=True)
+    voided_at: Mapped[dt.datetime | None] = mapped_column(DateTime, nullable=True)
+    voided_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"), nullable=True)
+
+    allocations: Mapped[list["TransactionAllocation"]] = relationship(
+        back_populates="transaction", lazy="selectin", order_by="TransactionAllocation.id"
+    )
+    parent_entity: Mapped[Entity | None] = relationship(lazy="joined")
+
+    @property
+    def live_allocations(self) -> list["TransactionAllocation"]:
+        return [a for a in self.allocations if a.removed_at is None]
+
+    @property
+    def total_cents(self) -> int:
+        """BR-046: the parent total is always derived from its allocations."""
+        return sum(a.amount_cents for a in self.live_allocations)
+
+
+class TransactionAllocation(Base):
+    __tablename__ = "transaction_allocation"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    transaction_id: Mapped[int] = mapped_column(ForeignKey("register_transaction.id"), index=True)
+    budget_id: Mapped[int] = mapped_column(ForeignKey("budget.id"), index=True, nullable=False)
+    entity_id: Mapped[int | None] = mapped_column(ForeignKey("entity.id"), nullable=True)
+    invoice_number: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    description: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    amount_cents: Mapped[int] = mapped_column(BigInteger)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Allocations removed from a transaction during an edit are retained (never hard deleted).
+    removed_at: Mapped[dt.datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"), nullable=True)
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+    updated_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"), nullable=True)
+
+    transaction: Mapped[RegisterTransaction] = relationship(back_populates="allocations")
+    budget: Mapped[Budget] = relationship(lazy="joined")
+    entity: Mapped[Entity | None] = relationship(lazy="joined")
+
+
+class FiscalYearReview(Base):
+    __tablename__ = "fiscal_year_review"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspace.id"), index=True)
+    transaction_allocation_id: Mapped[int] = mapped_column(ForeignKey("transaction_allocation.id"), index=True)
+    category: Mapped[str] = mapped_column(String(20))  # CROSS_FY | NO_FISCAL_YEAR
+    natural_fiscal_year_id: Mapped[int | None] = mapped_column(ForeignKey("fiscal_year.id"), nullable=True)
+    status: Mapped[str] = mapped_column(String(10), default="PENDING", index=True)  # PENDING|REVIEWED|REASSIGNED
+    review_note: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    reviewed_at: Mapped[dt.datetime | None] = mapped_column(DateTime, nullable=True)
+    reviewed_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"), nullable=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow)
+
+    allocation: Mapped[TransactionAllocation] = relationship(lazy="joined")
+
+
+# ---------------------------------------------------------------- attachments
+class Attachment(Base):
+    __tablename__ = "attachment"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspace.id"), index=True)
+    original_filename: Mapped[str] = mapped_column(String(255))
+    storage_key: Mapped[str] = mapped_column(String(80), unique=True)  # application generated
+    mime_type: Mapped[str] = mapped_column(String(40))
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    sha256: Mapped[str] = mapped_column(String(64))
+    # Explicit nullable FKs (instead of a polymorphic link) preserve referential integrity (docs/07 §8).
+    fiscal_year_id: Mapped[int | None] = mapped_column(ForeignKey("fiscal_year.id"), nullable=True, index=True)
+    transaction_id: Mapped[int | None] = mapped_column(ForeignKey("register_transaction.id"), nullable=True, index=True)
+    allocation_id: Mapped[int | None] = mapped_column(ForeignKey("transaction_allocation.id"), nullable=True, index=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    removed_at: Mapped[dt.datetime | None] = mapped_column(DateTime, nullable=True)
+    removed_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"), nullable=True)
+    uploaded_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow)
+    uploaded_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"), nullable=True)
+
+
+# ---------------------------------------------------------------- audit
+class AuditEvent(Base):
+    __tablename__ = "audit_event"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    workspace_id: Mapped[int | None] = mapped_column(ForeignKey("workspace.id"), nullable=True, index=True)
+    actor_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"), nullable=True, index=True)
+    actor_username: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    timestamp: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    action: Mapped[str] = mapped_column(String(60), index=True)
+    object_type: Mapped[str] = mapped_column(String(40))
+    object_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    category: Mapped[str] = mapped_column(String(12), default="BUSINESS")  # BUSINESS | SECURITY
+    before_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    after_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    correlation_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    source_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    __table_args__ = (Index("ix_audit_object", "object_type", "object_id"),)

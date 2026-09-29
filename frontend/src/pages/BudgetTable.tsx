@@ -1,0 +1,85 @@
+import { Fragment } from "react";
+import { money } from "../api";
+import { BudgetState } from "../components";
+
+export interface BudgetActions {
+  onEdit?: (row: any) => void;
+  onAddChild?: (row: any) => void;
+  onReject?: (row: any) => void;
+  onInactivate?: (row: any) => void;
+  onUnlock?: (row: any) => void;
+  onLock?: (row: any) => void;
+}
+
+/** Holistic budget table: Q1-Q4 + yearly actuals, amount, remaining, state icon + text (BR-079/080). */
+export function BudgetSection({ title, rows, summary, fyStatus, actions, showOutside }: {
+  title: string; rows: any[]; summary: any; fyStatus: string; actions?: BudgetActions; showOutside?: boolean;
+}) {
+  const editable = !!actions && fyStatus !== "CLOSED";
+  return (
+    <section className="budget-section">
+      <h3>{title}</h3>
+      <div className="table-wrap">
+        <table className="table budget-table">
+          <thead>
+            <tr>
+              <th>Status</th><th>Budget</th><th className="num">Amount</th>
+              <th className="num">Q1</th><th className="num">Q2</th><th className="num">Q3</th><th className="num">Q4</th>
+              {showOutside ? <th className="num" title="Allocations dated outside this Fiscal Year (cross-FY)">Outside FY dates</th> : null}
+              <th className="num">Actual (year)</th><th className="num">Remaining</th>{editable ? <th>Actions</th> : null}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 ? <tr><td colSpan={12} className="muted">No {title.toLowerCase()} budgets.</td></tr> : null}
+            {rows.map((r) => (
+              <Fragment key={r.id}>
+                <Row r={r} level={0} editable={editable} actions={actions} showOutside={showOutside} />
+                {r.children.map((c: any) => <Row key={c.id} r={c} level={1} editable={editable} actions={actions} parent={r} showOutside={showOutside} />)}
+              </Fragment>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr>
+              <th /><th>Total</th><th className="num">{money(summary.amount)}</th>
+              {summary.quarters.map((q: string, i: number) => <th key={i} className="num">{money(q)}</th>)}
+              {showOutside ? <th /> : null}
+              <th className="num">{money(summary.actual)}</th>
+              <th className={`num ${Number(summary.remaining) < 0 ? "neg" : ""}`}>{money(summary.remaining)}</th>{editable ? <th /> : null}
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function Row({ r, level, editable, actions, parent, showOutside }: { r: any; level: number; editable: boolean; actions?: BudgetActions; parent?: any; showOutside?: boolean }) {
+  const tone = r.state.tone;
+  const locked = parent ? parent.locked : r.locked;
+  const canEdit = editable && !r.system_managed && !locked && !["REJECTED", "INACTIVE"].includes(r.status);
+  return (
+    <tr className={`bg-${tone}${level ? " child" : ""}`}>
+      <td><BudgetState state={r.state} /></td>
+      <td className={level ? "indent" : ""}>
+        <span className="code">{r.display_code}</span> {r.name}
+        {r.is_other ? <span className="muted"> (system-managed, calculated)</span> : null}
+        {r.status === "REJECTED" && r.requested_amount ? <span className="muted"> · requested {money(r.requested_amount)}</span> : null}
+      </td>
+      <td className="num">{money(r.amount)}</td>
+      {r.quarters.map((q: string, i: number) => <td key={i} className="num">{money(q)}</td>)}
+      {showOutside ? <td className="num">{Number(r.outside_fiscal_year) ? money(r.outside_fiscal_year) : ""}</td> : null}
+      <td className="num">{money(r.actual)}</td>
+      <td className={`num ${Number(r.remaining) < 0 ? "neg" : ""}`}>{money(r.remaining)}{r.over_budget ? <span className="sr"> (over budget)</span> : null}</td>
+      {editable ? (
+        <td className="actions-cell">
+          {canEdit && actions?.onEdit ? <button className="small" aria-label={`Edit ${r.display_code}`} title="Edit" onClick={() => actions.onEdit!(r)}>✎ Edit</button> : null}
+          {canEdit && level === 0 && actions?.onAddChild ? <button className="small" onClick={() => actions.onAddChild!(r)}>+ Sub-budget</button> : null}
+          {canEdit && actions?.onReject ? <button className="small" onClick={() => actions.onReject!(r)}>Reject</button> : null}
+          {canEdit && actions?.onInactivate ? <button className="small" onClick={() => actions.onInactivate!(r)}>Inactivate</button> : null}
+          {level === 0 && !r.system_managed && r.status === "APPROVED" && r.locked && actions?.onUnlock ? <button className="small" onClick={() => actions.onUnlock!(r)}>Unlock</button> : null}
+          {level === 0 && !r.system_managed && r.status === "APPROVED" && !r.locked && actions?.onLock ? <button className="small" onClick={() => actions.onLock!(r)}>Lock</button> : null}
+        </td>
+      ) : null}
+    </tr>
+  );
+}

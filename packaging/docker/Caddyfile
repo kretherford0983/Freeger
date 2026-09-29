@@ -1,0 +1,4 @@
+# Replace with your DNS name; Caddy obtains/renews certificates automatically.
+finance.example.org {
+    reverse_proxy app:8765
+}

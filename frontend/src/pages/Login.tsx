@@ -1,0 +1,36 @@
+import { useEffect, useState, type FormEvent } from "react";
+import { api, preAuthCsrf } from "../api";
+import { ErrorBox, Field } from "../components";
+
+export default function Login({ workspace, onLogin }: { workspace: string; onLogin: () => void }) {
+  const [username, setU] = useState("");
+  const [password, setP] = useState("");
+  const [err, setErr] = useState<unknown>(null);
+  useEffect(() => {
+    preAuthCsrf();
+  }, []);
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    setErr(null);
+    try {
+      await preAuthCsrf();
+      await api.post("/api/auth/login", { username, password });
+      setP("");
+      onLogin();
+    } catch (x) {
+      setErr(x);
+    }
+  };
+  return (
+    <div className="center">
+      <form className="card auth-card" onSubmit={submit}>
+        <h1>Sign in</h1>
+        <p className="muted">{workspace}</p>
+        <ErrorBox error={err} />
+        <Field label="Username"><input required autoComplete="username" value={username} onChange={(e) => setU(e.target.value)} /></Field>
+        <Field label="Password"><input required type="password" autoComplete="current-password" value={password} onChange={(e) => setP(e.target.value)} /></Field>
+        <button className="primary" type="submit">Sign in</button>
+      </form>
+    </div>
+  );
+}

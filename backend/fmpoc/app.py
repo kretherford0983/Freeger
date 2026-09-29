@@ -1,0 +1,189 @@
+"""FastAPI application factory."""
+from __future__ import annotations
+
+import logging
+import logging.handlers
+import re
+import time
+import uuid
+from pathlib import Path
+
+from fastapi import Depends, FastAPI
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from starlette.types import ASGIApp, Receive, Scope, Send
+
+from . import VERSION
+from .config import Settings, is_loopback, load_settings
+from .db import make_engine, make_session_factory, upgrade_database
+from .deps import enforce_csrf
+from .errors import install_handlers
+from .routers import (attachments, audit_log, auth, bank_accounts, budgets, dashboard, entities, fiscal_years,
+                      register, system, users)
+from .security import crypto
+from .services import bootstrap
+from .services.auth import LoginRateLimiter
+
+log = logging.getLogger("fmpoc")
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+MAX_BODY = 6 * 1024 * 1024  # 5 MB attachment + multipart overhead
+
+CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; "
+       "font-src 'self'; connect-src 'self'; frame-src 'self' blob:; object-src 'none'; base-uri 'none'; "
+       "form-action 'self'; frame-ancestors 'none'")
+
+
+class _Redact(logging.Filter):
+    """Last-line defence: redact secret-looking key/value pairs from log records (BR-103)."""
+    _re = re.compile(r"(?i)(password|passwd|secret|token|cookie|csrf|session|account_number|enc_key|fp_key)"
+                     r"([\"']?\s*[:=]\s*)([^\s,;&\"']+)")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            msg = record.getMessage()
+        except Exception:  # pragma: no cover
+            return True
+        red = self._re.sub(r"\1\2[REDACTED]", msg)
+        if red != msg:
+            record.msg, record.args = red, ()
+        return True
+
+
+def setup_logging(settings: Settings) -> None:
+    root = logging.getLogger("fmpoc")
+    root.setLevel(settings.log_level.upper())
+    for h in [h for h in root.handlers if getattr(h, "_fmpoc", False)]:
+        root.removeHandler(h)
+        h.close()
+    settings.logs_dir.mkdir(parents=True, exist_ok=True)
+    fh = logging.handlers.RotatingFileHandler(settings.logs_dir / "fmpoc.log", maxBytes=5_000_000, backupCount=5,
+                                              encoding="utf-8")
+    fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+    fh.addFilter(_Redact())
+    fh._fmpoc = True  # type: ignore[attr-defined]
+    sh = logging.StreamHandler()
+    sh.setFormatter(logging.Formatter("%(levelname)s %(message)s"))
+    sh.addFilter(_Redact())
+    sh._fmpoc = True  # type: ignore[attr-defined]
+    root.addHandler(fh)
+    root.addHandler(sh)
+    root.propagate = False
+
+
+class BodyLimitMiddleware:
+    def __init__(self, app: ASGIApp, limit: int = MAX_BODY):
+        self.app, self.limit = app, limit
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        headers = dict(scope.get("headers") or [])
+        cl = headers.get(b"content-length")
+        if cl is not None and cl.isdigit() and int(cl) > self.limit:
+            resp = JSONResponse({"error": {"code": "PAYLOAD_TOO_LARGE", "message": "Request body too large."}}, 413)
+            return await resp(scope, receive, send)
+        seen = 0
+
+        async def limited():
+            nonlocal seen
+            msg = await receive()
+            if msg["type"] == "http.request":
+                seen += len(msg.get("body", b""))
+                if seen > self.limit:
+                    raise _TooLarge()
+            return msg
+
+        try:
+            await self.app(scope, limited, send)
+        except _TooLarge:
+            resp = JSONResponse({"error": {"code": "PAYLOAD_TOO_LARGE", "message": "Request body too large."}}, 413)
+            await resp(scope, receive, send)
+
+
+class _TooLarge(Exception):
+    pass
+
+
+def create_app(settings: Settings | None = None) -> FastAPI:
+    settings = settings or load_settings()
+    settings.ensure_dirs()
+    setup_logging(settings)
+    upgrade_database(settings.database_url)
+    engine = make_engine(settings.database_url)
+    session_factory = make_session_factory(engine)
+
+    app = FastAPI(title="Financial Management POC", version=VERSION, debug=False,
+                  docs_url=None, redoc_url=None, openapi_url=None,  # no dev consoles in production (BR-107)
+                  dependencies=[Depends(enforce_csrf)])
+    app.state.settings = settings
+    app.state.engine = engine
+    app.state.session_factory = session_factory
+    app.state.limiter = LoginRateLimiter(settings.login_max_failures, settings.login_lockout_seconds)
+    app.state.insecure_transport_warning = (
+        settings.mode == "server" and not is_loopback(settings.host) and settings.secure_cookies != "true"
+    )
+    if app.state.insecure_transport_warning:
+        log.warning("SECURITY WARNING: server mode on a network interface without HTTPS configuration. Deploy behind "
+                    "an HTTPS reverse proxy and set secure_cookies=true. Plain HTTP is NOT secure.")
+
+    # Portable key: must match the initialized database (BR-085, AC-DEP-006).
+    with session_factory() as db:
+        initialized = bootstrap.is_initialized(db)
+        ws = bootstrap.current_workspace(db) if initialized else None
+    km = crypto.load_key(settings.secrets_dir)
+    if initialized and (km is None or km.check_value != ws.key_check):
+        raise RuntimeError("The portable encryption key in the application data 'secrets' directory is missing or "
+                           "does not match this database. Restore the key file from the same data set.")
+    app.state.key = km
+
+    install_handlers(app)
+
+    @app.middleware("http")
+    async def security_and_logging(request, call_next):
+        cid = uuid.uuid4().hex[:16]
+        request.state.correlation_id = cid
+        start = time.perf_counter()
+        response = await call_next(request)
+        h = response.headers
+        h.setdefault("X-Content-Type-Options", "nosniff")
+        h.setdefault("X-Frame-Options", "DENY")
+        h.setdefault("Referrer-Policy", "no-referrer")
+        h.setdefault("Content-Security-Policy", CSP)
+        h.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()")
+        h.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+        h.setdefault("Cross-Origin-Resource-Policy", "same-origin")
+        h["X-Correlation-Id"] = cid
+        if request.url.path.startswith("/api/"):
+            h.setdefault("Cache-Control", "no-store")
+        if settings.hsts and request.url.scheme == "https":
+            h["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        # Path only - never query strings, bodies, cookies or headers.
+        log.info("%s %s %s %.1fms cid=%s", request.method, request.url.path, response.status_code,
+                 (time.perf_counter() - start) * 1000, cid)
+        return response
+
+    app.add_middleware(BodyLimitMiddleware)
+
+    for r in (system, auth, users, audit_log, fiscal_years, budgets, entities, bank_accounts, register,
+              attachments, dashboard):
+        app.include_router(r.router)
+
+    @app.api_route("/api/{rest:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"], include_in_schema=False)
+    def api_404(rest: str):
+        return JSONResponse({"error": {"code": "NOT_FOUND", "message": "Not found."}}, status_code=404)
+
+    static_dir = settings.frontend_dir or STATIC_DIR
+    if (static_dir / "index.html").is_file():
+        if (static_dir / "assets").is_dir():
+            app.mount("/assets", StaticFiles(directory=static_dir / "assets"), name="assets")
+        index = static_dir / "index.html"
+        root_files = {p.name: p for p in static_dir.iterdir() if p.is_file()}
+
+        @app.api_route("/{path:path}", methods=["GET", "HEAD"], include_in_schema=False)
+        def spa(path: str):
+            f = root_files.get(path)
+            if f is not None:
+                return FileResponse(f)
+            return FileResponse(index, headers={"Cache-Control": "no-cache"})
+
+    return app

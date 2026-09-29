@@ -1,0 +1,306 @@
+"""Explicit API input contracts (BR-097/098). Every request model forbids unknown fields, so protected
+properties (is_system, locked, created_by, bank_account_id on edit, roles on self-service, derived totals,
+...) cannot be mass-assigned."""
+from __future__ import annotations
+
+import datetime as dt
+import re
+from typing import Annotated, Literal
+
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, field_validator
+
+Str = lambda n: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=n)]  # noqa: E731
+OptStr = lambda n: Annotated[str | None, StringConstraints(strip_whitespace=True, max_length=n)]  # noqa: E731
+
+_EMAIL_RE = re.compile(r"^[^@\s<>\"']{1,64}@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9-]{1,63})+$")
+_USERNAME_RE = re.compile(r"^[A-Za-z0-9._-]{3,64}$")
+_DATE_MIN, _DATE_MAX = dt.date(1900, 1, 1), dt.date(2200, 12, 31)
+
+
+def _email(v: str | None) -> str | None:
+    if v is None or v == "":
+        return None
+    if len(v) > 254 or not _EMAIL_RE.match(v):
+        raise ValueError("must be a valid email address")
+    return v
+
+
+def _date_range(v: dt.date | None) -> dt.date | None:
+    if v is not None and not (_DATE_MIN <= v <= _DATE_MAX):
+        raise ValueError("date is out of the supported range")
+    return v
+
+
+Email = Annotated[str, StringConstraints(strip_whitespace=True, max_length=254), AfterValidator(_email)]
+OptEmail = Annotated[str | None, StringConstraints(strip_whitespace=True, max_length=254), AfterValidator(_email)]
+Date = Annotated[dt.date, AfterValidator(_date_range)]
+OptDate = Annotated[dt.date | None, AfterValidator(_date_range)]
+Amount = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=20)]
+Confirmations = Annotated[list[Annotated[str, StringConstraints(max_length=40)]], Field(max_length=20)]
+
+
+class In(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+
+# ------------------------------------------------------------------ system / auth / users
+class InitializeIn(In):
+    workspace_name: Str(120)
+    admin_username: Str(64)
+    admin_email: Email
+    password: Annotated[str, StringConstraints(min_length=1, max_length=256)]
+    password_confirmation: Annotated[str, StringConstraints(min_length=1, max_length=256)]
+
+    @field_validator("admin_username")
+    @classmethod
+    def _u(cls, v):
+        if not _USERNAME_RE.match(v):
+            raise ValueError("username must be 3-64 characters: letters, digits, '.', '_' or '-'")
+        return v
+
+    @field_validator("admin_email")
+    @classmethod
+    def _e(cls, v):
+        if not v:
+            raise ValueError("email is required")
+        return v
+
+
+class LoginIn(In):
+    username: Annotated[str, StringConstraints(max_length=64)]
+    password: Annotated[str, StringConstraints(max_length=256)]
+
+
+class ChangePasswordIn(In):
+    current_password: Annotated[str, StringConstraints(max_length=256)]
+    new_password: Annotated[str, StringConstraints(max_length=256)]
+    new_password_confirmation: Annotated[str, StringConstraints(max_length=256)]
+
+
+class PreferencesIn(In):
+    theme: Literal["light", "dark"]
+
+
+Domain = Literal["ADMINISTRATOR", "FINANCIAL", "AUDITOR"]
+RoleCode = Literal["ADMINISTRATOR", "BUDGET_MANAGER", "BUDGET_USER", "REGISTER_USER", "AUDITOR"]
+
+
+class UserCreateIn(In):
+    username: Str(64)
+    email: Email
+    display_name: OptStr(120) = None
+    password: Annotated[str, StringConstraints(max_length=256)]
+    security_domain: Domain
+    roles: Annotated[list[RoleCode], Field(min_length=1, max_length=5)]
+
+    @field_validator("username")
+    @classmethod
+    def _u(cls, v):
+        if not _USERNAME_RE.match(v):
+            raise ValueError("username must be 3-64 characters: letters, digits, '.', '_' or '-'")
+        return v
+
+    @field_validator("email")
+    @classmethod
+    def _e(cls, v):
+        if not v:
+            raise ValueError("email is required")
+        return v
+
+
+class UserUpdateIn(In):
+    email: OptEmail = None
+    display_name: OptStr(120) = None
+    active: bool | None = None
+    security_domain: Domain | None = None
+    roles: Annotated[list[RoleCode] | None, Field(max_length=5)] = None
+
+
+class PasswordResetIn(In):
+    new_password: Annotated[str, StringConstraints(max_length=256)]
+
+
+# ------------------------------------------------------------------ fiscal years
+FY_IDENTIFIER = Annotated[str, StringConstraints(strip_whitespace=True, pattern=r"^[A-Za-z0-9-]{1,20}$")]
+
+
+class FiscalYearCreateIn(In):
+    identifier: FY_IDENTIFIER
+    start_date: Date
+    end_date: Date
+    copy_from_fiscal_year_id: int | None = None
+    copy_budget_ids: Annotated[list[int], Field(max_length=2000)] = []
+    confirmations: Confirmations = []
+
+
+class FiscalYearUpdateIn(In):
+    identifier: FY_IDENTIFIER | None = None
+    start_date: OptDate = None
+    end_date: OptDate = None
+    confirmations: Confirmations = []
+
+
+class FiscalYearApproveIn(In):
+    confirm_irreversible: bool
+
+
+class FiscalYearCloseIn(In):
+    confirm_reviewed: bool
+    confirmations: Confirmations = []
+
+
+# ------------------------------------------------------------------ budgets
+BudgetCode = Annotated[str, StringConstraints(strip_whitespace=True, pattern=r"^[A-Za-z0-9]{1,10}$")]
+
+
+class BudgetCreateIn(In):
+    fiscal_year_id: int
+    parent_budget_id: int | None = None
+    code: BudgetCode
+    name: Str(120)
+    budget_type: Literal["INCOME", "EXPENSE"] | None = None
+    amount: Amount
+    notes: OptStr(4000) = None
+
+
+class BudgetUpdateIn(In):
+    name: Str(120) | None = None
+    amount: Amount | None = None
+    notes: OptStr(4000) = None
+
+
+class ReasonIn(In):
+    reason: Str(500)
+
+
+class OptionalReasonIn(In):
+    reason: OptStr(500) = None
+
+
+# ------------------------------------------------------------------ entities
+class EntityFields(In):
+    entity_type: Literal["INDIVIDUAL", "ORGANIZATION"] | None = None
+    organization_name: OptStr(200) = None
+    primary_contact: OptStr(200) = None
+    address_line1: OptStr(200) = None
+    address_line2: OptStr(200) = None
+    city: OptStr(100) = None
+    state_region: OptStr(100) = None
+    postal_code: OptStr(20) = None
+    country: OptStr(100) = None
+    phone: Annotated[str | None, StringConstraints(strip_whitespace=True, max_length=40,
+                                                    pattern=r"^[0-9+().\-\s xX#]*$")] = None
+    email: OptEmail = None
+    notes: OptStr(4000) = None
+    is_financial_institution: bool | None = None
+    confirmations: Confirmations = []
+
+
+class EntityCreateIn(EntityFields):
+    entity_type: Literal["INDIVIDUAL", "ORGANIZATION"]
+
+
+class EntityUpdateIn(EntityFields):
+    pass
+
+
+# ------------------------------------------------------------------ bank accounts
+AccountType = Literal["CHECKING", "SAVINGS", "MONEY_MARKET", "CERTIFICATE_OF_DEPOSIT", "INVESTMENT", "CASH", "OTHER"]
+
+
+class BankAccountCreateIn(In):
+    account_name: Str(120)
+    financial_institution_entity_id: int
+    account_type: AccountType
+    account_subtype: OptStr(60) = None
+    account_number: Annotated[str, StringConstraints(strip_whitespace=True, min_length=4, max_length=60)]
+    register_enabled: bool | None = None
+    is_primary: bool = False
+    interest_rate: Annotated[str | None, StringConstraints(strip_whitespace=True, max_length=12)] = None
+    opening_balance: Amount | None = None
+    opening_balance_date: OptDate = None
+    current_balance: Amount | None = None
+    notes: OptStr(4000) = None
+
+
+class BankAccountUpdateIn(In):
+    account_name: Str(120) | None = None
+    financial_institution_entity_id: int | None = None
+    account_type: AccountType | None = None
+    account_subtype: OptStr(60) = None
+    account_number: Annotated[str | None, StringConstraints(strip_whitespace=True, min_length=4, max_length=60)] = None
+    register_enabled: bool | None = None
+    interest_rate: Annotated[str | None, StringConstraints(strip_whitespace=True, max_length=12)] = None
+    opening_balance: Amount | None = None
+    opening_balance_date: OptDate = None
+    notes: OptStr(4000) = None
+
+
+class ManualBalanceIn(In):
+    current_balance: Amount
+    reason: OptStr(500) = None
+
+
+class CloseAccountIn(In):
+    reason: Str(500)
+    closed_date: OptDate = None
+
+
+# ------------------------------------------------------------------ register
+class AllocationIn(In):
+    id: int | None = None
+    budget_id: int
+    fiscal_year_id: int | None = None
+    entity_id: int | None = None
+    invoice_number: OptStr(60) = None
+    description: OptStr(500) = None
+    amount: Amount
+    notes: OptStr(4000) = None
+
+
+class TransactionCreateIn(In):
+    bank_account_id: int
+    transaction_type: Literal["DEPOSIT", "WITHDRAWAL"]
+    transaction_date: OptDate = None
+    clear_date: OptDate = None
+    entity_id: int | None = None
+    check_number: Annotated[str | None, StringConstraints(strip_whitespace=True, max_length=20,
+                                                          pattern=r"^[A-Za-z0-9-]*$")] = None
+    notes: OptStr(4000) = None
+    allocations: Annotated[list[AllocationIn], Field(max_length=100)] = []
+    create_as_void: bool = False
+    void_reason: OptStr(1000) = None
+    fiscal_year_id: int | None = None  # only for zero-dollar VOID accountability records
+    confirmations: Confirmations = []
+
+
+class TransactionUpdateIn(In):
+    transaction_type: Literal["DEPOSIT", "WITHDRAWAL"] | None = None
+    transaction_date: OptDate = None
+    clear_date: OptDate = None
+    entity_id: int | None = None
+    check_number: Annotated[str | None, StringConstraints(strip_whitespace=True, max_length=20,
+                                                          pattern=r"^[A-Za-z0-9-]*$")] = None
+    notes: OptStr(4000) = None
+    allocations: Annotated[list[AllocationIn] | None, Field(max_length=100)] = None
+    confirmations: Confirmations = []
+
+
+class VoidIn(In):
+    reason: Str(1000)
+    confirm_irreversible: bool
+
+
+class VoidDateIn(In):
+    """CR-001: correct the Transaction Date of a VOID transaction (no other field is writable)."""
+    transaction_date: Date
+    fiscal_year_id: int | None = None
+    reason: OptStr(500) = None
+
+
+class NoteIn(In):
+    note: Str(4000)
+
+
+class ReviewResolveIn(In):
+    note: OptStr(1000) = None

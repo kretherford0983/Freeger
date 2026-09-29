@@ -1,0 +1,486 @@
+import { Fragment, useEffect, useMemo, useState, type FormEvent } from "react";
+import { api, money, qs, todayIso } from "../api";
+import { Attachments, ErrorBox, Field, Loading, Modal, useConfirmable } from "../components";
+import { useMe } from "../App";
+import { EntityForm } from "./Entities";
+
+export default function Register() {
+  const { can } = useMe();
+  const [accounts, setAccounts] = useState<any[] | null>(null);
+  const [fys, setFys] = useState<any[]>([]);
+  const [f, setF] = useState({ bank_account_id: "", fiscal_year_id: "", transaction_type: "", status: "", date_from: "", date_to: "", search: "" });
+  const [data, setData] = useState<any>(null);
+  const [err, setErr] = useState<unknown>(null);
+  const [open, setOpen] = useState<number | null>(null);
+  const [modal, setModal] = useState<any>(null);
+  const [showReviews, setShowReviews] = useState(new URLSearchParams(window.location.search).has("reviews"));
+  const manage = can("transaction.manage");
+
+  useEffect(() => {
+    Promise.all([api.get("/api/bank-accounts"), api.get("/api/fiscal-years"), api.get(`/api/fiscal-years/natural?date=${todayIso()}`)]).then(([a, y, nat]) => {
+      const reg = a.filter((x: any) => x.register_enabled);
+      setAccounts(reg);
+      setFys(y);
+      const primary = reg.find((x: any) => x.is_primary) || reg.find((x: any) => x.status === "ACTIVE") || reg[0];
+      setF((p) => ({ ...p, bank_account_id: primary ? String(primary.id) : "", fiscal_year_id: nat.default_fiscal_year_id ? String(nat.default_fiscal_year_id) : "" }));
+    }, setErr);
+  }, []);
+  const load = () => {
+    if (!f.bank_account_id) return;
+    api.get(`/api/register${qs(f)}`).then(setData, setErr);
+  };
+  useEffect(() => { load(); }, [f]);
+  if (!accounts) return <><ErrorBox error={err} /><Loading /></>;
+  const acct = data?.bank_account;
+  const set = (k: string) => (e: any) => setF({ ...f, [k]: e.target.value });
+  return (
+    <div>
+      <div className="page-head">
+        <h1>Register</h1>
+        <Field label="Bank account">
+          <select aria-label="Register bank account" value={f.bank_account_id} onChange={set("bank_account_id")}>
+            {accounts.map((a) => <option key={a.id} value={a.id}>{a.label}{a.status === "CLOSED" ? " (closed)" : ""}</option>)}
+          </select>
+        </Field>
+        {manage && acct?.status === "ACTIVE" ? (
+          <>
+            <button className="primary" onClick={() => setModal({ kind: "txn", txn: null })}>New transaction</button>
+            <button onClick={() => setModal({ kind: "zero" })}>Zero-dollar VOID record</button>
+          </>
+        ) : null}
+        <button onClick={() => setShowReviews(!showReviews)} aria-expanded={showReviews}>Fiscal Year reviews</button>
+      </div>
+      {!accounts.length ? <p className="muted">No register-enabled bank accounts.</p> : null}
+      <div className="filters">
+        <Field label="Fiscal Year (date filter)">
+          <select aria-label="Register Fiscal Year filter" value={f.fiscal_year_id} onChange={set("fiscal_year_id")}>
+            <option value="">All dates (continuous register)</option>
+            {fys.map((y) => <option key={y.id} value={y.id}>{y.label}</option>)}
+          </select>
+        </Field>
+        <Field label="Type"><select value={f.transaction_type} onChange={set("transaction_type")}><option value="">All</option><option value="DEPOSIT">Deposits</option><option value="WITHDRAWAL">Withdrawals</option></select></Field>
+        <Field label="Status"><select value={f.status} onChange={set("status")}><option value="">All</option><option value="cleared">Cleared</option><option value="uncleared">Uncleared</option><option value="void">Void</option></select></Field>
+        <Field label="From"><input type="date" value={f.date_from} onChange={set("date_from")} /></Field>
+        <Field label="To"><input type="date" value={f.date_to} onChange={set("date_to")} /></Field>
+        <Field label="Search"><input value={f.search} onChange={set("search")} placeholder="Entity, description, invoice, check #, amount" /></Field>
+      </div>
+      <ErrorBox error={err} />
+      {showReviews ? <Reviews canResolve={can("review.resolve")} onChange={load} /> : null}
+      {data && acct ? (
+        <>
+          <div className="tiles">
+            <div className="tile"><div className="tile-label">Starting balance{data.date_from ? ` (as of ${data.date_from})` : " (opening)"}</div><div className="tile-value">{money(data.starting_balance)}</div></div>
+            <div className="tile"><div className="tile-label">Ending balance{data.date_to ? ` (${data.date_to})` : ""}</div><div className="tile-value">{money(data.ending_balance)}</div></div>
+            <div className="tile"><div className="tile-label">Current balance</div><div className="tile-value">{money(data.current_balance)}</div></div>
+          </div>
+          <div className="table-wrap">
+            <table className="table register">
+              <thead>
+                <tr><th /><th>Date</th><th>Cleared</th><th>Entity</th><th>Check #</th><th>Invoice #</th><th>Description</th><th className="num">Deposit</th><th className="num">Withdrawal</th><th className="num">Balance</th><th>Status</th><th title="Attachments">📎</th></tr>
+              </thead>
+              <tbody>
+                {data.transactions.length === 0 ? <tr><td colSpan={12} className="muted">No transactions match.</td></tr> : null}
+                {data.transactions.map((t: any) => (
+                  <Fragment key={t.id}>
+                    <tr className={`${t.status === "VOID" ? "void" : ""} ${t.has_pending_review ? "review" : ""}`}>
+                      <td><button className="small" aria-expanded={open === t.id} aria-label={`Details for transaction ${t.id}`} onClick={() => setOpen(open === t.id ? null : t.id)}>{open === t.id ? "▾" : "▸"}</button></td>
+                      <td>{t.transaction_date}</td><td>{t.clear_date || ""}</td><td>{t.entity?.display_name || ""}</td><td>{t.check_number || ""}</td>
+                      <td>{t.invoice_numbers.join(", ")}</td>
+                      <td>{t.is_split ? `Split (${t.allocations.length})` : t.allocations[0]?.description || t.allocations[0]?.budget.label}</td>
+                      <td className="num">{t.deposit ? money(t.deposit) : ""}</td><td className="num">{t.withdrawal ? money(t.withdrawal) : ""}</td>
+                      <td className="num">{money(t.running_balance)}</td>
+                      <td>{t.status === "VOID" ? <span className="badge red">VOID</span> : t.cleared ? "Cleared" : "Uncleared"}{t.has_pending_review ? <span className="badge yellow">Review</span> : null}</td>
+                      <td>{t.attachment_count ? <span aria-label={`${t.attachment_count} attachments`}>📎{t.attachment_count}</span> : ""}</td>
+                    </tr>
+                    {open === t.id ? (
+                      <tr className="detail-row"><td colSpan={12}><TxnDetail t={t} manage={manage} onEdit={() => setModal({ kind: "txn", txn: t })} onVoid={() => setModal({ kind: "void", txn: t })} onVoidDate={() => setModal({ kind: "voiddate", txn: t })} onChanged={load} /></td></tr>
+                    ) : null}
+                  </Fragment>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      ) : f.bank_account_id ? <Loading /> : null}
+      {modal?.kind === "txn" ? <TxnForm account={acct} txn={modal.txn} fys={fys} onClose={() => setModal(null)} onSaved={() => { setModal(null); load(); }} /> : null}
+      {modal?.kind === "void" ? <VoidForm txn={modal.txn} onClose={() => setModal(null)} onSaved={() => { setModal(null); load(); }} /> : null}
+      {modal?.kind === "voiddate" ? <VoidDateForm txn={modal.txn} fys={fys} onClose={() => setModal(null)} onSaved={() => { setModal(null); load(); }} /> : null}
+      {modal?.kind === "zero" ? <ZeroVoidForm account={acct} fys={fys} onClose={() => setModal(null)} onSaved={() => { setModal(null); load(); }} /> : null}
+    </div>
+  );
+}
+
+function TxnDetail({ t, manage, onEdit, onVoid, onVoidDate, onChanged }: { t: any; manage: boolean; onEdit: () => void; onVoid: () => void; onVoidDate: () => void; onChanged: () => void }) {
+  const [note, setNote] = useState("");
+  const [err, setErr] = useState<unknown>(null);
+  const editable = manage && t.status === "ACTIVE" && !t.closed_fiscal_year_protected;
+  const addNote = async (e: FormEvent) => {
+    e.preventDefault();
+    try { await api.post(`/api/transactions/${t.id}/notes`, { note }); setNote(""); onChanged(); } catch (x) { setErr(x); }
+  };
+  return (
+    <div className="txn-detail">
+      <ErrorBox error={err} />
+      <dl className="dl">
+        <dt>Transaction #</dt><dd>{t.id} · {t.transaction_type}</dd>
+        <dt>Transaction date</dt><dd>{t.transaction_date}</dd>
+        <dt>Entry timestamp</dt><dd>{t.entry_timestamp.replace("T", " ").slice(0, 19)} UTC (system)</dd>
+        <dt>Clear/Post date</dt><dd>{t.clear_date || "Uncleared"}</dd>
+        <dt>Total (derived)</dt><dd>{money(t.total)}</dd>
+        {t.status === "VOID" ? <><dt>Void reason</dt><dd>{t.void_reason}</dd></> : null}
+        {t.notes ? <><dt>Notes</dt><dd className="pre">{t.notes}</dd></> : null}
+        {t.closed_fiscal_year_protected ? <><dt>Protection</dt><dd>Affects a Closed Fiscal Year – financial fields are immutable.</dd></> : null}
+      </dl>
+      <table className="table compact">
+        <thead><tr><th>Fiscal Year</th><th>Budget</th><th>Entity</th><th>Invoice #</th><th>Description</th><th className="num">Amount</th><th>Review</th><th>Notes</th></tr></thead>
+        <tbody>
+          {t.allocations.map((a: any) => (
+            <tr key={a.id}>
+              <td>{a.budget.fiscal_year.display_name}</td><td>{a.budget.label}{a.budget.status === "REJECTED" ? " (rejected)" : ""}</td>
+              <td>{a.entity?.display_name || ""}</td><td>{a.invoice_number || ""}</td><td>{a.description || ""}</td>
+              <td className="num">{money(a.amount)}</td>
+              <td>{a.reviews.map((r: any) => `${r.category === "CROSS_FY" ? "Cross-FY" : "No FY"}: ${r.status}`).join("; ")}</td>
+              <td>{a.notes || ""}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="actions left">
+        {editable ? <button onClick={onEdit}>Edit</button> : null}
+        {editable ? <button className="danger" onClick={onVoid}>Void…</button> : null}
+        {manage && t.status === "VOID" && !t.closed_fiscal_year_protected ? <button onClick={onVoidDate}>Correct date…</button> : null}
+      </div>
+      <Attachments ownerType="transaction" ownerId={t.id} canUpload={manage} canRemove={editable} title="Transaction attachments" />
+      {t.allocations.length > 1 ? t.allocations.map((a: any) => (
+        <Attachments key={a.id} ownerType="allocation" ownerId={a.id} canUpload={manage} canRemove={editable} title={`Allocation attachments – ${a.budget.label}`} />
+      )) : null}
+      {manage ? (
+        <form onSubmit={addNote} className="row">
+          <Field label="Add supporting note"><input required maxLength={4000} value={note} onChange={(e) => setNote(e.target.value)} /></Field>
+          <button type="submit">Add note</button>
+        </form>
+      ) : null}
+    </div>
+  );
+}
+
+type Alloc = { id?: number; fiscal_year_id: string; budget_id: string; entity_id: string; invoice_number: string; description: string; amount: string; notes: string };
+const blankAlloc = (fy = ""): Alloc => ({ fiscal_year_id: fy, budget_id: "", entity_id: "", invoice_number: "", description: "", amount: "", notes: "" });
+
+function useBudgetOptions(fyIds: string[], type: string) {
+  const [cache, setCache] = useState<Record<string, any[]>>({});
+  const wanted = Array.from(new Set(fyIds.filter(Boolean))).map((fy) => `${fy}:${type}`);
+  useEffect(() => {
+    wanted.filter((k) => !(k in cache)).forEach((k) => {
+      const [fy, t] = k.split(":");
+      setCache((c) => ({ ...c, [k]: [] }));
+      api.get(`/api/budgets/selectable${qs({ fiscal_year_id: fy, transaction_type: t })}`).then((o) => setCache((c) => ({ ...c, [k]: o })));
+    });
+  }, [wanted.join(",")]);
+  return (fy: string, t: string) => cache[`${fy}:${t}`] || [];
+}
+
+function TxnForm({ account, txn, fys, onClose, onSaved }: { account: any; txn: any; fys: any[]; onClose: () => void; onSaved: () => void }) {
+  const isNew = !txn;
+  const [type, setType] = useState<string>(txn?.transaction_type || "WITHDRAWAL");
+  const [h, setH] = useState({
+    transaction_date: txn?.transaction_date || todayIso(), clear_date: txn?.clear_date || "",
+    entity_id: txn?.entity && !txn.entity.is_system ? String(txn.entity.id) : "", check_number: txn?.check_number || "", notes: txn?.notes || "",
+  });
+  const [allocs, setAllocs] = useState<Alloc[]>(txn ? txn.allocations.map((a: any) => ({
+    id: a.id, fiscal_year_id: String(a.budget.fiscal_year.id), budget_id: String(a.budget.id), entity_id: a.entity ? String(a.entity.id) : "",
+    invoice_number: a.invoice_number || "", description: a.description || "", amount: a.amount, notes: a.notes || "",
+  })) : [blankAlloc()]);
+  const [split, setSplit] = useState(txn ? txn.allocations.length > 1 : false);
+  const [nat, setNat] = useState<any>(null);
+  const [entities, setEntities] = useState<any[]>([]);
+  const [err, setErr] = useState<unknown>(null);
+  const [typeDlg, setTypeDlg] = useState<string | null>(null);
+  const [newEnt, setNewEnt] = useState(false);
+  const { run, dialog } = useConfirmable();
+  const loadEntities = () => api.get("/api/entities?status=active").then(setEntities);
+  useEffect(() => { loadEntities(); }, []);
+  useEffect(() => {
+    if (!h.transaction_date) return;
+    api.get(`/api/fiscal-years/natural?date=${h.transaction_date}`).then((n) => {
+      setNat(n);
+      if (isNew) setAllocs((as) => as.map((a) => (a.budget_id ? a : { ...a, fiscal_year_id: n.default_fiscal_year_id ? String(n.default_fiscal_year_id) : "" })));
+    });
+  }, [h.transaction_date]);
+  const dupNames = useMemo(() => {
+    const c: Record<string, number> = {};
+    entities.forEach((e) => (c[e.display_name] = (c[e.display_name] || 0) + 1));
+    return c;
+  }, [entities]);
+  const entLabel = (e: any) => (dupNames[e.display_name] > 1 ? `${e.display_name} (${e.entity_number})` : e.display_name);
+  const options = useBudgetOptions(allocs.map((a) => a.fiscal_year_id), type);
+  const total = allocs.reduce((s, a) => s + (Number(a.amount) || 0), 0);
+  const upd = (i: number, k: keyof Alloc, v: string) => setAllocs(allocs.map((a, j) => (j === i ? { ...a, [k]: v, ...(k === "fiscal_year_id" ? { budget_id: "" } : {}) } : a)));
+  const openFys = fys.filter((y) => y.status !== "CLOSED");
+
+  const changeType = (t: string) => {
+    if (t === type) return;
+    if (isNew) { setType(t); setAllocs(allocs.map((a) => ({ ...a, budget_id: "", invoice_number: "" }))); setH({ ...h, check_number: "" }); return; }
+    setTypeDlg(t);
+  };
+  const confirmType = () => {
+    const t = typeDlg!;
+    setType(t);
+    // clear/revalidate incompatible fields: budgets must be re-selected, check/invoice numbers cleared
+    setAllocs(allocs.map((a) => ({ ...a, budget_id: "", invoice_number: t === "DEPOSIT" ? "" : a.invoice_number, entity_id: "" })));
+    setH({ ...h, check_number: t === "DEPOSIT" ? "" : h.check_number, entity_id: txn?.entity?.is_system ? "" : h.entity_id });
+    setTypeDlg(null);
+  };
+  const toggleSplit = () => {
+    if (split) { setAllocs([{ ...allocs[0] }]); setSplit(false); }
+    else {
+      // BR-064: previous single amount is no longer authoritative once split
+      setAllocs([{ ...allocs[0], amount: "" }, blankAlloc(allocs[0].fiscal_year_id)]);
+      setSplit(true);
+    }
+  };
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    setErr(null);
+    const allocations = allocs.map((a) => ({
+      ...(a.id ? { id: a.id } : {}), budget_id: Number(a.budget_id), fiscal_year_id: a.fiscal_year_id ? Number(a.fiscal_year_id) : null,
+      entity_id: type === "DEPOSIT" && a.entity_id ? Number(a.entity_id) : null,
+      invoice_number: type === "WITHDRAWAL" ? a.invoice_number || null : null, description: a.description || null, amount: a.amount, notes: a.notes || null,
+    }));
+    const header = {
+      transaction_date: h.transaction_date, clear_date: h.clear_date || null, entity_id: h.entity_id ? Number(h.entity_id) : null,
+      check_number: type === "WITHDRAWAL" ? h.check_number || null : null, notes: h.notes || null,
+    };
+    try {
+      const r = await run((confirmations) => isNew
+        ? api.post("/api/transactions", { bank_account_id: account.id, transaction_type: type, ...header, allocations, confirmations })
+        : api.patch(`/api/transactions/${txn.id}`, { ...(type !== txn.transaction_type ? { transaction_type: type } : {}), ...header, allocations, confirmations }));
+      if (r) onSaved();
+    } catch (x) { setErr(x); }
+  };
+  return (
+    <Modal title={isNew ? `New transaction – ${account.label}` : `Edit transaction #${txn.id}`} onClose={onClose} wide>
+      <form onSubmit={submit}>
+        <ErrorBox error={err} />
+        {txn?.cleared ? <div className="alert warn">This transaction has cleared. Saving changes requires confirmation and is fully audited.</div> : null}
+        <p className="muted">Bank account: <b>{account.label}</b> (cannot be changed after creation; wrong-account entries must be voided and re-entered).</p>
+        <div className="row">
+          <Field label="Type">
+            <select aria-label="Transaction type" value={type} onChange={(e) => changeType(e.target.value)}>
+              <option value="WITHDRAWAL">Withdrawal</option><option value="DEPOSIT">Deposit</option>
+            </select>
+          </Field>
+          <Field label="Transaction date"><input required type="date" value={h.transaction_date} onChange={(e) => setH({ ...h, transaction_date: e.target.value })} /></Field>
+          <Field label="Clear/Post date (blank = uncleared)"><input type="date" value={h.clear_date} onChange={(e) => setH({ ...h, clear_date: e.target.value })} /></Field>
+          {type === "WITHDRAWAL" ? <Field label="Check #"><input value={h.check_number} onChange={(e) => setH({ ...h, check_number: e.target.value })} /></Field> : null}
+        </div>
+        {nat?.no_fiscal_year ? (
+          <div className="alert warn" role="alert">No Fiscal Year covers {h.transaction_date}. Closest configured Fiscal Year: <b>{nat.closest?.label || "none"}</b> (shown for reference only – not assumed correct). Allocations will be flagged for Fiscal Year review.</div>
+        ) : null}
+        {nat?.ambiguous ? <div className="alert warn" role="alert">More than one open Fiscal Year covers this date ({nat.covering.map((c: any) => c.label).join(", ")}). Select the intended Fiscal Year explicitly for each allocation.</div> : null}
+        <div className="row">
+          <Field label={type === "WITHDRAWAL" ? "Payee (entity)" : split ? "Default entity (parent uses “Multiple” when entities differ)" : "Entity (payer)"}>
+            <select value={h.entity_id} onChange={(e) => setH({ ...h, entity_id: e.target.value })}>
+              <option value="">— none —</option>
+              {entities.map((e) => <option key={e.id} value={e.id}>{entLabel(e)}</option>)}
+              {txn?.entity && !txn.entity.is_system && !entities.some((e) => e.id === txn.entity.id) ? <option value={txn.entity.id}>{txn.entity.display_name} (inactive)</option> : null}
+            </select>
+          </Field>
+          <button type="button" className="small" onClick={() => setNewEnt(true)}>+ New entity</button>
+        </div>
+        <h3>Allocations {split ? "(split)" : ""}</h3>
+        {allocs.map((a, i) => {
+          const opts = options(a.fiscal_year_id, type);
+          const cross = a.fiscal_year_id && nat && !nat.no_fiscal_year && !nat.covering.some((c: any) => String(c.id) === a.fiscal_year_id);
+          return (
+            <div key={i} className="alloc">
+              <div className="row">
+                <Field label="Fiscal Year">
+                  <select required aria-label={`Allocation ${i + 1} Fiscal Year`} value={a.fiscal_year_id} onChange={(e) => upd(i, "fiscal_year_id", e.target.value)}>
+                    <option value="">— select —</option>
+                    {openFys.map((y) => <option key={y.id} value={y.id}>{y.label}</option>)}
+                  </select>
+                </Field>
+                <Field label="Budget">
+                  <select required aria-label={`Allocation ${i + 1} Budget`} value={a.budget_id} onChange={(e) => upd(i, "budget_id", e.target.value)}>
+                    <option value="">— select —</option>
+                    {opts.map((o: any) => <option key={o.id} value={o.id}>{o.label}{o.is_budget_zero ? " ⚠" : ` (remaining ${money(o.remaining)})`}</option>)}
+                    {a.id && a.budget_id && !opts.some((o: any) => String(o.id) === a.budget_id) ? <option value={a.budget_id}>{txn?.allocations.find((x: any) => x.id === a.id)?.budget.label} (current)</option> : null}
+                  </select>
+                </Field>
+                <Field label="Amount"><input required aria-label={`Allocation ${i + 1} Amount`} inputMode="decimal" pattern="\d+(\.\d{1,2})?" value={a.amount} onChange={(e) => upd(i, "amount", e.target.value)} /></Field>
+                {split && allocs.length > 1 ? <button type="button" className="small danger" onClick={() => setAllocs(allocs.filter((_, j) => j !== i))}>Remove</button> : null}
+              </div>
+              {cross ? <p className="warn-text">Budget Fiscal Year differs from the Fiscal Year covering the Transaction Date – confirmation will be required and the allocation will be flagged for review.</p> : null}
+              <div className="row">
+                {type === "DEPOSIT" && split ? (
+                  <Field label="Entity">
+                    <select value={a.entity_id} onChange={(e) => upd(i, "entity_id", e.target.value)}>
+                      <option value="">— default —</option>
+                      {entities.map((e) => <option key={e.id} value={e.id}>{entLabel(e)}</option>)}
+                    </select>
+                  </Field>
+                ) : null}
+                {type === "WITHDRAWAL" ? <Field label="Invoice #"><input value={a.invoice_number} onChange={(e) => upd(i, "invoice_number", e.target.value)} /></Field> : null}
+                <Field label="Description"><input maxLength={500} value={a.description} onChange={(e) => upd(i, "description", e.target.value)} /></Field>
+                <Field label="Notes"><input value={a.notes} onChange={(e) => upd(i, "notes", e.target.value)} /></Field>
+              </div>
+            </div>
+          );
+        })}
+        <div className="row">
+          <button type="button" onClick={toggleSplit}>{split ? "Convert to single allocation" : "Split transaction"}</button>
+          {split ? <button type="button" onClick={() => setAllocs([...allocs, blankAlloc(allocs[0].fiscal_year_id)])}>+ Add allocation</button> : null}
+          <span className="total">Total (derived from allocations): <b>{money(total.toFixed(2))}</b></span>
+        </div>
+        <Field label="Notes"><textarea value={h.notes} onChange={(e) => setH({ ...h, notes: e.target.value })} /></Field>
+        <div className="actions"><button type="button" onClick={onClose}>Cancel</button><button className="primary" type="submit">Save</button></div>
+      </form>
+      {dialog}
+      {typeDlg ? (
+        <Modal title="Change transaction type?" onClose={() => setTypeDlg(null)}>
+          <div className="alert warn">Changing between Deposit and Withdrawal is a protected action. All budget selections will be cleared and must be re-selected with {typeDlg === "DEPOSIT" ? "Income" : "Expense"} budgets{typeDlg === "DEPOSIT" ? "; check and invoice numbers will be cleared" : ""}. The server will require a final confirmation.</div>
+          <div className="actions"><button onClick={() => setTypeDlg(null)}>Cancel</button><button className="primary" onClick={confirmType}>Change to {typeDlg.toLowerCase()}</button></div>
+        </Modal>
+      ) : null}
+      {newEnt ? <NewEntityInline onClose={() => setNewEnt(false)} onSaved={(e) => { setNewEnt(false); loadEntities().then(() => setH((x) => ({ ...x, entity_id: String(e.id) }))); }} /> : null}
+    </Modal>
+  );
+}
+
+function NewEntityInline({ onClose, onSaved }: { onClose: () => void; onSaved: (e: any) => void }) {
+  return <EntityForm entity={{ entity_type: "ORGANIZATION" }} onClose={onClose} onSaved={onSaved} />;
+}
+
+function VoidForm({ txn, onClose, onSaved }: any) {
+  const [reason, setReason] = useState("");
+  const [typed, setTyped] = useState("");
+  const [err, setErr] = useState<unknown>(null);
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    try { await api.post(`/api/transactions/${txn.id}/void`, { reason, confirm_irreversible: true }); onSaved(); } catch (x) { setErr(x); }
+  };
+  return (
+    <Modal title={`Void transaction #${txn.id}`} onClose={onClose}>
+      <form onSubmit={submit}>
+        <ErrorBox error={err} />
+        <div className="alert warn">Voiding is <b>irreversible</b>. The transaction stays visible as VOID with its allocations and attachments, but no longer affects bank balances or budget actuals.</div>
+        <Field label="Void reason (required)"><textarea required value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
+        <Field label='Type VOID to confirm'><input value={typed} onChange={(e) => setTyped(e.target.value)} /></Field>
+        <div className="actions"><button type="button" onClick={onClose}>Cancel</button><button className="primary danger" type="submit" disabled={typed !== "VOID" || !reason.trim()}>Void transaction</button></div>
+      </form>
+    </Modal>
+  );
+}
+
+// CR-001: only the Transaction Date of a VOID transaction may be corrected; everything else stays as recorded.
+function VoidDateForm({ txn, fys, onClose, onSaved }: any) {
+  const [date, setDate] = useState(txn.transaction_date);
+  const [fy, setFy] = useState("");
+  const [reason, setReason] = useState("");
+  const [err, setErr] = useState<unknown>(null);
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    setErr(null);
+    try {
+      await api.post(`/api/transactions/${txn.id}/void-date`, { transaction_date: date, reason: reason || null,
+        ...(txn.zero_dollar_void && fy ? { fiscal_year_id: Number(fy) } : {}) });
+      onSaved();
+    } catch (x) { setErr(x); }
+  };
+  return (
+    <Modal title={`Correct date of VOID transaction #${txn.id}`} onClose={onClose}>
+      <form onSubmit={submit}>
+        <ErrorBox error={err} />
+        <p>Only the Transaction Date changes. The record stays VOID with no balance or budget effect; the change is audited.
+          {txn.zero_dollar_void ? " For a zero-dollar record, Budget 0 moves to the Fiscal Year covering the new date." : ""}</p>
+        <Field label="Transaction date"><input type="date" required value={date} onChange={(e) => setDate(e.target.value)} /></Field>
+        {txn.zero_dollar_void ? (
+          <Field label="Fiscal Year (only needed if ambiguous)">
+            <select value={fy} onChange={(e) => setFy(e.target.value)}>
+              <option value="">Automatic</option>
+              {fys.filter((y: any) => y.status !== "CLOSED").map((y: any) => <option key={y.id} value={y.id}>{y.label}</option>)}
+            </select>
+          </Field>
+        ) : null}
+        <Field label="Reason (optional)"><input maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
+        <div className="actions"><button type="button" onClick={onClose}>Cancel</button><button className="primary" type="submit" disabled={date === txn.transaction_date && !fy}>Save date</button></div>
+      </form>
+    </Modal>
+  );
+}
+
+function ZeroVoidForm({ account, fys, onClose, onSaved }: any) {
+  const [f, setF] = useState({ transaction_type: "WITHDRAWAL", transaction_date: todayIso(), check_number: "", void_reason: "", fiscal_year_id: "" });
+  const [err, setErr] = useState<unknown>(null);
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    try {
+      await api.post("/api/transactions", { bank_account_id: account.id, transaction_type: f.transaction_type, transaction_date: f.transaction_date,
+        check_number: f.transaction_type === "WITHDRAWAL" ? f.check_number || null : null, create_as_void: true, void_reason: f.void_reason,
+        fiscal_year_id: f.fiscal_year_id ? Number(f.fiscal_year_id) : null });
+      onSaved();
+    } catch (x) { setErr(x); }
+  };
+  return (
+    <Modal title="Zero-dollar VOID accountability record" onClose={onClose}>
+      <form onSubmit={submit}>
+        <ErrorBox error={err} />
+        <p>Documents e.g. a physically damaged unused check. Created directly as VOID for $0.00 using protected Budget 0.</p>
+        <div className="row">
+          <Field label="Type"><select value={f.transaction_type} onChange={(e) => setF({ ...f, transaction_type: e.target.value })}><option value="WITHDRAWAL">Withdrawal</option><option value="DEPOSIT">Deposit</option></select></Field>
+          <Field label="Date"><input type="date" required value={f.transaction_date} onChange={(e) => setF({ ...f, transaction_date: e.target.value })} /></Field>
+          {f.transaction_type === "WITHDRAWAL" ? <Field label="Check #"><input value={f.check_number} onChange={(e) => setF({ ...f, check_number: e.target.value })} /></Field> : null}
+        </div>
+        <Field label="Fiscal Year (only needed if ambiguous)">
+          <select value={f.fiscal_year_id} onChange={(e) => setF({ ...f, fiscal_year_id: e.target.value })}>
+            <option value="">Automatic</option>
+            {fys.filter((y: any) => y.status !== "CLOSED").map((y: any) => <option key={y.id} value={y.id}>{y.label}</option>)}
+          </select>
+        </Field>
+        <Field label="Void reason (required)"><textarea required value={f.void_reason} onChange={(e) => setF({ ...f, void_reason: e.target.value })} /></Field>
+        <div className="actions"><button type="button" onClick={onClose}>Cancel</button><button className="primary" type="submit">Create VOID record</button></div>
+      </form>
+    </Modal>
+  );
+}
+
+function Reviews({ canResolve, onChange }: { canResolve: boolean; onChange: () => void }) {
+  const [items, setItems] = useState<any[] | null>(null);
+  const [err, setErr] = useState<unknown>(null);
+  const load = () => api.get("/api/fiscal-year-reviews").then(setItems, setErr);
+  useEffect(() => { load(); }, []);
+  const [target, setTarget] = useState<any>(null);
+  const [note, setNote] = useState("");
+  const confirm = async () => {
+    try { await api.post(`/api/fiscal-year-reviews/${target.id}/confirm`, { note: note || null }); setTarget(null); setNote(""); load(); onChange(); } catch (x) { setErr(x); }
+  };
+  return (
+    <section className="card">
+      <h2>Pending Fiscal Year reviews</h2>
+      <ErrorBox error={err} />
+      {!items ? <Loading /> : items.length === 0 ? <p className="muted">No unresolved review items.</p> : (
+        <table className="table compact">
+          <thead><tr><th>Txn #</th><th>Date</th><th>Category</th><th>Natural FY</th><th>Budget</th><th className="num">Amount</th><th /></tr></thead>
+          <tbody>
+            {items.map((r) => (
+              <tr key={r.id}>
+                <td>{r.transaction_id}</td><td>{r.transaction_date}</td><td>{r.category === "CROSS_FY" ? "Cross-FY allocation" : "No covering Fiscal Year"}</td>
+                <td>{r.natural_fiscal_year?.label || "—"}</td><td>{r.budget.label} ({r.budget.fiscal_year.display_name})</td><td className="num">{money(r.amount)}</td>
+                <td>{canResolve ? <button className="small" onClick={() => setTarget(r)}>Confirm intentional</button> : null}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      <p className="hint">To reassign instead, edit the transaction and select a budget in the correct Fiscal Year.</p>
+      {target ? (
+        <Modal title={`Confirm review for transaction #${target.transaction_id}`} onClose={() => setTarget(null)}>
+          <p>Confirm that this allocation to <b>{target.budget.label}</b> ({target.budget.fiscal_year.display_name}) is intentional.</p>
+          <Field label="Review note (optional)"><input value={note} onChange={(e) => setNote(e.target.value)} /></Field>
+          <div className="actions"><button onClick={() => setTarget(null)}>Cancel</button><button className="primary" onClick={confirm}>Mark reviewed</button></div>
+        </Modal>
+      ) : null}
+    </section>
+  );
+}
