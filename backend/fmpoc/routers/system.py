@@ -8,7 +8,9 @@ from sqlalchemy.orm import Session
 
 from .. import VERSION
 from ..deps import PRE_CSRF_COOKIE, SESSION_COOKIE, Ctx, auth_ctx, get_ctx, get_db
+from ..config import build_info
 from ..errors import AppError
+from ..permissions import ADMINISTRATOR
 from ..schemas import InitializeIn
 from ..security.passwords import policy_errors
 from ..services import auth as auth_svc
@@ -59,10 +61,22 @@ def initialize(body: InitializeIn, request: Request, response: Response, db: Ses
     return {"initialized": True, "username": admin.username}
 
 
+def version_payload(request: Request) -> dict:
+    s = request.app.state.settings
+    return {"version": VERSION, "build": build_info(), "mode": s.mode}
+
+
+@router.get("/system/version")
+def version(request: Request, ctx: Ctx = Depends(auth_ctx)):
+    """v1.4 CR-022: version/build for every signed-in user (My Account → About); no network details."""
+    return version_payload(request)
+
+
 @router.get("/system/about")
 def about(request: Request, ctx: Ctx = Depends(auth_ctx)):
     s = request.app.state.settings
-    return {"version": VERSION, "mode": s.mode, "bind_host": s.host, "port": s.port,
+    admin = ADMINISTRATOR in ctx.roles
+    return {**version_payload(request), "bind_host": s.host if admin else None, "port": s.port if admin else None,
             "backup_notice": "Backup/restore is not provided in the POC. You are responsible for protecting the "
                              "application data directory (database, attachments and the portable encryption key "
                              "in secrets/) against machine or disk loss. All three are required for recovery.",

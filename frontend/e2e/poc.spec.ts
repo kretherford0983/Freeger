@@ -357,12 +357,12 @@ test("CR-002 / CR-005: reports page, audit PDF and entity report; documentation 
   await expect(page.getByRole("link", { name: "Download CSV" })).toBeVisible();
   await page.goto("/fiscal-years/1");
   const review = page.getByRole("heading", { name: /Documentation review/ }).locator("..");
-  await expect(review).toContainText("No attachment");
-  await expect(review).toContainText("Monthly bank service fee - auto debit");
+  // v1.4 CR-017: a "no attachment" mark WITH a reason counts as documented and is not listed
+  await expect(review).not.toContainText("Monthly bank service fee - auto debit");
   const splitRow = review.getByRole("row", { name: /2026-11-05/ });
   await expect(splitRow).toContainText("Missing attachment");
   await expect(splitRow).toContainText("1 of 2 allocations undocumented");
-  await expect(page.getByText(/transaction\(s\) are marked 'no attachment will be provided'/)).toBeVisible();
+  await expect(page.getByText(/transaction\(s\) have no supporting attachments/)).toBeVisible();
 });
 
 // ---------------------------------------------------------------- v1.3 enhancements
@@ -515,4 +515,23 @@ test("CR-013 / CR-014 / CR-015: fixed navigation, collapsible menu and pinned re
   await page.screenshot({ path: "e2e-screenshots/light-register-collapsed.png" });
   await page.getByRole("button", { name: "Expand navigation" }).click();
   await expect(nav.getByText("Register", { exact: true })).toBeVisible();
+});
+
+// ---------------------------------------------------------------- v1.4 enhancements
+test("CR-022 / CR-021: version in My Account for every user; bank balance total on the dashboard", async ({ page }) => {
+  await login(page, "bm1");
+  const total = page.getByTestId("bank-total");
+  await expect(total).toContainText("Total (all accounts)");
+  await expect(total).toContainText("$");
+  await page.screenshot({ path: "e2e-screenshots/light-dashboard-v14.png", fullPage: true });
+  await page.getByRole("link", { name: "My account" }).click();
+  const about = page.getByRole("region", { name: "About" });
+  await expect(about.getByTestId("app-version")).toHaveText(/^\d+\.\d+\.\d+$/);
+  await expect(about).toContainText(process.env.FM_BUNDLE ? "Build" : "Development build");
+  await expect(about).not.toContainText("Bind address");
+  await page.screenshot({ path: "e2e-screenshots/light-account-v14.png", fullPage: true });
+  await logout(page);
+  await login(page, "admin");
+  await page.getByRole("link", { name: "System/About" }).click();
+  await expect(page.getByText("Bind address")).toBeVisible();
 });

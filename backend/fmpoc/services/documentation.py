@@ -10,6 +10,10 @@ Rule (as specified by the product owner):
     ELSE (parent has an attachment OR parent has the indicator)
          children need neither and are not subject to documentation review.
 A normal (unsplit) transaction is the same rule with a single child.
+
+v1.4 CR-017: a no-attachment indicator WITH a (non-blank) reason counts as documented and is not listed; only an
+indicator without a reason is still reported ("NO_ATTACHMENT_MARKED"). This applies to the review list, the closure
+warnings and the dashboard count alike.
 """
 from __future__ import annotations
 
@@ -27,17 +31,23 @@ from .common import entity_brief
 class Child:
     attachments: int
     no_attachment: bool
+    has_reason: bool = False
 
 
-def classify(parent_attachments: int, parent_no_attachment: bool, children: list[Child]) -> str | None:
-    """Returns None (documented), "MISSING_ATTACHMENTS" or "NO_ATTACHMENT_MARKED"."""
+def has_reason(reason: str | None) -> bool:
+    return bool((reason or "").strip())
+
+
+def classify(parent_attachments: int, parent_no_attachment: bool, children: list[Child],
+             parent_has_reason: bool = False) -> str | None:
+    """Returns None (documented), "MISSING_ATTACHMENTS" or "NO_ATTACHMENT_MARKED" (indicator without a reason)."""
     if parent_attachments > 0:
         return None
     if parent_no_attachment:
-        return "NO_ATTACHMENT_MARKED"
+        return None if parent_has_reason else "NO_ATTACHMENT_MARKED"
     if any(c.attachments == 0 and not c.no_attachment for c in children):
         return "MISSING_ATTACHMENTS"
-    if any(c.attachments == 0 and c.no_attachment for c in children):
+    if any(c.attachments == 0 and c.no_attachment and not c.has_reason for c in children):
         return "NO_ATTACHMENT_MARKED"
     return None
 
@@ -80,8 +90,8 @@ def review(db: Session, fy: FiscalYear) -> list[dict]:
     for t in txns:
         allocs = t.live_allocations
         parent = tc.get(t.id, 0)
-        children = [Child(ac.get(a.id, 0), bool(a.no_attachment)) for a in allocs]
-        category = classify(parent, bool(t.no_attachment), children)
+        children = [Child(ac.get(a.id, 0), bool(a.no_attachment), has_reason(a.no_attachment_reason)) for a in allocs]
+        category = classify(parent, bool(t.no_attachment), children, has_reason(t.no_attachment_reason))
         if category is None:
             continue
         acct = accounts.get(t.bank_account_id) or db.get(BankAccount, t.bank_account_id)
@@ -99,7 +109,7 @@ def review(db: Session, fy: FiscalYear) -> list[dict]:
                                                    if c.attachments == 0 and not c.no_attachment]),
             "allocations_marked_no_attachment": ([] if parent or t.no_attachment else
                                                  [a.id for a, c in zip(allocs, children)
-                                                  if c.attachments == 0 and c.no_attachment]),
+                                                  if c.attachments == 0 and c.no_attachment and not c.has_reason]),
             "allocation_count": len(allocs),
             "no_attachment_reason": t.no_attachment_reason or "; ".join(
                 a.no_attachment_reason for a in allocs if a.no_attachment and a.no_attachment_reason) or None,
@@ -118,6 +128,6 @@ def closure_warnings(db: Session, fy: FiscalYear) -> list[dict]:
                     "transaction_ids": missing})
     if marked:
         out.append({"code": "NO_ATTACHMENT_MARKED",
-                    "message": f"{len(marked)} transaction(s) are marked 'no attachment will be provided'.",
+                    "message": f"{len(marked)} transaction(s) are marked 'no attachment will be provided' without a reason.",
                     "transaction_ids": marked})
     return out

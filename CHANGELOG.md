@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.4.0 — unreleased (in development)
+Change requests CR-016 … CR-025 (decisions recorded in docs/implementation-notes.md §1a). Delivered so far:
+- **CR-017 Documentation review.** A transaction (or split allocation) marked "no attachment will be provided" **with a
+  reason** now counts as documented: it no longer appears in the Fiscal Year documentation review, the closing
+  warnings or the dashboard count. A mark without a reason is still listed. Transfers (which carry the reason
+  "Internal transfer between accounts") are no longer listed.
+- **CR-019 Income budgets.** An income budget that received more than budgeted shows **+$X above budget** in green
+  (Budgets page, dashboard, budget selector and the PDF reports) instead of a negative remaining amount, and is no
+  longer an "over budget" closing warning. Expense budgets are unchanged.
+- **CR-021** The dashboard's bank account balances show a **Total** of all listed accounts.
+- **CR-022** **My account → About** shows the application version and build (e.g. *test build #12*) to every user.
+  System/About (Administrators) shows the same plus the bind address; other users no longer receive the bind address
+  and port from the About API.
+
 ## 1.3.0 — 2026-09-29
 Change requests CR-007 … CR-015 (decisions recorded in docs/implementation-notes.md §1a):
 - **CR-007 Fiscal Year document types.** Fiscal Year documents are *Approval document*, *Audit Signoff* or *Other*.

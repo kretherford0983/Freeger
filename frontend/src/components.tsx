@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, type FormEvent, type FormHTMLAttributes, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { api, ApiError, type ApiWarning, qs } from "./api";
+import { api, ApiError, type ApiWarning, money, qs } from "./api";
 
 /** v1.3 CR-011: a form that ignores further submits while one is being saved. All controls in the form are
  *  disabled until the save (including any confirmation dialog it opens) finishes; the submit button reads "Saving…". */
@@ -438,4 +438,30 @@ export function EntityPicker({ label, entities, value, onChange, placeholder = "
       ) : null}
     </div>
   );
+}
+
+/** v1.4 CR-022: version + build details (no network details). */
+export function BuildDetails({ info }: { info: { version: string; mode?: string; build?: Record<string, string> | null } }) {
+  const b = info.build;
+  return (
+    <dl className="dl" data-testid="build-details">
+      <dt>Version</dt><dd data-testid="app-version">{info.version}</dd>
+      {b ? (
+        <>
+          <dt>Build</dt>
+          <dd>{[b.branch ? `${b.branch} build` : "Build", b.run ? `#${b.run}` : null].filter(Boolean).join(" ")}{b.commit ? ` (${b.commit})` : ""}</dd>
+          {b.built_at ? <><dt>Built</dt><dd>{b.built_at.replace("T", " ").replace("Z", " UTC")}</dd></> : null}
+        </>
+      ) : (
+        <><dt>Build</dt><dd>Development build</dd></>
+      )}
+      {info.mode ? <><dt>Mode</dt><dd>{info.mode === "server" ? "Server" : "Local"}</dd></> : null}
+    </dl>
+  );
+}
+
+/** v1.4 CR-019: Remaining amount; income received above budget shows as a green "+$X above budget". */
+export function Remaining({ x }: { x: { remaining: string; above_budget?: string | null } }) {
+  if (x.above_budget) return <span className="above">+{money(x.above_budget)} above budget</span>;
+  return <span className={Number(x.remaining) < 0 ? "neg" : ""}>{money(x.remaining)}</span>;
 }

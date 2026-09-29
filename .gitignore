@@ -12,3 +12,4 @@ backend/fmpoc/static/
 *.sqlite3*
 Claude outputs/
 release/
+backend/fmpoc/build_info.json

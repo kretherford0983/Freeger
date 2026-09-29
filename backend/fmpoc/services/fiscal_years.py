@@ -294,8 +294,9 @@ def closure_check(db: Session, fy: FiscalYear) -> dict:
     if rejected_activity:
         warnings.append({"code": "REJECTED_BUDGET_ACTIVITY", "message": f"{len(rejected_activity)} rejected budget(s) have activity.",
                          "budget_ids": rejected_activity})
+    # v1.4 CR-019: only expense budgets can be "over budget"; income above budget is not a warning.
     over = [b.id for b in budgets if not b.is_budget_zero and b.parent_budget_id is not None
-            and totals.get(b.id, 0) > b.amount_cents]
+            and b.budget_type != "INCOME" and totals.get(b.id, 0) > b.amount_cents]
     if over:
         warnings.append({"code": "OVER_BUDGET", "message": f"{len(over)} budget(s) are over budget.", "budget_ids": over})
     reviewed = db.scalar(

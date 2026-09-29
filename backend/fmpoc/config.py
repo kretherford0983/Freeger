@@ -13,7 +13,23 @@ from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 
 APP_NAME = "FinancialManagementPOC"
-VERSION = "1.3.0"
+VERSION = "1.4.0"
+
+
+BUILD_INFO_FILE = Path(__file__).with_name("build_info.json")
+
+
+def build_info() -> dict | None:
+    """v1.4 CR-022: CI writes build_info.json into packaged builds (channel/branch, run number, commit)."""
+    import json
+    try:
+        data = json.loads(BUILD_INFO_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    keep = ("version", "branch", "commit", "run", "built_at")
+    return {k: str(data[k])[:64] for k in keep if data.get(k) not in (None, "")}
 
 
 def default_data_dir() -> Path:

@@ -1,6 +1,6 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { api } from "../api";
-import { ErrorBox, Field, GuardedForm } from "../components";
+import { BuildDetails, ErrorBox, Field, GuardedForm } from "../components";
 import { useMe } from "../App";
 
 export default function Account() {
@@ -8,6 +8,10 @@ export default function Account() {
   const [f, setF] = useState({ current_password: "", new_password: "", new_password_confirmation: "" });
   const [err, setErr] = useState<unknown>(null);
   const [ok, setOk] = useState(false);
+  const [ver, setVer] = useState<any>(null);
+  useEffect(() => {
+    api.get("/api/system/version").then(setVer).catch(() => setVer(null));
+  }, []);
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setErr(null);
@@ -45,6 +49,10 @@ export default function Account() {
         <Field label="Confirm new password"><input type="password" required autoComplete="new-password" value={f.new_password_confirmation} onChange={(e) => setF({ ...f, new_password_confirmation: e.target.value })} /></Field>
         <button className="primary" type="submit">Change password</button>
       </GuardedForm>
+      <section className="card" aria-labelledby="about-h">
+        <h2 id="about-h">About</h2>
+        {ver ? <BuildDetails info={ver} /> : <p className="hint">Loading…</p>}
+      </section>
     </div>
   );
 }
