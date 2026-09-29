@@ -71,7 +71,9 @@ bash scripts/security_check.sh                    # pip-audit + npm audit + secu
 | Docker (optional, server) | `docker build -f packaging/docker/Dockerfile -t fmpoc .` | plus `docker-compose.yml` with Caddy HTTPS |
 | Docker from bundle (no registry needed) | `bash packaging/docker/build_bundle_image.sh` | used for verification in this run |
 
-CI (`.github/workflows/ci.yml`) runs tests, E2E, dependency audits and builds/smoke-tests Linux and Windows packages.
+CI/CD (GitHub Actions, `.github/workflows/`): every pull request and feature branch runs the full test suite; merges
+into `develop`, `test` and `main` build the packages, and `test`/`main` publish GitHub pre-releases/releases.
+Branching strategy and release process: [docs/branching.md](docs/branching.md).
 
 ## Repository layout
 

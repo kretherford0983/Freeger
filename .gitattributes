@@ -1,0 +1,10 @@
+# Keep repository line endings LF so shell scripts and installers work on Linux servers even when the repo is
+# checked out on Windows.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.ico binary
