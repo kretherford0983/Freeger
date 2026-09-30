@@ -153,3 +153,20 @@ def test_cr019_pdf_prints_above_budget(env, base):
 
 
 __all__ = ["PDF_BYTES"]
+
+
+def test_v150_frontend_build_header_and_no_store_index(env):
+    """v1.5.0: API responses name the served page build; the page itself is never cached."""
+    from fmpoc.app import _frontend_build
+    import pathlib
+    import tempfile
+    d = pathlib.Path(tempfile.mkdtemp())
+    (d / "index.html").write_text('<script type="module" crossorigin src="/assets/index-AbC_12-x.js"></script>')
+    assert _frontend_build(d) == "index-AbC_12-x.js"
+    assert _frontend_build(d / "missing") is None
+    r = env.bu.get("/api/auth/me")
+    built = _frontend_build(pathlib.Path(__import__("fmpoc.app", fromlist=["STATIC_DIR"]).STATIC_DIR))
+    assert r.headers.get("X-Frontend-Build") == built
+    page = env.bu.get("/about")
+    if page.status_code == 200 and "text/html" in page.headers.get("content-type", ""):
+        assert page.headers["cache-control"] == "no-store"
