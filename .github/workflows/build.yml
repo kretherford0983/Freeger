@@ -37,6 +37,13 @@ jobs:
       - id: meta
         name: Version
         run: echo "version=$(bash scripts/version.sh)" >> "$GITHUB_OUTPUT"
+      - name: Build info shown in the app (My Account / System About)
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          printf '{"version":"%s","branch":"%s","commit":"%s","run":"%s","built_at":"%s"}\n' \
+            "$VERSION" "$GITHUB_REF_NAME" "${GITHUB_SHA::7}" "$GITHUB_RUN_NUMBER" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            > backend/fmpoc/build_info.json
       - name: Frontend production build
         run: npm --prefix frontend ci && npm --prefix frontend run build
       - name: Linux portable package (servers - use with packaging/linux/install-server.sh)
@@ -65,7 +72,9 @@ jobs:
         with:
           name: FinancialManagementPOC-${{ steps.meta.outputs.version }}-${{ github.ref_name }}-${{ github.run_number }}
           path: release/
-          retention-days: ${{ github.ref_name == 'develop' && 14 || 90 }}
+          # test/main packages are kept permanently on the GitHub release; the run copy only feeds the publish job.
+          # Short retention keeps Actions artifact storage (1 GB on GitHub Pro) well below the limit.
+          retention-days: ${{ github.ref_name == 'develop' && 7 || 1 }}
 
   publish:
     needs: package

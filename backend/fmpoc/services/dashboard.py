@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from ..models import (AuditEvent, BankAccount, Budget, FiscalYear, FiscalYearReview, RegisterTransaction,
                       TransactionAllocation, User)
-from ..money import fmt
+from ..money import fmt, parse_amount
 from . import bank_accounts as bank
 from . import budgets as bsvc
 from .common import active_allocation_totals, covering_fiscal_years, fy_brief
@@ -52,6 +52,8 @@ def financial(db: Session, ctx) -> dict:
         "budget_summary": summary,
         "bank_accounts": [{"id": a["id"], "label": a["label"], "current_balance": a["current_balance"],
                            "is_primary": a["is_primary"], "register_enabled": a["register_enabled"]} for a in accounts],
+        # v1.4 CR-021: total of the active accounts listed above.
+        "bank_accounts_total": fmt(sum(parse_amount(a["current_balance"], allow_negative=True) for a in accounts)),
         "attention": {"pending_fiscal_year_reviews": _pending_reviews(db, ws), "uncleared_transactions": uncleared,
                       "documentation_warnings": len(documentation_review(db, fy)) if fy is not None else 0},
     }

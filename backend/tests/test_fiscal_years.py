@@ -222,7 +222,12 @@ def test_ac_fy_012_closure_warnings_budget0_not_warning(env, base):
     # voided normal transaction + over budget -> warnings
     v = env.txn(base["acct"]["id"], "WITHDRAWAL", [{"budget_id": base["exp_leaf"], "amount": "5.00"}])
     env.ru.post(f"/api/transactions/{v['id']}/void", {"reason": "error", "confirm_irreversible": True})
-    env.txn(base["acct"]["id"], "DEPOSIT", [{"budget_id": base["inc_leaf"], "amount": "6000.00"}], clear_date="2026-08-02")
+    # v1.4 CR-019: income received above budget is NOT an over-budget warning ...
+    env.txn(base["acct"]["id"], "DEPOSIT", [{"budget_id": base["inc_leaf"], "amount": "106000.00"}], clear_date="2026-08-02")
+    w = {x["code"] for x in env.bm.get(f"/api/fiscal-years/{fy}/closure-check").json()["warnings"]}
+    assert "VOIDED_TRANSACTIONS" in w and "OVER_BUDGET" not in w
+    # ... but spending above an expense budget still is
+    env.txn(base["acct"]["id"], "WITHDRAWAL", [{"budget_id": base["exp_leaf"], "amount": "100000.00"}], clear_date="2026-08-02")
     w = {x["code"] for x in env.bm.get(f"/api/fiscal-years/{fy}/closure-check").json()["warnings"]}
     assert {"VOIDED_TRANSACTIONS", "OVER_BUDGET"} <= w
     assert _blockers(env, fy) == set()
