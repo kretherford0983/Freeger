@@ -591,6 +591,7 @@ test("CR-020: dashboard charts — defaults, choose charts per user, data tables
   await charts.getByRole("checkbox", { name: "Cumulative net (income − expenses)" }).check();
   await charts.getByRole("checkbox", { name: "Income by budget" }).uncheck();
   await charts.getByRole("button", { name: "Done" }).click();
+  await expect(charts.getByRole("status")).toHaveText("Chart choice saved");
   await expect(charts.getByTestId("chart-balances")).toBeVisible();
   await expect(charts.getByTestId("chart-income_pie")).toHaveCount(0);
   // data table fallback
@@ -609,6 +610,7 @@ test("CR-020: dashboard charts — defaults, choose charts per user, data tables
   await charts.getByRole("button", { name: "Choose charts" }).click();
   for (const n of ["Bank balances (month end)", "Cumulative net (income − expenses)"]) await charts.getByRole("checkbox", { name: n }).uncheck();
   await charts.getByRole("checkbox", { name: "Income by budget" }).check();
+  await expect(charts.getByRole("status")).toHaveText("Chart choice saved");
 });
 
 // ---- CR-018: TOTP helper (RFC 6238, SHA-1, 30 s) for the E2E tests
