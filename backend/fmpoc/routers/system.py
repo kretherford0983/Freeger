@@ -15,6 +15,7 @@ from ..schemas import InitializeIn
 from ..security.passwords import policy_errors
 from ..services import auth as auth_svc
 from ..services import bootstrap
+from ..services.mfa import required as mfa_required
 from .auth import set_session_cookie
 
 router = APIRouter(prefix="/api", tags=["system"])
@@ -49,7 +50,8 @@ def initialize(body: InitializeIn, request: Request, response: Response, db: Ses
         try:
             admin = bootstrap.initialize(db, settings, ctx, workspace_name=body.workspace_name,
                                          username=body.admin_username, email=body.admin_email, password=body.password)
-            token, sess = auth_svc.create_session(db, settings, admin)
+            # v1.4.1 CR-018: in server mode the first Administrator sets up MFA before using the application
+            token, sess = auth_svc.create_session(db, settings, admin, "ENROLL" if mfa_required(settings) else None)
             db.commit()
         except Exception:
             db.rollback()

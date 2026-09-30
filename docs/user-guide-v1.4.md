@@ -1,6 +1,6 @@
 # What's new in 1.4 — quick guide
 
-*1.4.0: documentation review, income above budget, bank total, version information. 1.4.1: audit signature page, dashboard charts
+*1.4.0: documentation review, income above budget, bank total, version information. 1.4.1: audit signature page, dashboard charts, two-step verification
 (more 1.4.1 features are added below as they are delivered).*
 
 ## Documentation review (Fiscal Year page)
@@ -41,3 +41,18 @@ income by budget, monthly expenses and income, expense budgets (budgeted vs spen
 expenses by budget and the cumulative net. Use **Choose charts** to show or hide charts — the choice is saved for
 your account (new users see the first three). Hover a chart for exact amounts, or open **Show data table** under it.
 VOID transactions and transfers between accounts are not included.
+
+## Two-step verification (1.4.1)
+After your password, Freedger asks for a **6-digit code** from an authenticator app on your phone (Microsoft
+Authenticator, Google Authenticator, 1Password, Authy, …).
+- **Setting it up:** on a server install you are asked the first time you sign in after the upgrade; on a desktop
+  install use **My account → Two-step verification → Set up**. Scan the QR code (or type the key shown under it),
+  enter the code the app shows, then **save the 10 recovery codes** (copy, download or print). They are shown only
+  once.
+- **Signing in:** enter the current code. Tick **Trust this browser for 30 days** only on a computer you alone use.
+- **Lost your phone?** Choose *Lost your phone? Use a recovery code* and enter one of your saved codes (each works
+  once). Then go to My account → **Change authenticator** to set up the new phone; this also gives you new
+  recovery codes.
+- **No phone and no recovery codes?** Ask an Administrator: Users → **Reset two-step**. You will set it up again at
+  the next sign-in.
+- My account also lists your **trusted browsers**; remove any you no longer use.

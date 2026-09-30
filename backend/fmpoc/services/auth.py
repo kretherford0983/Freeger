@@ -15,6 +15,7 @@ from ..deps import hash_token
 from ..errors import AppError
 from ..models import AuthSession, User, utcnow
 from ..security.passwords import hash_password, policy_errors, verify_password
+from . import mfa
 
 
 class LoginRateLimiter:
@@ -48,12 +49,14 @@ class LoginRateLimiter:
                 self._fails.pop(k, None)
 
 
-def create_session(db: Session, settings, user: User) -> tuple[str, AuthSession]:
+def create_session(db: Session, settings, user: User, mfa_pending: str | None = None) -> tuple[str, AuthSession]:
     token = secrets.token_urlsafe(32)
     now = utcnow()
+    life = (dt.timedelta(minutes=mfa.PENDING_MINUTES) if mfa_pending
+            else dt.timedelta(hours=settings.session_absolute_hours))
     sess = AuthSession(
         token_hash=hash_token(token), user_id=user.id, csrf_token=secrets.token_urlsafe(32),
-        created_at=now, last_seen_at=now, expires_at=now + dt.timedelta(hours=settings.session_absolute_hours),
+        created_at=now, last_seen_at=now, expires_at=now + life, mfa_pending=mfa_pending,
     )
     db.add(sess)
     db.flush()
@@ -67,7 +70,19 @@ def revoke_user_sessions(db: Session, user_id: int, except_session_id: int | Non
     return db.execute(stmt.values(revoked_at=utcnow())).rowcount or 0
 
 
-def login(db: Session, settings, limiter: LoginRateLimiter, ctx, username: str, password: str, prior_token: str | None):
+def mfa_state(db: Session, settings, user: User, trusted_token: str | None) -> tuple[str | None, str]:
+    """v1.4.1 CR-018: (pending state for the new session, how MFA was satisfied)."""
+    if mfa.enabled(db, user):
+        if mfa.check_trusted(db, user, trusted_token):
+            return None, "trusted_browser"
+        return "VERIFY", "pending"
+    if mfa.required(settings):
+        return "ENROLL", "pending"
+    return None, "not_enabled"
+
+
+def login(db: Session, settings, limiter: LoginRateLimiter, ctx, username: str, password: str, prior_token: str | None,
+          trusted_token: str | None = None):
     uname = (username or "").strip().lower()
     keys = (f"u:{uname}", f"ip:{ctx.ip}")
     if limiter.blocked(*keys):
@@ -87,9 +102,11 @@ def login(db: Session, settings, limiter: LoginRateLimiter, ctx, username: str, 
     if prior_token:
         db.execute(update(AuthSession).where(AuthSession.token_hash == hash_token(prior_token))
                    .values(revoked_at=utcnow()))
-    token, sess = create_session(db, settings, user)
+    pending, how = mfa_state(db, settings, user, trusted_token)
+    token, sess = create_session(db, settings, user, pending)
     ctx.user, ctx.workspace_id = user, user.workspace_id
-    audit.record(db, ctx, "LOGIN", "user", user.id, None, {"session_ref": sess.id}, category="SECURITY")
+    audit.record(db, ctx, "LOGIN" if not pending else "LOGIN_PASSWORD_ACCEPTED", "user", user.id, None,
+                 {"session_ref": sess.id, "mfa": how if not pending else pending.lower()}, category="SECURITY")
     db.commit()
     return user, token, sess
 
@@ -121,6 +138,19 @@ def change_own_password(db: Session, ctx, current: str, new: str, confirm: str) 
     user.password_hash = hash_password(new)
     user.password_changed_at = utcnow()
     revoked = revoke_user_sessions(db, user.id, except_session_id=ctx.session.id)
+    trusted = mfa.revoke_trusted(db, user.id)  # v1.4.1 CR-018
     audit.record(db, ctx, "PASSWORD_CHANGED", "user", user.id, None,
-                 {"self_service": True, "other_sessions_revoked": revoked}, category="SECURITY")
+                 {"self_service": True, "other_sessions_revoked": revoked, "trusted_browsers_revoked": trusted},
+                 category="SECURITY")
     db.commit()
+
+
+def complete_mfa(db: Session, settings, ctx, how: str) -> tuple[str, AuthSession]:
+    """Replaces the MFA-pending session with a full session (new token - session rotation on privilege change)."""
+    old = ctx.session
+    old.revoked_at = utcnow()
+    token, sess = create_session(db, settings, ctx.user, None)
+    audit.record(db, ctx, "LOGIN", "user", ctx.user.id, None, {"session_ref": sess.id, "mfa": how},
+                 category="SECURITY")
+    ctx.session, ctx.mfa_pending = sess, None
+    return token, sess

@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { api } from "../api";
 import { BuildDetails, ErrorBox, Field, GuardedForm } from "../components";
 import { useMe } from "../App";
+import { SecuritySection } from "./Mfa";
 
 export default function Account() {
   const { me, setTheme } = useMe();
@@ -49,6 +50,7 @@ export default function Account() {
         <Field label="Confirm new password"><input type="password" required autoComplete="new-password" value={f.new_password_confirmation} onChange={(e) => setF({ ...f, new_password_confirmation: e.target.value })} /></Field>
         <button className="primary" type="submit">Change password</button>
       </GuardedForm>
+      <SecuritySection />
       <section className="card" aria-labelledby="about-h">
         <h2 id="about-h">About</h2>
         {ver ? <BuildDetails info={ver} /> : <p className="hint">Loading…</p>}

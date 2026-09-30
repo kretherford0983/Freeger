@@ -91,17 +91,17 @@ def normalize_account_number(raw: str) -> str:
     return value
 
 
-def encrypt(km: KeyMaterial, plaintext: str) -> str:
+def encrypt(km: KeyMaterial, plaintext: str, aad: bytes = _AAD) -> str:
     nonce = secrets.token_bytes(12)
-    ct = AESGCM(km.enc_key).encrypt(nonce, plaintext.encode("utf-8"), _AAD)
+    ct = AESGCM(km.enc_key).encrypt(nonce, plaintext.encode("utf-8"), aad)
     return "v1:" + base64.b64encode(nonce + ct).decode()
 
 
-def decrypt(km: KeyMaterial, token: str) -> str:
+def decrypt(km: KeyMaterial, token: str, aad: bytes = _AAD) -> str:
     if not token.startswith("v1:"):
         raise KeyError_("Unsupported ciphertext version")
     raw = base64.b64decode(token[3:])
-    return AESGCM(km.enc_key).decrypt(raw[:12], raw[12:], _AAD).decode("utf-8")
+    return AESGCM(km.enc_key).decrypt(raw[:12], raw[12:], aad).decode("utf-8")
 
 
 def fingerprint(km: KeyMaterial, normalized: str) -> str:
