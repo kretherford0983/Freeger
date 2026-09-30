@@ -27,10 +27,11 @@ export interface Me {
   permissions: string[];
   theme: "light" | "dark";
   nav_collapsed?: boolean;
+  dashboard_charts?: string[];
   csrf_token: string;
 }
 
-const MeCtx = createContext<{ me: Me; can: (p: string) => boolean; refresh: () => Promise<void>; setTheme: (t: "light" | "dark") => void } | null>(null);
+const MeCtx = createContext<{ me: Me; can: (p: string) => boolean; refresh: () => Promise<void>; setTheme: (t: "light" | "dark") => void; patchMe: (p: Partial<Me>) => void } | null>(null);
 
 export function useMe() {
   const c = useContext(MeCtx);
@@ -88,6 +89,7 @@ export default function App() {
       applyTheme(t);
       setMe({ ...me, theme: t });
     },
+    patchMe: (p: Partial<Me>) => setMe({ ...me, ...p }),
   };
   return (
     <MeCtx.Provider value={ctx}>
