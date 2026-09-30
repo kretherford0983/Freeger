@@ -15,6 +15,7 @@ from ..schemas import InitializeIn
 from ..security.passwords import policy_errors
 from ..services import auth as auth_svc
 from ..services import bootstrap
+from ..services.mfa import required as mfa_required
 from .auth import set_session_cookie
 
 router = APIRouter(prefix="/api", tags=["system"])
@@ -28,10 +29,14 @@ def health():
 
 @router.get("/system/status")
 def status(request: Request, response: Response, db: Session = Depends(get_db)):
+    if request.app.state.maintenance:  # v1.4.1: no database access while a restore swaps the data
+        return {"initialized": None, "workspace_name": None, "version": VERSION, "maintenance": "restore",
+                "mode": request.app.state.settings.mode, "insecure_transport_warning": False}
     initialized = bootstrap.is_initialized(db)
     ws = bootstrap.current_workspace(db) if initialized else None
     s = request.app.state.settings
     return {"initialized": initialized, "workspace_name": ws.name if ws else None, "version": VERSION,
+            "maintenance": request.app.state.maintenance,
             "mode": s.mode, "insecure_transport_warning": request.app.state.insecure_transport_warning}
 
 
@@ -49,7 +54,8 @@ def initialize(body: InitializeIn, request: Request, response: Response, db: Ses
         try:
             admin = bootstrap.initialize(db, settings, ctx, workspace_name=body.workspace_name,
                                          username=body.admin_username, email=body.admin_email, password=body.password)
-            token, sess = auth_svc.create_session(db, settings, admin)
+            # v1.4.1 CR-018: in server mode the first Administrator sets up MFA before using the application
+            token, sess = auth_svc.create_session(db, settings, admin, "ENROLL" if mfa_required(settings) else None)
             db.commit()
         except Exception:
             db.rollback()
@@ -77,9 +83,11 @@ def about(request: Request, ctx: Ctx = Depends(auth_ctx)):
     s = request.app.state.settings
     admin = ADMINISTRATOR in ctx.roles
     return {**version_payload(request), "bind_host": s.host if admin else None, "port": s.port if admin else None,
-            "backup_notice": "Backup/restore is not provided in the POC. You are responsible for protecting the "
-                             "application data directory (database, attachments and the portable encryption key "
-                             "in secrets/) against machine or disk loss. All three are required for recovery.",
+            # v1.4.1 CR-023: backup/restore is built in (supersedes BR-092)
+            "backup_notice": "Create backups regularly (Backup / Restore below) and keep them off this machine, "
+                             "together with their passphrase. A backup contains the database, all attachments and "
+                             "the encryption key; config.toml is not included.",
+            "restore_max_mb": s.restore_max_mb if ADMINISTRATOR in ctx.roles else None,
             "insecure_transport_warning": request.app.state.insecure_transport_warning}
 
 

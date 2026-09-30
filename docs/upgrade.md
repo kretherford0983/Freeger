@@ -1,4 +1,4 @@
-# Upgrading a Linux server install (current release: 1.3.0)
+# Upgrading a Linux server install (current release: 1.4.1)
 
 The upgrade replaces only the application binaries. It does **not** modify:
 
@@ -10,6 +10,10 @@ Before switching versions the installer stops the service and copies the whole d
 
 | Upgrade | Database change | Rollback |
 |---|---|---|
+| 1.3.0 → 1.4.1 | migrations `0006`–`0008` (as below) | switch binaries **and** restore the pre-upgrade data backup |
+| 1.4.0 → 1.4.1 | migrations `0006` — **adds** table `signature_template`; `0007` — **adds** column `app_user.dashboard_charts`; `0008` — **adds** tables `user_mfa`, `mfa_recovery_code`, `trusted_device` and column `auth_session.mfa_pending`. **After the upgrade every user of a server install sets up two-step verification at the next sign-in** — see below | switch binaries **and** restore the pre-upgrade data backup |
+| 1.3.0 → 1.4.0 | none | switch binaries only |
+| 1.2.x → 1.4.0 | migration `0005` (see 1.2.x → 1.3.0) | switch binaries **and** restore the pre-upgrade data backup |
 | 1.2.x → 1.3.0 | migration `0005` — **adds** tables `request_key`, `check_number_acknowledgement` and columns on `attachment` (document type, system-generated), `fiscal_year` (approval "no document" mark) and `app_user` (collapsed menu); existing Fiscal Year documents are labelled "Other" | switch binaries **and** restore the pre-upgrade data backup |
 | 1.1.x → 1.3.0 | migrations `0003`–`0005` applied in order automatically | restore the pre-upgrade data backup |
 | 1.2.0 → 1.2.1 | migration `0004` — **adds** four columns to `transaction_allocation` (per-allocation no-attachment flag, reason, who/when); no existing value is changed or removed | switch binaries **and** restore the pre-upgrade data backup (1.2.0 does not know revision 0004) |
@@ -17,7 +21,13 @@ Before switching versions the installer stops the service and copies the whole d
 | 1.1.x → 1.2.0 | migration `0003` — **adds** columns to `register_transaction` (transfer link, no-attachment flag); no existing value is changed or removed | switch binaries **and** restore the pre-upgrade data backup (1.1.x cannot open a 0003 database) |
 | 1.1.0 → 1.1.1 | none | switch binaries only |
 
-Verified during release testing: upgrading a 1.2.1 server with data to 1.3.0 left `config.toml`, the key and all
+Verified during release testing: upgrading a 1.4.0 server with data to 1.4.1 (installer, simulated systemd) left
+`config.toml`, the key and all attachments byte-for-byte identical, kept every row and applied `0006`–`0008`; users
+were then asked to set up two-step verification; a backup → restore round trip on the upgraded server worked
+(including two-step verification from the backup). Rollback: the 1.4.0 binaries alone refuse the 1.4.1 database
+("Can't locate revision"); restoring the installer's data snapshot with the 1.4.0 binaries returned exactly the
+pre-upgrade data.
+Earlier: upgrading a 1.2.1 server with data to 1.3.0 left `config.toml`, the key and all
 attachments byte-for-byte identical, kept every row, applied `0005`, labelled the existing Fiscal Year document "Other"
 and reported the Audit Signoff as the only new closing requirement.
 Earlier: upgrading a 1.2.0 server with data to 1.2.1 left `config.toml`, the key and all
@@ -80,3 +90,19 @@ Data lives in `%LOCALAPPDATA%\FinancialManagementPOC` and is separate from the p
 4. Run `FinancialManagementPOC.cmd` from the new folder. The database is migrated automatically on start.
 
 To roll back: stop the app, restore the backed-up data folder, and run the old program folder.
+
+## 1.4.1: two-step verification after the upgrade (server installs)
+
+Sessions that were open before the upgrade keep working until they end. At the **next sign-in every user** is asked to
+set up an authenticator app (QR code or typed key) and to save 10 recovery codes. Do it yourself first as the
+Administrator, with your phone at hand.
+
+If a user loses both the phone and the recovery codes: Users → *Reset two-step* (Administrator, reason required).
+If the only Administrator is locked out, on the server:
+
+```
+sudo -u fmpoc /opt/fmpoc/current/FinancialManagementPOC reset-mfa --user <username> --data-dir /var/lib/fmpoc
+```
+
+(run it as the `fmpoc` service account so file ownership in the data directory does not change). The reset is
+recorded in the audit log; the user sets up two-step verification again at the next sign-in.

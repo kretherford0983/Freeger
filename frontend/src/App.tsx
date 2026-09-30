@@ -9,6 +9,7 @@ import Dashboard from "./pages/Dashboard";
 import Users from "./pages/Users";
 import AuditLog from "./pages/AuditLog";
 import About from "./pages/About";
+import { MfaGate } from "./pages/Mfa";
 import FiscalYears from "./pages/FiscalYears";
 import FiscalYearDetail from "./pages/FiscalYearDetail";
 import Budgets from "./pages/Budgets";
@@ -27,10 +28,12 @@ export interface Me {
   permissions: string[];
   theme: "light" | "dark";
   nav_collapsed?: boolean;
+  dashboard_charts?: string[];
+  mfa_pending?: "VERIFY" | "ENROLL" | null; // v1.4.1 CR-018
   csrf_token: string;
 }
 
-const MeCtx = createContext<{ me: Me; can: (p: string) => boolean; refresh: () => Promise<void>; setTheme: (t: "light" | "dark") => void } | null>(null);
+const MeCtx = createContext<{ me: Me; can: (p: string) => boolean; refresh: () => Promise<void>; setTheme: (t: "light" | "dark") => void; patchMe: (p: Partial<Me>) => void } | null>(null);
 
 export function useMe() {
   const c = useContext(MeCtx);
@@ -79,6 +82,7 @@ export default function App() {
   if (!status || me === undefined) return <div className="center"><Loading /></div>;
   if (!status.initialized) return <InitWizard onDone={boot} />;
   if (!me) return <Login workspace={status.workspace_name} onLogin={loadMe} />;
+  if (me.mfa_pending) return <MfaGate me={me} workspace={status.workspace_name} onDone={loadMe} onLogout={() => { setCsrf(null); setMe(null); }} />;
 
   const ctx = {
     me,
@@ -88,6 +92,7 @@ export default function App() {
       applyTheme(t);
       setMe({ ...me, theme: t });
     },
+    patchMe: (p: Partial<Me>) => setMe({ ...me, ...p }),
   };
   return (
     <MeCtx.Provider value={ctx}>

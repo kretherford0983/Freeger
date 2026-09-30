@@ -1,7 +1,44 @@
 # Changelog
 
-## 1.4.0 — unreleased (in development)
-Change requests CR-016 … CR-025 (decisions recorded in docs/implementation-notes.md §1a). Delivered so far:
+## 1.4.1 — 2026-09-30
+The rest of the 1.4 plan (decisions in docs/implementation-notes.md §1a). Beta: test channel only.
+- **CR-016 Audit review signature page.** Reports → End of Year Audit → *Include audit review signature page* adds a
+  last page with a blank date line, the wording and a signature line for up to five signers (individual Entities,
+  each with an optional title, printed as "Jane Doe, Trustee"). Choose the built-in default wording, one of up to four
+  saved wordings (shared by the organization, each with a Delete button) or new wording, which can be saved for future
+  use. The variables {FY} (Fiscal Year dates), {ORG} (organization) and {FYE} (Fiscal Year end date) are filled in;
+  unknown variables are refused. Saving and deleting wordings is recorded in the audit log.
+- **CR-020 Dashboard charts.** The dashboard (financial roles and Auditors) has a *Charts* section for a chosen Fiscal
+  Year: income by budget (donut), monthly expenses (bars) with income (line), expense budgets budgeted vs spent, bank
+  balances at each month end (per account and total), expenses by budget (donut) and cumulative net. **Choose charts**
+  shows or hides each chart; the choice is saved per user (default: the first three). Every chart has a tooltip on
+  hover and a *Show data table* view. VOID transactions and transfers are left out; months follow the Fiscal Year.
+- **CR-018 Two-step verification (MFA).** Sign-in asks for a 6-digit code from an authenticator app after the
+  password. Setup shows a QR code and a key to type in by hand, then 10 one-time **recovery codes** (shown once; new
+  ones only by setting it up again). **On a server install it is required for every user** — everyone is asked to set
+  it up at their next sign-in; on a local (desktop) install it is optional. "Trust this browser for 30 days" skips the
+  code on a private computer. My account → *Two-step verification*: change authenticator, remove trusted browsers.
+  Users (Administrator): *Reset two-step* (reason required). A locked-out sole Administrator can be reset on the
+  server with `FinancialManagementPOC reset-mfa --user NAME`. Passkeys follow in 1.6.
+- **CR-023 Backup.** System/About → *Backup / Restore* (Administrators): one encrypted `.fmbak` file with the
+  database, all attachments and the encryption key (not `config.toml`), protected by a passphrase you choose.
+- **CR-025 Restore.** Upload a backup, enter its passphrase, your password and `RESTORE`: the current data is replaced,
+  kept as a safety copy in `pre-restore/`, the application reloads itself and everyone signs in again with the
+  accounts from the backup. Progress is shown step by step; any failure leaves (or puts back) the current data.
+- **CR-024 Restore when setting up.** The initialization wizard offers *Restore from a backup instead*, to move an
+  installation to a new server. See docs/backup-restore.md.
+
+Upgrade notes: database migrations `0006` (table `signature_template`), `0007` (column `app_user.dashboard_charts`)
+and `0008` (tables `user_mfa`, `mfa_recovery_code`, `trusted_device`; column `auth_session.mfa_pending`) are
+additive. Users already signed in stay signed in; on a server install each user sets up two-step verification at their
+next sign-in (have your phone ready when you first sign in after the upgrade). New folders in the data directory:
+`backup-work/` (temporary) and `pre-restore/` (safety copy after a restore).
+
+## 1.4.0 — 2026-09-30
+Change requests CR-017, CR-019, CR-021 and CR-022 (decisions recorded in docs/implementation-notes.md §1a). The rest of
+the 1.4 plan — audit signature page (CR-016), MFA (CR-018), dashboard charts (CR-020) and backup/restore
+(CR-023 … CR-025) — follows in **1.4.1**. Beta: pre-release on the test channel only (no production release is
+planned before 1.6).
 - **CR-017 Documentation review.** A transaction (or split allocation) marked "no attachment will be provided" **with a
   reason** now counts as documented: it no longer appears in the Fiscal Year documentation review, the closing
   warnings or the dashboard count. A mark without a reason is still listed. Transfers (which carry the reason

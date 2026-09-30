@@ -80,6 +80,9 @@ class ChangePasswordIn(In):
 class PreferencesIn(In):
     theme: Literal["light", "dark"] | None = None
     nav_collapsed: bool | None = None  # v1.3 CR-014
+    # v1.4.1 CR-020: which dashboard charts to show, in order (empty list = none)
+    dashboard_charts: list[Literal["income_pie", "monthly", "expense_vs_budget", "balances", "expense_pie",
+                                   "cumulative_net"]] | None = Field(None, max_length=6)
 
 
 Domain = Literal["ADMINISTRATOR", "FINANCIAL", "AUDITOR"]
@@ -354,3 +357,44 @@ class NoteIn(In):
 
 class ReviewResolveIn(In):
     note: OptStr(1000) = None
+
+
+class SignatureTemplateIn(In):
+    """v1.4.1 CR-016: wording saved for the audit review signature page."""
+    text: str = Field(min_length=1, max_length=4000)
+
+
+class MfaCodeIn(In):
+    """v1.4.1 CR-018: a 6-digit TOTP code or a recovery code (XXXX-XXXX-XXXX)."""
+    code: str = Field(min_length=1, max_length=40)
+
+
+class MfaVerifyIn(MfaCodeIn):
+    trust_browser: bool = False
+
+
+class MfaEnrollStartIn(In):
+    current_code: str | None = Field(None, max_length=40)  # required when changing an existing authenticator
+
+
+class MfaResetIn(In):
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class BackupCreateIn(In):
+    """v1.4.1 CR-023."""
+    password: str = Field(min_length=1, max_length=200)
+    passphrase: str = Field(min_length=1, max_length=500)
+    passphrase_confirmation: str = Field(min_length=1, max_length=500)
+
+
+class RestoreUploadIn(In):
+    """v1.4.1 CR-024/025: announces the size of the backup file to be uploaded in parts."""
+    size: int = Field(gt=0, le=1024 ** 4)
+    filename: str = Field("backup.fmbak", max_length=255)
+
+
+class RestoreStartIn(In):
+    passphrase: str = Field(min_length=1, max_length=500)
+    password: str | None = Field(None, max_length=200)  # required once the application is initialized
+    confirm: str | None = Field(None, max_length=20)  # "RESTORE" once the application is initialized

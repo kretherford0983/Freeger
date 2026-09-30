@@ -1,4 +1,9 @@
 // E2E UI verification (AC-INIT-*, AC-UI-THEME-*, AC-FY-VIS-*, AC-SEC-005/011, AC-AUTH-SELF-001, AC-REG-001).
+import { spawn } from "node:child_process";
+import { createHmac } from "node:crypto";
+import { existsSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 
 const PW = "Correct-Horse-9-Battery";
@@ -534,4 +539,237 @@ test("CR-022 / CR-021: version in My Account for every user; bank balance total 
   await login(page, "admin");
   await page.getByRole("link", { name: "System/About" }).click();
   await expect(page.getByText("Bind address")).toBeVisible();
+});
+
+// ---------------------------------------------------------------- v1.4.1
+test("CR-016: audit report signature page — wording, saved wordings, signers", async ({ page }) => {
+  await login(page, "bm1");
+  const post = await apiAs(page);
+  for (const n of ["Jane Trustee", "John Trustee"]) {
+    expect((await post("/api/entities", { entity_type: "INDIVIDUAL", primary_contact: n, confirmations: ["DUPLICATE_ENTITY"] })).status()).toBe(201);
+  }
+  await page.getByRole("link", { name: "Reports" }).click();
+  await page.getByLabel("Include audit review signature page").check();
+  await expect(page.getByLabel("Selected wording")).toContainText("We, the undersigned");
+  // new wording with an unknown variable is refused before opening the PDF
+  await page.getByLabel("New wording…").check();
+  await page.getByLabel("Signature page wording").fill("We, the Trustees of {ORG}, approve {YEAR}.");
+  await expect(page.getByRole("alert")).toContainText("Unknown variable(s): {YEAR}");
+  await page.getByLabel("Signature page wording").fill("We, the Trustees of {ORG}, approve the records for {FY}.");
+  await page.getByRole("button", { name: "Save for future use" }).click();
+  await expect(page.getByText("Wording saved for future use.")).toBeVisible();
+  await expect(page.getByLabel("Selected wording")).toContainText("We, the Trustees of {ORG}");
+  // signers
+  await page.getByRole("combobox", { name: "Signer 1" }).fill("Jane");
+  await page.getByRole("listbox").getByRole("option", { name: /Jane Trustee/ }).click();
+  await page.getByLabel("Signer 1 title").fill("Trustee");
+  await page.getByRole("button", { name: "+ Add signer" }).click();
+  await page.getByRole("combobox", { name: "Signer 2" }).fill("John");
+  await page.getByRole("listbox").getByRole("option", { name: /John Trustee/ }).click();
+  const href = await page.getByRole("link", { name: "Open printable PDF" }).getAttribute("href");
+  expect(href).toContain("signature_page=true");
+  expect(href).toContain("signature_template_id=");
+  expect(href!.match(/signer_id=/g)!.length).toBe(2);
+  const pdf = await page.request.get(href!);
+  expect(pdf.status()).toBe(200);
+  expect((await pdf.body()).subarray(0, 5).toString()).toBe("%PDF-");
+  await page.screenshot({ path: "e2e-screenshots/light-reports-signature.png", fullPage: true });
+  // delete the saved wording again
+  await page.getByRole("button", { name: "Delete saved wording 1" }).click();
+  await expect(page.getByRole("button", { name: "Delete saved wording 1" })).toHaveCount(0);
+  await expect(page.getByLabel("Default wording")).toBeChecked();
+});
+
+test("CR-020: dashboard charts — defaults, choose charts per user, data tables, light and dark", async ({ page }) => {
+  await login(page, "bm1");
+  const charts = page.getByRole("region", { name: "Charts" });
+  await expect(charts.getByTestId("chart-income_pie")).toBeVisible();
+  await expect(charts.getByTestId("chart-monthly")).toBeVisible();
+  await expect(charts.getByTestId("chart-expense_vs_budget")).toBeVisible();
+  await expect(charts.getByTestId("chart-balances")).toHaveCount(0);
+  await expect(charts.getByTestId("chart-monthly").locator(".recharts-surface").first()).toBeVisible();
+  await charts.getByTestId("chart-income_pie").screenshot({ path: "e2e-screenshots/light-chart-income-pie.png" });
+  // choose charts: add bank balances + cumulative net, remove the income pie; saved for this user
+  await charts.getByRole("button", { name: "Choose charts" }).click();
+  await charts.getByRole("checkbox", { name: "Bank balances (month end)" }).check();
+  await charts.getByRole("checkbox", { name: "Cumulative net (income − expenses)" }).check();
+  await charts.getByRole("checkbox", { name: "Income by budget" }).uncheck();
+  await charts.getByRole("button", { name: "Done" }).click();
+  await expect(charts.getByRole("status")).toHaveText("Chart choice saved");
+  await expect(charts.getByTestId("chart-balances")).toBeVisible();
+  await expect(charts.getByTestId("chart-income_pie")).toHaveCount(0);
+  // data table fallback
+  const monthly = charts.getByTestId("chart-monthly");
+  await monthly.getByText("Show data table").click();
+  await expect(monthly.getByRole("table")).toContainText("Expenses");
+  await page.screenshot({ path: "e2e-screenshots/light-dashboard-charts.png", fullPage: true });
+  await page.reload();
+  await expect(page.getByRole("region", { name: "Charts" }).getByTestId("chart-cumulative_net")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Charts" }).getByTestId("chart-income_pie")).toHaveCount(0);
+  await page.getByRole("button", { name: /Switch to dark mode/ }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await page.screenshot({ path: "e2e-screenshots/dark-dashboard-charts.png", fullPage: true });
+  // restore defaults for later tests
+  await page.getByRole("button", { name: /Switch to light mode/ }).click();
+  await charts.getByRole("button", { name: "Choose charts" }).click();
+  for (const n of ["Bank balances (month end)", "Cumulative net (income − expenses)"]) await charts.getByRole("checkbox", { name: n }).uncheck();
+  await charts.getByRole("checkbox", { name: "Income by budget" }).check();
+  await expect(charts.getByRole("status")).toHaveText("Chart choice saved");
+});
+
+// ---- CR-018: TOTP helper (RFC 6238, SHA-1, 30 s) for the E2E tests
+function totp(secret: string, offsetSteps = 0): string {
+  const alpha = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  let bits = "";
+  for (const ch of secret.replace(/[\s=]/g, "").toUpperCase()) bits += alpha.indexOf(ch).toString(2).padStart(5, "0");
+  const key = Buffer.from(bits.match(/.{8}/g)!.map((b) => parseInt(b, 2)));
+  const step = Math.floor(Date.now() / 1000 / 30) + offsetSteps;
+  const msg = Buffer.alloc(8);
+  msg.writeBigUInt64BE(BigInt(step));
+  const h = createHmac("sha1", key).update(msg).digest();
+  const o = h[h.length - 1] & 0xf;
+  const n = ((h[o] & 0x7f) << 24) | (h[o + 1] << 16) | (h[o + 2] << 8) | h[o + 3];
+  return String(n % 1_000_000).padStart(6, "0");
+}
+
+test("CR-018: two-step verification — setup, recovery codes, sign-in, trusted browser, admin reset", async ({ page }) => {
+  await login(page, "bm1");
+  await page.getByRole("link", { name: "My account" }).click();
+  const sec = page.getByRole("region", { name: "Two-step verification" });
+  await expect(sec).toContainText("Off");
+  await sec.getByRole("button", { name: "Set up two-step verification" }).click();
+  await expect(sec.getByRole("img", { name: "QR code for your authenticator app" })).toBeVisible();
+  const secret = (await sec.getByTestId("mfa-secret").textContent())!.replace(/\s/g, "");
+  expect(secret).toMatch(/^[A-Z2-7]{32}$/);
+  await sec.getByLabel("Code from the app").fill("000000");
+  await sec.getByRole("button", { name: "Turn on two-step verification" }).click();
+  await expect(sec.getByRole("alert")).toContainText("does not match");
+  await sec.getByLabel("Code from the app").fill(totp(secret));
+  await sec.getByRole("button", { name: "Turn on two-step verification" }).click();
+  const codes = sec.getByRole("list", { name: "Recovery codes" }).locator("code");
+  await expect(codes).toHaveCount(10);
+  const recovery = (await codes.first().textContent())!;
+  await page.screenshot({ path: "e2e-screenshots/light-mfa-recovery-codes.png", fullPage: true });
+  await expect(sec.getByRole("button", { name: "Continue" })).toBeDisabled();
+  await sec.getByLabel("I have saved my recovery codes").check();
+  await sec.getByRole("button", { name: "Continue" }).click();
+  await expect(sec).toContainText("10 of 10 recovery codes unused");
+  await logout(page);
+
+  // sign in: password, then the code
+  await page.getByLabel("Username").fill("bm1");
+  await page.getByLabel("Password").fill(PW);
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page.getByRole("heading", { name: "Two-step verification" })).toBeVisible();
+  await page.screenshot({ path: "e2e-screenshots/light-mfa-verify.png", fullPage: true });
+  await page.getByLabel("Authentication code").fill("123456");
+  await page.getByRole("button", { name: "Verify" }).click();
+  await expect(page.getByRole("alert")).toContainText("not valid");
+  await page.getByLabel("Authentication code").fill(totp(secret, 1));
+  await page.getByLabel("Trust this browser for 30 days").check();
+  await page.getByRole("button", { name: "Verify" }).click();
+  await expect(page.getByRole("navigation", { name: "Main navigation" })).toBeVisible();
+  await logout(page);
+  await login(page, "bm1"); // trusted browser: no code asked
+  await logout(page);
+
+  // a recovery code works in another browser context
+  const ctx2 = await page.context().browser()!.newContext({ baseURL: page.url().split("/").slice(0, 3).join("/") });
+  const p2 = await ctx2.newPage();
+  await p2.goto("/");
+  await p2.getByLabel("Username").fill("bm1");
+  await p2.getByLabel("Password").fill(PW);
+  await p2.getByRole("button", { name: "Sign in" }).click();
+  await p2.getByRole("button", { name: /Use a recovery code/ }).click();
+  await p2.getByLabel("Recovery code").fill(recovery);
+  await p2.getByRole("button", { name: "Verify" }).click();
+  await expect(p2.getByRole("navigation", { name: "Main navigation" })).toBeVisible();
+  await ctx2.close();
+
+  // administrator resets bm1's two-step verification
+  await login(page, "admin");
+  await page.getByRole("link", { name: "Users", exact: true }).click();
+  const row = page.getByRole("row", { name: /bm1/ });
+  await expect(row).toContainText("On");
+  await row.getByRole("button", { name: "Reset two-step" }).click();
+  const dlg = page.getByRole("dialog");
+  await dlg.getByLabel("Reason (required)").fill("E2E test");
+  await dlg.getByRole("button", { name: "Reset two-step verification" }).click();
+  await expect(dlg.getByRole("status")).toContainText("was reset");
+  await dlg.getByRole("button", { name: "Done" }).click();
+  await expect(page.getByRole("row", { name: /bm1/ })).toContainText("Not set up");
+  await logout(page);
+  await login(page, "bm1"); // local mode: optional again, no code asked (trusted browser was removed too)
+});
+
+// ---------------------------------------------------------------- CR-023 / CR-024 / CR-025 backup and restore
+const BACKUP_PASS = "e2e backup passphrase 2026";
+let backupFile = "";
+
+test("CR-023 / CR-025: Administrator creates an encrypted backup and restores it", async ({ page }) => {
+  await login(page, "admin");
+  await page.getByRole("link", { name: "System/About" }).click();
+  await expect(page.getByRole("heading", { name: "Backup / Restore" })).toBeVisible();
+  await page.getByLabel("Backup passphrase").fill(BACKUP_PASS);
+  await page.getByLabel("Repeat the passphrase").fill(BACKUP_PASS);
+  await page.getByLabel("Your password").fill(PW);
+  const dl = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Create backup" }).click();
+  const download = await dl;
+  expect(download.suggestedFilename()).toMatch(/^freedger-backup-e2e-org-\d{8}-\d{6}\.fmbak$/);
+  backupFile = join(mkdtempSync(join(tmpdir(), "fm-bk-")), download.suggestedFilename());
+  await download.saveAs(backupFile);
+  await expect(page.getByRole("status")).toContainText("Backup ready");
+  await page.screenshot({ path: "e2e-screenshots/light-backup.png", fullPage: true });
+
+  // restore it (replaces the current data; everyone is signed out)
+  await page.getByRole("tab", { name: "Restore" }).click();
+  await page.getByLabel("Backup file (.fmbak)").setInputFiles(backupFile);
+  await page.getByLabel("Backup passphrase").fill(BACKUP_PASS);
+  await page.getByLabel("Your password").fill(PW);
+  await expect(page.getByRole("button", { name: "Restore" })).toBeDisabled();
+  await page.getByLabel("Type RESTORE to confirm").fill("RESTORE");
+  await page.getByRole("button", { name: "Restore" }).click();
+  await expect(page.getByRole("status")).toContainText("Restore complete", { timeout: 30_000 });
+  await page.screenshot({ path: "e2e-screenshots/light-restore-done.png", fullPage: true });
+  await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible({ timeout: 15_000 });
+  await login(page, "admin");
+  await page.getByRole("link", { name: "Audit Log", exact: true }).click();
+  await expect(page.getByText("SYSTEM_RESTORED").first()).toBeVisible();
+});
+
+test("CR-024: a new installation is set up from the backup in the initialization wizard", async ({ page }) => {
+  expect(backupFile).not.toBe("");
+  const port = 8799;
+  const bundle = process.env.FM_BUNDLE;
+  const dataDir = mkdtempSync(join(tmpdir(), "fm-wiz-"));
+  const args = bundle ? ["--no-browser", "--port", String(port), "--data-dir", dataDir]
+    : ["-m", "fmpoc", "--no-browser", "--port", String(port), "--data-dir", dataDir];
+  const child = spawn(bundle || process.env.FM_PYTHON || "python", args, { cwd: existsSync(join(process.cwd(), "..", "backend")) ? join(process.cwd(), "..", "backend") : join(process.cwd(), "backend"), stdio: "ignore" });
+  try {
+    const base = `http://127.0.0.1:${port}`;
+    for (let i = 0; i < 120; i++) {
+      try { if ((await fetch(`${base}/api/health`)).ok) break; } catch { /* starting */ }
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    await page.goto(base + "/");
+    await expect(page.getByRole("heading", { name: "Initialization Wizard" })).toBeVisible();
+    await page.getByRole("button", { name: "Restore from a backup instead" }).click();
+    await page.getByLabel("Backup file (.fmbak)").setInputFiles(backupFile);
+    await page.getByLabel("Backup passphrase").fill("not the passphrase");
+    await page.getByRole("button", { name: "Restore" }).click();
+    await expect(page.getByRole("alert").last()).toContainText("Wrong passphrase", { timeout: 30_000 });
+    await page.getByLabel("Backup file (.fmbak)").setInputFiles(backupFile);
+    await page.getByLabel("Backup passphrase").fill(BACKUP_PASS);
+    await page.getByRole("button", { name: "Restore" }).click();
+    await expect(page.getByRole("status")).toContainText("Restore complete", { timeout: 30_000 });
+    await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("E2E Org")).toBeVisible();
+    await page.getByLabel("Username").fill("admin");
+    await page.getByLabel("Password").fill(PW);
+    await page.getByRole("button", { name: "Sign in" }).click();
+    await expect(page.getByRole("navigation", { name: "Main navigation" })).toBeVisible();
+  } finally {
+    child.kill();
+  }
 });

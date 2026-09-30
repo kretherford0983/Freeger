@@ -108,6 +108,8 @@ def reset_password(db: Session, ctx, u: User, new_password: str) -> None:
     u.password_changed_at = utcnow()
     u.updated_by_user_id = ctx.user.id
     n = revoke_user_sessions(db, u.id)
+    from .mfa import revoke_trusted
+    revoke_trusted(db, u.id)  # v1.4.1 CR-018: a password reset also ends "trusted browser" sign-ins
     audit.record(db, ctx, "USER_PASSWORD_RESET", "user", u.id, None, {"reset_by_administrator": True,
                                                                      "sessions_revoked": n}, category="SECURITY")
 

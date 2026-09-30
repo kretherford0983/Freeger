@@ -86,7 +86,7 @@ def administrator(db: Session, ctx) -> dict:
     users = list(db.scalars(select(User).where(User.workspace_id == ws)))
     since = dt.datetime.utcnow() - dt.timedelta(hours=24)
     failed = db.scalar(select(func.count(AuditEvent.id)).where(
-        AuditEvent.action.in_(["LOGIN_FAILED", "LOGIN_RATE_LIMITED"]), AuditEvent.timestamp >= since)) or 0
+        AuditEvent.action.in_(["LOGIN_FAILED", "LOGIN_RATE_LIMITED", "MFA_FAILED"]), AuditEvent.timestamp >= since)) or 0
     by_domain: dict[str, int] = {}
     for u in users:
         if u.active:

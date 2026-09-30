@@ -2,6 +2,7 @@
 import { Fragment, useEffect, useState } from "react";
 import { api, money, qs } from "../api";
 import { EntityPicker, ErrorBox, Field, Loading } from "../components";
+import { SIG_EMPTY, SignatureOptions, signatureProblem, type SigState } from "./SignatureOptions";
 
 export default function Reports() {
   const [tab, setTab] = useState<"audit" | "close" | "entity">("audit");
@@ -61,7 +62,18 @@ function AuditReport({ fys, accounts }: { fys: any[]; accounts: any[] }) {
   const today = new Date().toISOString().slice(0, 10);
   const cur = fys.find((f) => f.start_date <= today && f.end_date >= today) || fys[fys.length - 1];
   const [f, setF] = useState({ fiscal_year_id: cur ? String(cur.id) : "", bank_account_id: "", include_void: true });
-  const url = (download: boolean) => `/api/reports/audit${qs({ fiscal_year_id: f.fiscal_year_id, bank_account_id: f.bank_account_id, include_void: f.include_void, download: download || null })}`;
+  const [sig, setSig] = useState<SigState>(SIG_EMPTY);
+  const sigErr = sig.on ? signatureProblem(sig) : null;
+  const url = (download: boolean) => {
+    const p = new URLSearchParams(qs({ fiscal_year_id: f.fiscal_year_id, bank_account_id: f.bank_account_id, include_void: f.include_void, download: download || null }).slice(1));
+    if (sig.on) {
+      p.set("signature_page", "true");
+      if (sig.choice === "custom") p.set("signature_text", sig.custom);
+      else p.set("signature_template_id", sig.choice);
+      sig.signers.filter((x) => x.entity_id).forEach((x) => { p.append("signer_id", x.entity_id); p.append("signer_title", x.title.trim()); });
+    }
+    return `/api/reports/audit?${p.toString()}`;
+  };
   return (
     <section className="card">
       <h2>End of Year Audit report</h2>
@@ -80,9 +92,15 @@ function AuditReport({ fys, accounts }: { fys: any[]; accounts: any[] }) {
         </Field>
         <label className="check"><input type="checkbox" checked={f.include_void} onChange={(e) => setF({ ...f, include_void: e.target.checked })} /> Include VOID transactions</label>
       </div>
+      <SignatureOptions sig={sig} setSig={setSig} />
+      {sigErr ? <div className="alert warn" role="alert">{sigErr}</div> : null}
       <div className="actions left">
-        <a className="button primary" href={url(false)} target="_blank" rel="noopener">Open printable PDF</a>
-        <a className="button" href={url(true)}>Download PDF</a>
+        {sigErr ? (
+          <><button className="primary" disabled>Open printable PDF</button><button disabled>Download PDF</button></>
+        ) : (
+          <><a className="button primary" href={url(false)} target="_blank" rel="noopener">Open printable PDF</a>
+          <a className="button" href={url(true)}>Download PDF</a></>
+        )}
       </div>
       <p className="hint">Large years with many attachments can take a little while to generate. Generating a report is recorded in the audit log.</p>
     </section>

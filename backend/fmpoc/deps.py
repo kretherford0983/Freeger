@@ -19,6 +19,11 @@ PRE_CSRF_COOKIE = "fm_precsrf"
 CSRF_HEADER = "x-csrf-token"
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 ANON_MUTATING_PATHS = {"/api/auth/login", "/api/system/initialize"}
+ANON_MUTATING_PREFIXES = ("/api/system/restore/",)  # v1.4.1 CR-024: restore from the initialization wizard
+
+
+def _anon_path(path: str) -> bool:
+    return path in ANON_MUTATING_PATHS or path.startswith(ANON_MUTATING_PREFIXES)
 
 
 def get_db(request: Request):
@@ -42,6 +47,7 @@ class Ctx:
     perms: set[str] = field(default_factory=set)
     correlation_id: str | None = None
     ip: str | None = None
+    mfa_pending: str | None = None  # v1.4.1 CR-018: VERIFY / ENROLL while the MFA step is outstanding
 
     def has(self, perm: str) -> bool:
         return perm in self.perms
@@ -77,8 +83,10 @@ def _load(request: Request, db: Session) -> Ctx:
                         sess.last_seen_at = now
                         db.commit()
                     ctx.user, ctx.session, ctx.workspace_id = user, sess, user.workspace_id
-                    ctx.roles = user.role_codes  # revalidated from the DB on every request (BR-087)
-                    ctx.perms = permissions_for(ctx.roles)
+                    ctx.mfa_pending = sess.mfa_pending
+                    if not sess.mfa_pending:  # an MFA-pending session carries no roles or permissions
+                        ctx.roles = user.role_codes  # revalidated from the DB on every request (BR-087)
+                        ctx.perms = permissions_for(ctx.roles)
     request.state.ctx = ctx
     return ctx
 
@@ -94,7 +102,7 @@ def enforce_csrf(request: Request, db: Session = Depends(get_db)) -> None:
         if origin.split("://", 1)[-1] != host:
             raise AppError(403, "CSRF_FAILED", "Cross-origin request rejected.")
     ctx = _load(request, db)
-    if request.url.path in ANON_MUTATING_PATHS:
+    if _anon_path(request.url.path):
         cookie = request.cookies.get(PRE_CSRF_COOKIE, "")
         if header and cookie and secrets.compare_digest(header, cookie):
             return
@@ -102,7 +110,7 @@ def enforce_csrf(request: Request, db: Session = Depends(get_db)) -> None:
         if header and secrets.compare_digest(header, ctx.session.csrf_token):
             return
         raise AppError(403, "CSRF_FAILED", "Missing or invalid CSRF token.")
-    if request.url.path in ANON_MUTATING_PATHS:
+    if _anon_path(request.url.path):
         cookie = request.cookies.get(PRE_CSRF_COOKIE, "")
         if header and cookie and secrets.compare_digest(header, cookie):
             return
@@ -116,6 +124,16 @@ def get_ctx(request: Request, db: Session = Depends(get_db)) -> Ctx:
 
 
 def auth_ctx(request: Request, db: Session = Depends(get_db)) -> Ctx:
+    ctx = _load(request, db)
+    if ctx.user is None:
+        raise AppError(401, "UNAUTHENTICATED", "Authentication required.")
+    if ctx.mfa_pending:  # v1.4.1 CR-018: password accepted, second step outstanding
+        raise AppError(401, "MFA_REQUIRED", "Complete two-step verification to continue.")
+    return ctx
+
+
+def pre_mfa_ctx(request: Request, db: Session = Depends(get_db)) -> Ctx:
+    """Signed-in user whose MFA step may still be outstanding (MFA verify/enroll, /auth/me, logout)."""
     ctx = _load(request, db)
     if ctx.user is None:
         raise AppError(401, "UNAUTHENTICATED", "Authentication required.")
