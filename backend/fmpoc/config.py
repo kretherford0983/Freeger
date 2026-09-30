@@ -59,6 +59,7 @@ class Settings:
     session_absolute_hours: int = 12
     login_max_failures: int = 5
     login_lockout_seconds: int = 900
+    restore_max_mb: int = 20480  # v1.4.1 CR-024/025: largest backup file accepted for a restore
     log_level: str = "INFO"
     debug: bool = False  # never enabled in packaged builds
     frontend_dir: Path | None = None

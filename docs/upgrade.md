@@ -1,4 +1,4 @@
-# Upgrading a Linux server install (current release: 1.4.0; 1.4.1 in development)
+# Upgrading a Linux server install (current release: 1.4.1)
 
 The upgrade replaces only the application binaries. It does **not** modify:
 
@@ -10,7 +10,8 @@ Before switching versions the installer stops the service and copies the whole d
 
 | Upgrade | Database change | Rollback |
 |---|---|---|
-| 1.4.0 → 1.4.1 | migrations `0006` — **adds** table `signature_template`; `0007` — **adds** column `app_user.dashboard_charts`; `0008` — **adds** tables `user_mfa`, `mfa_recovery_code`, `trusted_device` and column `auth_session.mfa_pending` (further 1.4.1 migrations are listed here as they are added). **After the upgrade every user of a server install sets up two-step verification at the next sign-in** — see below | switch binaries **and** restore the pre-upgrade data backup |
+| 1.3.0 → 1.4.1 | migrations `0006`–`0008` (as below) | switch binaries **and** restore the pre-upgrade data backup |
+| 1.4.0 → 1.4.1 | migrations `0006` — **adds** table `signature_template`; `0007` — **adds** column `app_user.dashboard_charts`; `0008` — **adds** tables `user_mfa`, `mfa_recovery_code`, `trusted_device` and column `auth_session.mfa_pending`. **After the upgrade every user of a server install sets up two-step verification at the next sign-in** — see below | switch binaries **and** restore the pre-upgrade data backup |
 | 1.3.0 → 1.4.0 | none | switch binaries only |
 | 1.2.x → 1.4.0 | migration `0005` (see 1.2.x → 1.3.0) | switch binaries **and** restore the pre-upgrade data backup |
 | 1.2.x → 1.3.0 | migration `0005` — **adds** tables `request_key`, `check_number_acknowledgement` and columns on `attachment` (document type, system-generated), `fiscal_year` (approval "no document" mark) and `app_user` (collapsed menu); existing Fiscal Year documents are labelled "Other" | switch binaries **and** restore the pre-upgrade data backup |
@@ -20,7 +21,13 @@ Before switching versions the installer stops the service and copies the whole d
 | 1.1.x → 1.2.0 | migration `0003` — **adds** columns to `register_transaction` (transfer link, no-attachment flag); no existing value is changed or removed | switch binaries **and** restore the pre-upgrade data backup (1.1.x cannot open a 0003 database) |
 | 1.1.0 → 1.1.1 | none | switch binaries only |
 
-Verified during release testing: upgrading a 1.2.1 server with data to 1.3.0 left `config.toml`, the key and all
+Verified during release testing: upgrading a 1.4.0 server with data to 1.4.1 (installer, simulated systemd) left
+`config.toml`, the key and all attachments byte-for-byte identical, kept every row and applied `0006`–`0008`; users
+were then asked to set up two-step verification; a backup → restore round trip on the upgraded server worked
+(including two-step verification from the backup). Rollback: the 1.4.0 binaries alone refuse the 1.4.1 database
+("Can't locate revision"); restoring the installer's data snapshot with the 1.4.0 binaries returned exactly the
+pre-upgrade data.
+Earlier: upgrading a 1.2.1 server with data to 1.3.0 left `config.toml`, the key and all
 attachments byte-for-byte identical, kept every row, applied `0005`, labelled the existing Fiscal Year document "Other"
 and reported the Audit Signoff as the only new closing requirement.
 Earlier: upgrading a 1.2.0 server with data to 1.2.1 left `config.toml`, the key and all

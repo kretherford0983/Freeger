@@ -1,7 +1,6 @@
 # What's new in 1.4 — quick guide
 
-*1.4.0: documentation review, income above budget, bank total, version information. 1.4.1: audit signature page, dashboard charts, two-step verification
-(more 1.4.1 features are added below as they are delivered).*
+*1.4.0: documentation review, income above budget, bank total, version information. 1.4.1: audit signature page, dashboard charts, two-step verification, backup and restore.*
 
 ## Documentation review (Fiscal Year page)
 When you tick **No attachment will be provided** on a transaction or a split allocation, fill in the **reason**
@@ -56,3 +55,14 @@ Authenticator, Google Authenticator, 1Password, Authy, …).
 - **No phone and no recovery codes?** Ask an Administrator: Users → **Reset two-step**. You will set it up again at
   the next sign-in.
 - My account also lists your **trusted browsers**; remove any you no longer use.
+
+## Backup and restore (1.4.1, Administrators)
+**System/About → Backup / Restore.**
+- **Backup:** choose a passphrase (at least 12 characters, entered twice), enter your password, **Create backup**.
+  The file downloads automatically. Keep it away from the server and keep the passphrase safe — without it the backup
+  cannot be restored.
+- **Restore:** choose the backup file, enter its passphrase and your password, type `RESTORE`. All current data is
+  replaced (a safety copy is kept on the server), everyone is signed out, and you sign in again with an account from
+  the backup.
+- **New server:** in the initialization wizard choose *Restore from a backup instead*.
+Details: docs/backup-restore.md.

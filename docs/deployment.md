@@ -12,8 +12,8 @@ Native packages need no separately installed Python, Node.js, SQLite, Docker or 
 Startup applies pending Alembic migrations, binds to `127.0.0.1:8765`, waits for `/api/health`, and opens the
 default browser when a desktop session is available. Plain HTTP is acceptable because traffic stays on loopback.
 
-> **Data protection:** the POC has no backup/restore. You are responsible for protecting the application data
-> directory (database, attachments **and** `secrets/`) against machine or disk loss (BR-092).
+> **Data protection:** create encrypted backups regularly (System/About → Backup / Restore, since 1.4.1 — see
+> docs/backup-restore.md) and keep them off this machine together with their passphrase.
 
 ## Server installation (multiple users)
 

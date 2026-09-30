@@ -19,6 +19,11 @@ PRE_CSRF_COOKIE = "fm_precsrf"
 CSRF_HEADER = "x-csrf-token"
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 ANON_MUTATING_PATHS = {"/api/auth/login", "/api/system/initialize"}
+ANON_MUTATING_PREFIXES = ("/api/system/restore/",)  # v1.4.1 CR-024: restore from the initialization wizard
+
+
+def _anon_path(path: str) -> bool:
+    return path in ANON_MUTATING_PATHS or path.startswith(ANON_MUTATING_PREFIXES)
 
 
 def get_db(request: Request):
@@ -97,7 +102,7 @@ def enforce_csrf(request: Request, db: Session = Depends(get_db)) -> None:
         if origin.split("://", 1)[-1] != host:
             raise AppError(403, "CSRF_FAILED", "Cross-origin request rejected.")
     ctx = _load(request, db)
-    if request.url.path in ANON_MUTATING_PATHS:
+    if _anon_path(request.url.path):
         cookie = request.cookies.get(PRE_CSRF_COOKIE, "")
         if header and cookie and secrets.compare_digest(header, cookie):
             return
@@ -105,7 +110,7 @@ def enforce_csrf(request: Request, db: Session = Depends(get_db)) -> None:
         if header and secrets.compare_digest(header, ctx.session.csrf_token):
             return
         raise AppError(403, "CSRF_FAILED", "Missing or invalid CSRF token.")
-    if request.url.path in ANON_MUTATING_PATHS:
+    if _anon_path(request.url.path):
         cookie = request.cookies.get(PRE_CSRF_COOKIE, "")
         if header and cookie and secrets.compare_digest(header, cookie):
             return

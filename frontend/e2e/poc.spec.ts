@@ -1,5 +1,9 @@
 // E2E UI verification (AC-INIT-*, AC-UI-THEME-*, AC-FY-VIS-*, AC-SEC-005/011, AC-AUTH-SELF-001, AC-REG-001).
+import { spawn } from "node:child_process";
 import { createHmac } from "node:crypto";
+import { existsSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 
 const PW = "Correct-Horse-9-Battery";
@@ -696,4 +700,76 @@ test("CR-018: two-step verification — setup, recovery codes, sign-in, trusted 
   await expect(page.getByRole("row", { name: /bm1/ })).toContainText("Not set up");
   await logout(page);
   await login(page, "bm1"); // local mode: optional again, no code asked (trusted browser was removed too)
+});
+
+// ---------------------------------------------------------------- CR-023 / CR-024 / CR-025 backup and restore
+const BACKUP_PASS = "e2e backup passphrase 2026";
+let backupFile = "";
+
+test("CR-023 / CR-025: Administrator creates an encrypted backup and restores it", async ({ page }) => {
+  await login(page, "admin");
+  await page.getByRole("link", { name: "System/About" }).click();
+  await expect(page.getByRole("heading", { name: "Backup / Restore" })).toBeVisible();
+  await page.getByLabel("Backup passphrase").fill(BACKUP_PASS);
+  await page.getByLabel("Repeat the passphrase").fill(BACKUP_PASS);
+  await page.getByLabel("Your password").fill(PW);
+  const dl = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Create backup" }).click();
+  const download = await dl;
+  expect(download.suggestedFilename()).toMatch(/^freedger-backup-e2e-org-\d{8}-\d{6}\.fmbak$/);
+  backupFile = join(mkdtempSync(join(tmpdir(), "fm-bk-")), download.suggestedFilename());
+  await download.saveAs(backupFile);
+  await expect(page.getByRole("status")).toContainText("Backup ready");
+  await page.screenshot({ path: "e2e-screenshots/light-backup.png", fullPage: true });
+
+  // restore it (replaces the current data; everyone is signed out)
+  await page.getByRole("tab", { name: "Restore" }).click();
+  await page.getByLabel("Backup file (.fmbak)").setInputFiles(backupFile);
+  await page.getByLabel("Backup passphrase").fill(BACKUP_PASS);
+  await page.getByLabel("Your password").fill(PW);
+  await expect(page.getByRole("button", { name: "Restore" })).toBeDisabled();
+  await page.getByLabel("Type RESTORE to confirm").fill("RESTORE");
+  await page.getByRole("button", { name: "Restore" }).click();
+  await expect(page.getByRole("status")).toContainText("Restore complete", { timeout: 30_000 });
+  await page.screenshot({ path: "e2e-screenshots/light-restore-done.png", fullPage: true });
+  await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible({ timeout: 15_000 });
+  await login(page, "admin");
+  await page.getByRole("link", { name: "Audit Log", exact: true }).click();
+  await expect(page.getByText("SYSTEM_RESTORED").first()).toBeVisible();
+});
+
+test("CR-024: a new installation is set up from the backup in the initialization wizard", async ({ page }) => {
+  expect(backupFile).not.toBe("");
+  const port = 8799;
+  const bundle = process.env.FM_BUNDLE;
+  const dataDir = mkdtempSync(join(tmpdir(), "fm-wiz-"));
+  const args = bundle ? ["--no-browser", "--port", String(port), "--data-dir", dataDir]
+    : ["-m", "fmpoc", "--no-browser", "--port", String(port), "--data-dir", dataDir];
+  const child = spawn(bundle || process.env.FM_PYTHON || "python", args, { cwd: existsSync(join(process.cwd(), "..", "backend")) ? join(process.cwd(), "..", "backend") : join(process.cwd(), "backend"), stdio: "ignore" });
+  try {
+    const base = `http://127.0.0.1:${port}`;
+    for (let i = 0; i < 120; i++) {
+      try { if ((await fetch(`${base}/api/health`)).ok) break; } catch { /* starting */ }
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    await page.goto(base + "/");
+    await expect(page.getByRole("heading", { name: "Initialization Wizard" })).toBeVisible();
+    await page.getByRole("button", { name: "Restore from a backup instead" }).click();
+    await page.getByLabel("Backup file (.fmbak)").setInputFiles(backupFile);
+    await page.getByLabel("Backup passphrase").fill("not the passphrase");
+    await page.getByRole("button", { name: "Restore" }).click();
+    await expect(page.getByRole("alert").last()).toContainText("Wrong passphrase", { timeout: 30_000 });
+    await page.getByLabel("Backup file (.fmbak)").setInputFiles(backupFile);
+    await page.getByLabel("Backup passphrase").fill(BACKUP_PASS);
+    await page.getByRole("button", { name: "Restore" }).click();
+    await expect(page.getByRole("status")).toContainText("Restore complete", { timeout: 30_000 });
+    await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("E2E Org")).toBeVisible();
+    await page.getByLabel("Username").fill("admin");
+    await page.getByLabel("Password").fill(PW);
+    await page.getByRole("button", { name: "Sign in" }).click();
+    await expect(page.getByRole("navigation", { name: "Main navigation" })).toBeVisible();
+  } finally {
+    child.kill();
+  }
 });

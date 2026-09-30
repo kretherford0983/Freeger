@@ -3,6 +3,10 @@
 
 let csrfToken: string | null = null;
 
+export function getCsrf(): string | null {
+  return csrfToken;
+}
+
 export function setCsrf(token: string | null) {
   csrfToken = token;
 }
