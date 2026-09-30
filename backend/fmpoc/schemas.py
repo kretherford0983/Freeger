@@ -354,3 +354,8 @@ class NoteIn(In):
 
 class ReviewResolveIn(In):
     note: OptStr(1000) = None
+
+
+class SignatureTemplateIn(In):
+    """v1.4.1 CR-016: wording saved for the audit review signature page."""
+    text: str = Field(min_length=1, max_length=4000)

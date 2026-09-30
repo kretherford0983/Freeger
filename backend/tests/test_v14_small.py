@@ -14,7 +14,7 @@ def test_cr022_version_for_every_user_without_network_details(env, base, monkeyp
         r = c.get("/api/system/version")
         assert r.status_code == 200
         v = r.json()
-        assert v["version"] == config.VERSION == "1.4.0"
+        assert v["version"] == config.VERSION
         assert "bind_host" not in v and "port" not in v
     # About: network details only for Administrators
     assert env.admin.get("/api/system/about").json()["bind_host"] is not None

@@ -386,3 +386,13 @@ class AuditEvent(Base):
     source_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     __table_args__ = (Index("ix_audit_object", "object_type", "object_id"),)
+
+
+class SignatureTemplate(Base):
+    """v1.4.1 CR-016: organization-wide saved wording for the audit review signature page (max 4)."""
+    __tablename__ = "signature_template"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspace.id"), index=True)
+    text: Mapped[str] = mapped_column(Text)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"), nullable=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow)

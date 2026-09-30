@@ -1,5 +1,8 @@
 # What's new in 1.4 — quick guide
 
+*1.4.0: documentation review, income above budget, bank total, version information. 1.4.1: audit signature page
+(more 1.4.1 features are added below as they are delivered).*
+
 ## Documentation review (Fiscal Year page)
 When you tick **No attachment will be provided** on a transaction or a split allocation, fill in the **reason**
 (for example *Bank interest - direct deposit*). A mark **with a reason** counts as documented: the transaction no
@@ -19,3 +22,15 @@ The *Bank account balances* table ends with a **Total (all accounts)** row.
 ## Version information
 **My account → About** shows the application version and build (for example *test build #12 (a1b2c3d)*).
 Administrators see the same on **System/About**, together with the bind address.
+
+## Audit review signature page (1.4.1)
+Reports → **End of Year Audit** → tick **Include audit review signature page**. The PDF then ends with a page that
+has a blank line for the date, the wording, and a signature line for each signer.
+- **Wording:** *Default wording*, one of the **saved wordings**, or **New wording…**. New wording can be kept with
+  **Save for future use** (up to four saved wordings, shared by everyone; **Delete** removes one).
+- **Variables** are filled in for the selected Fiscal Year: `{FY}` → *July 1, 2025 – June 30, 2026*,
+  `{ORG}` → your organization's name, `{FYE}` → *June 30, 2026*. Any other `{…}` is refused.
+- **Signers:** up to five people (individual Entities — add them on the Entities page first), each with an optional
+  title such as *Trustee*; printed as "Jane Doe, Trustee". With no signer chosen, three blank lines are printed.
+- After the audit, scan the signed page and add it to the Fiscal Year as its **Audit Signoff** document; it then
+  appears in the Fiscal Year Close report.

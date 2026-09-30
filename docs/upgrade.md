@@ -1,4 +1,4 @@
-# Upgrading a Linux server install (current release: 1.4.0)
+# Upgrading a Linux server install (current release: 1.4.0; 1.4.1 in development)
 
 The upgrade replaces only the application binaries. It does **not** modify:
 
@@ -10,6 +10,7 @@ Before switching versions the installer stops the service and copies the whole d
 
 | Upgrade | Database change | Rollback |
 |---|---|---|
+| 1.4.0 → 1.4.1 | migration `0006` — **adds** table `signature_template` (further 1.4.1 migrations are listed here as they are added) | switch binaries **and** restore the pre-upgrade data backup |
 | 1.3.0 → 1.4.0 | none | switch binaries only |
 | 1.2.x → 1.4.0 | migration `0005` (see 1.2.x → 1.3.0) | switch binaries **and** restore the pre-upgrade data backup |
 | 1.2.x → 1.3.0 | migration `0005` — **adds** tables `request_key`, `check_number_acknowledgement` and columns on `attachment` (document type, system-generated), `fiscal_year` (approval "no document" mark) and `app_user` (collapsed menu); existing Fiscal Year documents are labelled "Other" | switch binaries **and** restore the pre-upgrade data backup |

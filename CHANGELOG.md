@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.4.1 — unreleased (in development)
+The rest of the 1.4 plan (decisions in docs/implementation-notes.md §1a). Delivered so far:
+- **CR-016 Audit review signature page.** Reports → End of Year Audit → *Include audit review signature page* adds a
+  last page with a blank date line, the wording and a signature line for up to five signers (individual Entities,
+  each with an optional title, printed as "Jane Doe, Trustee"). Choose the built-in default wording, one of up to four
+  saved wordings (shared by the organization, each with a Delete button) or new wording, which can be saved for future
+  use. The variables {FY} (Fiscal Year dates), {ORG} (organization) and {FYE} (Fiscal Year end date) are filled in;
+  unknown variables are refused. Saving and deleting wordings is recorded in the audit log.
+
+Upgrade notes: database migration `0006` adds the table `signature_template` (additive).
+
 ## 1.4.0 — 2026-09-30
 Change requests CR-017, CR-019, CR-021 and CR-022 (decisions recorded in docs/implementation-notes.md §1a). The rest of
 the 1.4 plan — audit signature page (CR-016), MFA (CR-018), dashboard charts (CR-020) and backup/restore
