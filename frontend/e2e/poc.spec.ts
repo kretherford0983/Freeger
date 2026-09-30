@@ -774,6 +774,39 @@ test("CR-024: a new installation is set up from the backup in the initialization
   }
 });
 
+// ---------------------------------------------------------------- v1.5.0 UI polish
+test("CR-028 / CR-030 / CR-029 / CR-032: account groups, chart columns, signature preview, aligned passphrase fields", async ({ page }) => {
+  await login(page, "bm1");
+  // CR-030: charts in two independent columns
+  const charts = page.getByRole("region", { name: "Charts" });
+  await expect(charts.locator(".chart-cols > .chart-col")).toHaveCount(2);
+  // CR-028: dashboard groups with subtotals
+  await expect(page.getByTestId("bank-group-CHECKING_SAVINGS")).toContainText("Subtotal Checking & Savings");
+  await expect(page.getByTestId("bank-total")).toContainText("Total (all accounts)");
+  await page.getByRole("link", { name: "Bank Accounts" }).click();
+  await expect(page.getByRole("heading", { name: "Checking & Savings" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Investments and Other" })).toBeVisible();
+  await expect(page.getByTestId("accounts-CHECKING_SAVINGS")).toContainText("Total Checking & Savings");
+  await page.screenshot({ path: "e2e-screenshots/light-bank-accounts-groups.png", fullPage: true });
+  // CR-029: preview only the signature page
+  await page.getByRole("link", { name: "Reports" }).click();
+  await page.getByLabel("Include audit review signature page").check();
+  const preview = page.getByRole("link", { name: "Preview signature page" });
+  const href = await preview.getAttribute("href");
+  expect(href).toContain("/api/reports/audit/signature-page?");
+  const pdf = await page.request.get(href!);
+  expect(pdf.status()).toBe(200);
+  expect(pdf.headers()["content-type"]).toBe("application/pdf");
+  await logout(page);
+  // CR-032: passphrase fields line up
+  await login(page, "admin");
+  await page.getByRole("link", { name: "System/About" }).click();
+  const a = await page.getByLabel("Backup passphrase").boundingBox();
+  const b = await page.getByLabel("Repeat the passphrase").boundingBox();
+  expect(Math.abs(a!.y - b!.y)).toBeLessThan(2);
+  expect(Math.abs(a!.height - b!.height)).toBeLessThan(2);
+});
+
 // ---------------------------------------------------------------- v1.5.0: sign-in from a bookmarked page (server mode)
 test("v1.5.0: a bookmarked page leads to the dashboard address, two-step setup/verify, then the dashboard", async ({ page }) => {
   const port = 8800;

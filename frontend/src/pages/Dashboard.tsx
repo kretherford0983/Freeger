@@ -70,11 +70,16 @@ export default function Dashboard() {
         <h2>Bank account balances</h2>
         <table className="table">
           <thead><tr><th>Account</th><th className="num">Current balance</th></tr></thead>
-          <tbody>
-            {d.bank_accounts.map((a: any) => (
-              <tr key={a.id}><td>{a.label} {a.is_primary ? <span className="pill">Primary</span> : null}</td><td className="num">{money(a.current_balance)}</td></tr>
-            ))}
-          </tbody>
+          {/* v1.5.0 CR-028: same two groups as the Bank Accounts page, each with a subtotal */}
+          {(d.bank_account_groups || []).filter((g: any) => g.account_ids.length).map((g: any) => (
+            <tbody key={g.key} data-testid={`bank-group-${g.key}`}>
+              <tr className="group-head"><th colSpan={2} scope="rowgroup">{g.label}</th></tr>
+              {d.bank_accounts.filter((a: any) => g.account_ids.includes(a.id)).map((a: any) => (
+                <tr key={a.id}><td>{a.label} {a.is_primary ? <span className="pill">Primary</span> : null}</td><td className="num">{money(a.current_balance)}</td></tr>
+              ))}
+              <tr className="subtotal-row"><td>Subtotal {g.label}</td><td className={`num ${Number(g.total) < 0 ? "neg" : ""}`}>{money(g.total)}</td></tr>
+            </tbody>
+          ))}
           {d.bank_accounts.length ? (
             <tfoot><tr className="total-row" data-testid="bank-total"><th scope="row">Total (all accounts)</th><th className={`num ${Number(d.bank_accounts_total) < 0 ? "neg" : ""}`}>{money(d.bank_accounts_total)}</th></tr></tfoot>
           ) : null}

@@ -58,7 +58,7 @@ export function BackupPanel() {
       <ErrorBox error={err} />
       {!running ? (
         <GuardedForm onSubmit={submit}>
-          <div className="row">
+          <div className="row fields">
             <Field label="Backup passphrase" hint="At least 12 characters. A long sentence works well."><input type="password" required minLength={12} autoComplete="new-password" value={f.passphrase} onChange={(e) => setF({ ...f, passphrase: e.target.value })} /></Field>
             <Field label="Repeat the passphrase"><input type="password" required minLength={12} autoComplete="new-password" value={f.passphrase_confirmation} onChange={(e) => setF({ ...f, passphrase_confirmation: e.target.value })} /></Field>
           </div>
