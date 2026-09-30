@@ -46,6 +46,7 @@ function applyTheme(t: string) {
 }
 
 export default function App() {
+  const { path, navigate } = useRouter();
   const [status, setStatus] = useState<any>(null);
   const [me, setMe] = useState<Me | null | undefined>(undefined);
 
@@ -71,13 +72,24 @@ export default function App() {
 
   useEffect(() => {
     boot();
-    const on = () => {
+    const on = (e: Event) => {
+      if ((e as CustomEvent).detail?.code === "MFA_REQUIRED") {
+        loadMe(); // still signed in: show the two-step verification screen
+        return;
+      }
       setCsrf(null);
       setMe(null);
     };
     window.addEventListener("fm:unauthenticated", on);
     return () => window.removeEventListener("fm:unauthenticated", on);
   }, []);
+
+  // v1.5.0: while signing in (login / two-step screens) the address is the dashboard, so a bookmarked page such as
+  // /about never survives into the sign-in flow; after signing in the user starts on the dashboard.
+  const signingIn = !!status && me !== undefined && (!me || !!me.mfa_pending) && status.initialized;
+  useEffect(() => {
+    if (signingIn && path !== "/") navigate("/", { replace: true });
+  }, [signingIn, path]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!status || me === undefined) return <div className="center"><Loading /></div>;
   if (!status.initialized) return <InitWizard onDone={boot} />;

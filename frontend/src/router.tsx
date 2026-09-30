@@ -1,7 +1,7 @@
 // Minimal History-API router (avoids a third-party routing dependency).
 import { createContext, useContext, useEffect, useState, type ReactNode, type MouseEvent } from "react";
 
-const RouterCtx = createContext<{ path: string; search: string; navigate: (to: string) => void }>({
+const RouterCtx = createContext<{ path: string; search: string; navigate: (to: string, opts?: { replace?: boolean }) => void }>({
   path: "/",
   search: "",
   navigate: () => {},
@@ -14,10 +14,11 @@ export function Router({ children }: { children: ReactNode }) {
     window.addEventListener("popstate", on);
     return () => window.removeEventListener("popstate", on);
   }, []);
-  const navigate = (to: string) => {
+  const navigate = (to: string, opts?: { replace?: boolean }) => {
     // only same-origin relative paths are navigable
     if (!to.startsWith("/") || to.startsWith("//") || to.includes("\\")) return;
-    window.history.pushState({}, "", to);
+    if (opts?.replace) window.history.replaceState({}, "", to);
+    else window.history.pushState({}, "", to);
     const u = new URL(to, window.location.origin);
     setLoc({ path: u.pathname, search: u.search });
     window.scrollTo(0, 0);

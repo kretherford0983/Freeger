@@ -110,6 +110,15 @@ class _TooLarge(Exception):
     pass
 
 
+def _frontend_build(static_dir: Path) -> str | None:
+    """Name of the hashed entry script referenced by index.html (changes with every frontend build)."""
+    try:
+        m = re.search(r'src="/assets/(index-[A-Za-z0-9_-]+\.js)"', (static_dir / "index.html").read_text("utf-8"))
+    except OSError:
+        return None
+    return m.group(1) if m else None
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or load_settings()
     settings.ensure_dirs()
@@ -147,6 +156,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     cleanup_work(settings)
 
     install_handlers(app)
+    frontend_build = _frontend_build(settings.frontend_dir or STATIC_DIR)
 
     @app.middleware("http")
     async def security_and_logging(request, call_next):
@@ -171,6 +181,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         h["X-Correlation-Id"] = cid
         if request.url.path.startswith("/api/"):
             h.setdefault("Cache-Control", "no-store")
+            if frontend_build:  # v1.5.0: lets an open page notice that the server was upgraded (api.ts)
+                h["X-Frontend-Build"] = frontend_build
         if settings.hsts and request.url.scheme == "https":
             h["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         # Path only - never query strings, bodies, cookies or headers.
@@ -200,6 +212,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             f = root_files.get(path)
             if f is not None:
                 return FileResponse(f)
-            return FileResponse(index, headers={"Cache-Control": "no-cache"})
+            return FileResponse(index, headers={"Cache-Control": "no-store"})  # v1.5.0: never serve a stale page
 
     return app

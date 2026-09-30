@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.5.0 — unreleased (in development)
+- **Sign-in from a bookmarked page** (found testing 1.4.1): signing in — including two-step verification — now always
+  happens on the dashboard address, so a bookmark such as `/about` or `/users` leads to sign-in, then two-step
+  verification (or its setup), then the dashboard. A "two-step verification required" answer from the server shows the
+  two-step screen instead of the login page.
+- A page left open while the server is upgraded now reloads itself once to pick up the new version (API responses name
+  the page build they belong to); the page itself is never cached.
+
 ## 1.4.1 — 2026-09-30
 The rest of the 1.4 plan (decisions in docs/implementation-notes.md §1a). Beta: test channel only.
 - **CR-016 Audit review signature page.** Reports → End of Year Audit → *Include audit review signature page* adds a

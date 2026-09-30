@@ -773,3 +773,68 @@ test("CR-024: a new installation is set up from the backup in the initialization
     child.kill();
   }
 });
+
+// ---------------------------------------------------------------- v1.5.0: sign-in from a bookmarked page (server mode)
+test("v1.5.0: a bookmarked page leads to the dashboard address, two-step setup/verify, then the dashboard", async ({ page }) => {
+  const port = 8800;
+  const bundle = process.env.FM_BUNDLE;
+  const dataDir = mkdtempSync(join(tmpdir(), "fm-srv-"));
+  const args = ["--mode", "server", "--host", "127.0.0.1", "--no-browser", "--port", String(port), "--data-dir", dataDir];
+  const child = spawn(bundle || process.env.FM_PYTHON || "python", bundle ? args : ["-m", "fmpoc", ...args],
+    { cwd: existsSync(join(process.cwd(), "..", "backend")) ? join(process.cwd(), "..", "backend") : join(process.cwd(), "backend"), stdio: "ignore" });
+  try {
+    const base = `http://127.0.0.1:${port}`;
+    for (let i = 0; i < 120; i++) {
+      try { if ((await fetch(`${base}/api/health`)).ok) break; } catch { /* starting */ }
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    // initialize from a deep link
+    await page.goto(base + "/about");
+    await page.getByLabel("Organization / Workspace Name").fill("Server Org");
+    await page.getByLabel("Administrator Username").fill("admin");
+    await page.getByLabel("Administrator Email Address").fill("admin@example.org");
+    await page.getByLabel("Password", { exact: true }).fill(PW);
+    await page.getByLabel("Password Confirmation").fill(PW);
+    await page.getByRole("button", { name: "Initialize" }).click();
+    await expect(page.getByRole("heading", { name: "Set up two-step verification" })).toBeVisible();
+    await expect(page).toHaveURL(base + "/");
+    const secret = (await page.getByTestId("mfa-secret").textContent())!.replace(/\s/g, "");
+    await page.getByLabel("Code from the app").fill(totp(secret));
+    await page.getByRole("button", { name: "Turn on two-step verification" }).click();
+    await page.getByLabel("I have saved my recovery codes").check();
+    await page.getByRole("button", { name: "Continue" }).click();
+    await expect(page.getByRole("heading", { name: "Administration" })).toBeVisible();
+    await page.getByRole("button", { name: "Sign out" }).click();
+
+    // a bookmark into the app: sign-in and the two-step step happen on "/", then the dashboard opens
+    await page.goto(base + "/users");
+    await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
+    await expect(page).toHaveURL(base + "/");
+    await page.getByLabel("Username").fill("admin");
+    await page.getByLabel("Password").fill(PW);
+    await page.getByRole("button", { name: "Sign in" }).click();
+    await expect(page.getByRole("heading", { name: "Two-step verification" })).toBeVisible();
+    await page.getByLabel("Authentication code").fill(totp(secret, 1));
+    await page.getByRole("button", { name: "Verify" }).click();
+    await expect(page.getByRole("heading", { name: "Administration" })).toBeVisible();
+    await expect(page).toHaveURL(base + "/");
+
+    // a page left open across a server upgrade reloads itself once (no loop)
+    let loads = 0;
+    page.on("load", () => { loads += 1; });
+    await page.route("**/api/**", async (route) => {
+      const r = await route.fetch();
+      await route.fulfill({ response: r, headers: { ...r.headers(), "x-frontend-build": "index-NEWER.js" } });
+    });
+    await page.getByRole("link", { name: "Users", exact: true }).click();
+    await page.waitForTimeout(2500);
+    expect(loads).toBe(1);
+    await expect(page.getByRole("heading", { name: "Users" })).toBeVisible();
+    await page.unroute("**/api/**");
+    await page.getByRole("link", { name: "Dashboard", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Administration" })).toBeVisible();
+    await expect.poll(() => page.url()).not.toContain("_b=");  // marker dropped once the builds match again
+  } finally {
+    child.kill();
+  }
+});
