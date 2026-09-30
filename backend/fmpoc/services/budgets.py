@@ -270,7 +270,10 @@ def _row(b: Budget, parent: Budget | None, totals: dict, qtotals: list[dict], ou
         "code": b.child_code if b.parent_budget_id else b.parent_code, "name": b.name, "budget_type": b.budget_type,
         "amount": fmt(b.amount_cents), "requested_amount": fmt(b.requested_amount_cents),
         "actual": fmt(actual), "remaining": fmt(b.amount_cents - actual),
-        "over_budget": actual > b.amount_cents and not b.is_budget_zero,
+        # v1.4 CR-019: income received above the budgeted amount is a surplus, not an overrun.
+        "over_budget": actual > b.amount_cents and not b.is_budget_zero and b.budget_type != "INCOME",
+        "above_budget": (fmt(actual - b.amount_cents) if b.budget_type == "INCOME" and not b.is_budget_zero
+                         and actual > b.amount_cents else None),
         "quarters": [fmt(q.get(b.id, 0)) for q in qtotals], "outside_fiscal_year": fmt(outside.get(b.id, 0)),
         "status": b.status, "locked": b.locked, "state": state(b), "system_managed": b.system_managed,
         "is_other": b.is_other, "is_budget_zero": b.is_budget_zero, "notes": b.notes,
@@ -327,17 +330,18 @@ def tree(db: Session, fy: FiscalYear, include_hidden: bool = False) -> dict:
         row["other_amount"] = fmt(other.amount_cents) if other else None
         sections[p.budget_type].append(row)
 
-    def summary(rows):
+    def summary(rows, income: bool = False):
         active = [r for r in rows if r["status"] not in ("REJECTED", "INACTIVE")]
+        remaining = _sum_rows(active, "amount") - _sum_rows(rows, "actual")
         return {"amount": fmt(_sum_rows(active, "amount")), "actual": fmt(_sum_rows(rows, "actual")),
-                "remaining": fmt(_sum_rows(active, "amount") - _sum_rows(rows, "actual")),
+                "remaining": fmt(remaining), "above_budget": fmt(-remaining) if income and remaining < 0 else None,
                 "quarters": [fmt(sum(_amt(r["quarters"][i]) for r in rows)) for i in range(4)]}
 
     return {
         "fiscal_year": fy_brief(fy),
         "quarters": [{"name": n, "start_date": s.isoformat(), "end_date": e.isoformat()} for n, s, e in qs],
         "income": sections["INCOME"], "expense": sections["EXPENSE"],
-        "income_summary": summary(sections["INCOME"]), "expense_summary": summary(sections["EXPENSE"]),
+        "income_summary": summary(sections["INCOME"], income=True), "expense_summary": summary(sections["EXPENSE"]),
         "budget_zero": budget_zero,
     }
 
@@ -400,7 +404,8 @@ def _opt(bid, b, parent, fy, totals, amount, label=None):
     actual = totals.get(bid, 0)
     return {"id": bid, "label": label or budget_label(b, parent), "budget_type": b.budget_type,
             "fiscal_year_id": fy.id, "fiscal_year_label": f"{fy.display_name} — {fy.status.title()}",
-            "status": b.status, "amount": fmt(amount), "remaining": fmt(amount - actual), "is_budget_zero": False}
+            "status": b.status, "amount": fmt(amount), "remaining": fmt(amount - actual), "is_budget_zero": False,
+            "above_budget": fmt(actual - amount) if b.budget_type == "INCOME" and actual > amount else None}
 
 
 def resolve_for_allocation(db: Session, ctx, budget_id: int, txn_type: str, unchanged: bool) -> tuple[Budget, list[Warning_]]:

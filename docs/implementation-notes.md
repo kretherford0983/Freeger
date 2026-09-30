@@ -44,6 +44,16 @@ could not otherwise be corrected. Scope and safeguards:
 - Audited as `TRANSACTION_VOID_DATE_CORRECTED` with before/after snapshots and the reason.
 - Tests: `backend/tests/test_cr001_void_date.py` (5 tests) and E2E "CR-001".
 
+**v1.4.0 change requests CR-016 … CR-025 (product owner, 2026-09-29).** Decisions were agreed item by item before
+implementation (plan: project doc `claude/freedger-plan-1.4.md`). Passkeys (part of CR-018) are deferred to 1.5.
+
+| CR | Decision / implementation |
+|---|---|
+| CR-017 | `services/documentation.classify` gains the reason test: a no-attachment mark with a non-blank reason (parent or allocation) counts as documented and is not listed; a mark without a reason is still `NO_ATTACHMENT_MARKED`. One function feeds the FY review list, the closure warnings, the dashboard count and the audit/close PDF review page, so all four change together (product owner Q9). The PDFs still print the mark and reason on each transaction. **Supersedes** the v1.2.1 CR-005 wording "a parent mark is listed as 'no attachment'" and the CR-003 note that transfers appear as marked items: transfers carry the system reason "Internal transfer between accounts" and are therefore no longer listed. |
+| CR-019 | Budget read model adds `above_budget` (income rows and the income summary, also the budget selector options) = actual − amount when an income budget received more than budgeted; `over_budget` is false for income. UI and PDFs show "+$X above budget" in green instead of a negative Remaining. Closure warning `OVER_BUDGET` now considers expense budgets only — a deliberate change to baseline BR-014 at the product owner's request. |
+| CR-021 | `GET /api/dashboard` adds `bank_accounts_total` (sum of the active accounts listed); shown as a Total row. |
+| CR-022 | `GET /api/system/version` (any signed-in user): version, build info, mode — no network details. `GET /api/system/about` now returns `bind_host`/`port` only to Administrators. Build info comes from `fmpoc/build_info.json`, written by the CI build job (version, branch, short commit, run number, build time) and bundled in the portable and PyInstaller packages; without it the UI shows "Development build". My Account has an About section; System/About shows the same details plus the bind address. |
+
 **v1.3.0 change requests CR-007 … CR-015 (product owner, 2026-09-29).** Decisions were agreed item by item before
 implementation (plan: project doc `claude/freedger-plan-1.3.md`).
 

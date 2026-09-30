@@ -102,12 +102,14 @@ def test_cr003_fiscal_year_rules(env, base):
     assert ok["deposit"]["allocations"][0]["budget"]["fiscal_year"]["id"] == base["fy"]["id"]
 
 
-def test_cr003_transfer_listed_as_documentation_warning(env, base):
+def test_cr003_transfer_not_a_documentation_warning(env, base):
+    """Transfers carry the no-attachment mark with a system reason; since v1.4 (CR-017) a reasoned mark counts as
+    documented, so transfers no longer appear in the documentation review."""
     dst = env.account(opening="0.00")
     r = transfer(env, base["acct"]["id"], dst["id"])
+    assert r["withdrawal"]["no_attachment"] is True and r["withdrawal"]["no_attachment_reason"]
     items = env.bu.get(f"/api/fiscal-years/{base['fy']['id']}/documentation-review").json()["items"]
-    cats = {i["transaction_id"]: (i["category"], i["is_transfer"]) for i in items}
-    assert cats[r["withdrawal"]["id"]] == ("NO_ATTACHMENT_MARKED", True)
+    assert {i["transaction_id"] for i in items} & {r["withdrawal"]["id"], r["deposit"]["id"]} == set()
 
 
 def test_cr003_transfer_entity_used_in_description(env, base):

@@ -41,6 +41,8 @@ textarea { min-height: 60px; width: 100%; }
 .hint { font-size: 12px; color: var(--muted); }
 .muted { color: var(--muted); }
 .neg { color: var(--danger); font-weight: 600; }
+.above { color: var(--green-fg); font-weight: 600; }
+.table tfoot .total-row th { color: inherit; font-size: 14px; }
 .warn-text { color: var(--yellow-fg); font-size: 12px; margin: 0 0 6px; }
 .ok-text { color: var(--green-fg); }
 .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }

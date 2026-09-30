@@ -359,7 +359,7 @@ function TxnForm({ account, txn, initial, fys, onClose, onSaved }: { account: an
                 <Field label="Budget">
                   <select required aria-label={`Allocation ${i + 1} Budget`} value={a.budget_id} onChange={(e) => upd(i, "budget_id", e.target.value)}>
                     <option value="">— select —</option>
-                    {opts.map((o: any) => <option key={o.id} value={o.id}>{o.label}{o.is_budget_zero ? " ⚠" : ` (remaining ${money(o.remaining)})`}</option>)}
+                    {opts.map((o: any) => <option key={o.id} value={o.id}>{o.label}{o.is_budget_zero ? " ⚠" : o.above_budget ? ` (+${money(o.above_budget)} above budget)` : ` (remaining ${money(o.remaining)})`}</option>)}
                     {a.id && a.budget_id && !opts.some((o: any) => String(o.id) === a.budget_id) ? <option value={a.budget_id}>{txn?.allocations.find((x: any) => x.id === a.id)?.budget.label} (current)</option> : null}
                   </select>
                 </Field>
@@ -384,7 +384,7 @@ function TxnForm({ account, txn, initial, fys, onClose, onSaved }: { account: an
                     No attachment will be provided for this allocation
                   </label>
                   <PendingFiles label={`Allocation ${i + 1} attachments`} files={a.files} onChange={(fl) => setAllocs(allocs.map((x, j) => (j === i ? { ...x, files: fl } : x)))} />
-                  {a.no_attachment ? <Field label={`Allocation ${i + 1} reason (optional)`}><input maxLength={500} value={a.no_attachment_reason} onChange={(e) => setAllocs(allocs.map((x, j) => (j === i ? { ...x, no_attachment_reason: e.target.value } : x)))} /></Field> : null}
+                  {a.no_attachment ? <Field label={`Allocation ${i + 1} reason (optional)`} hint="Without a reason, this item stays in the Fiscal Year documentation review."><input maxLength={500} value={a.no_attachment_reason} onChange={(e) => setAllocs(allocs.map((x, j) => (j === i ? { ...x, no_attachment_reason: e.target.value } : x)))} /></Field> : null}
                 </div>
               ) : null}
             </div>
@@ -402,7 +402,7 @@ function TxnForm({ account, txn, initial, fys, onClose, onSaved }: { account: an
           No attachment will be provided
         </label>
         {h.no_attachment ? (
-          <Field label="Reason no attachment is available (optional)"><input maxLength={500} value={h.no_attachment_reason} onChange={(e) => setH({ ...h, no_attachment_reason: e.target.value })} placeholder="e.g. Bank interest - direct deposit" /></Field>
+          <Field label="Reason no attachment is available (optional)" hint="Without a reason, this item stays in the Fiscal Year documentation review."><input maxLength={500} value={h.no_attachment_reason} onChange={(e) => setH({ ...h, no_attachment_reason: e.target.value })} placeholder="e.g. Bank interest - direct deposit" /></Field>
         ) : null}
         <div className="actions"><button type="button" onClick={onClose}>Cancel</button><button className="primary" type="submit">Save</button></div>
       </GuardedForm>

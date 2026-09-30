@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, money } from "../api";
-import { ErrorBox, FyStatus, Loading } from "../components";
+import { ErrorBox, FyStatus, Loading, Remaining } from "../components";
 import { Link } from "../router";
 import { useMe } from "../App";
 
@@ -48,7 +48,7 @@ export default function Dashboard() {
             <div className="tile" key={k}>
               <div className="tile-label">{k === "income" ? "Income" : "Expense"} budget</div>
               <div className="tile-value">{money(d.budget_summary[k].amount)}</div>
-              <div className="muted">Actual {money(d.budget_summary[k].actual)} · Remaining <span className={Number(d.budget_summary[k].remaining) < 0 ? "neg" : ""}>{money(d.budget_summary[k].remaining)}</span></div>
+              <div className="muted">Actual {money(d.budget_summary[k].actual)} · Remaining <Remaining x={d.budget_summary[k]} /></div>
             </div>
           ))}
         </div>
@@ -74,6 +74,9 @@ export default function Dashboard() {
               <tr key={a.id}><td>{a.label} {a.is_primary ? <span className="pill">Primary</span> : null}</td><td className="num">{money(a.current_balance)}</td></tr>
             ))}
           </tbody>
+          {d.bank_accounts.length ? (
+            <tfoot><tr className="total-row" data-testid="bank-total"><th scope="row">Total (all accounts)</th><th className={`num ${Number(d.bank_accounts_total) < 0 ? "neg" : ""}`}>{money(d.bank_accounts_total)}</th></tr></tfoot>
+          ) : null}
         </table>
       </section>
       <section className="card">

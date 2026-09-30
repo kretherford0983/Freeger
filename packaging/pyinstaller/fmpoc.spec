@@ -11,6 +11,8 @@ datas = [
     (os.path.join(PKG, "static"), "fmpoc/static"),
     (os.path.join(PKG, "migrations"), "fmpoc/migrations"),
 ] + collect_data_files("reportlab")  # fonts used by the audit report
+if os.path.isfile(os.path.join(PKG, "build_info.json")):  # v1.4 CR-022 (written by CI)
+    datas.append((os.path.join(PKG, "build_info.json"), "fmpoc"))
 hidden = (collect_submodules("fmpoc") + collect_submodules("uvicorn") + collect_submodules("alembic")
           + ["sqlalchemy.dialects.sqlite", "argon2", "argon2._password_hasher", "multipart", "python_multipart",
              "PIL.PngImagePlugin", "PIL.JpegImagePlugin"] + collect_submodules("reportlab")

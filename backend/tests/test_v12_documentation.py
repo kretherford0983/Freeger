@@ -88,13 +88,12 @@ def test_cr005_documentation_review_categories_and_non_blocking(env, base):
     up(env, "allocation", split_parent_one_child["allocations"][0]["id"])
     split_one_child = env.txn(a, "WITHDRAWAL", split, clear_date="2026-08-02", confirmations=["POSSIBLE_DUPLICATE"])
     up(env, "allocation", split_one_child["allocations"][0]["id"])
-    child_flag_split = [dict(split[0]), dict(split[1], no_attachment=True, no_attachment_reason="Bank fee")]
+    child_flag_split = [dict(split[0]), dict(split[1], no_attachment=True)]  # v1.4 CR-017: no reason -> listed
     split_child_flag = env.txn(a, "WITHDRAWAL", child_flag_split, clear_date="2026-08-02", confirmations=["POSSIBLE_DUPLICATE"])
     up(env, "allocation", split_child_flag["allocations"][0]["id"])
-    split_parent_flag = env.txn(a, "WITHDRAWAL", split, clear_date="2026-08-02", confirmations=["POSSIBLE_DUPLICATE"], no_attachment=True,
-                                no_attachment_reason="Lost receipt")
+    split_parent_flag = env.txn(a, "WITHDRAWAL", split, clear_date="2026-08-02", confirmations=["POSSIBLE_DUPLICATE"], no_attachment=True)
     marked = env.txn(a, "DEPOSIT", [{"budget_id": base["inc_leaf"], "amount": "0.50"}], clear_date="2026-08-02",
-                     no_attachment=True, no_attachment_reason="Interest")
+                     no_attachment=True)
     voided = env.txn(a, "WITHDRAWAL", [{"budget_id": base["exp_leaf"], "amount": "9.00"}])
     env.ru.post(f"/api/transactions/{voided['id']}/void", {"reason": "x", "confirm_irreversible": True})
 
@@ -110,7 +109,7 @@ def test_cr005_documentation_review_categories_and_non_blocking(env, base):
     assert items[split_child_flag["id"]]["allocations_marked_no_attachment"] == [split_child_flag["allocations"][1]["id"]]
     assert items[split_parent_flag["id"]]["category"] == "NO_ATTACHMENT_MARKED"
     assert items[split_parent_flag["id"]]["allocations_without_documentation"] == []
-    assert items[marked["id"]]["category"] == "NO_ATTACHMENT_MARKED" and items[marked["id"]]["no_attachment_reason"] == "Interest"
+    assert items[marked["id"]]["category"] == "NO_ATTACHMENT_MARKED" and items[marked["id"]]["no_attachment_reason"] is None
     assert voided["id"] not in items  # VOID transactions are not listed
     # warnings (not blockers) in the closure check
     env.approve(fy)

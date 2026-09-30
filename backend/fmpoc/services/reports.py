@@ -343,6 +343,13 @@ def _meta_table(rows: list[tuple[str, object]]) -> Table:
     return t
 
 
+def _remaining_cell(x: dict, bold: bool = False):
+    """v1.4 CR-019: income received above budget prints as a green '+$X above budget'."""
+    if x.get("above_budget"):
+        return PM(f'<font color="#1d6b2c"><b>+{escape(money(x["above_budget"]))}</b> above budget</font>', "cellr")
+    return PM(f"<b>{escape(money(x['remaining']))}</b>", "cellr") if bold else P(money(x["remaining"]), "cellr")
+
+
 def _budget_section(tree: dict) -> list:
     f: list = [PM("Fiscal Year Budgets", "h1")]
     qn = [q["name"] for q in tree["quarters"]]
@@ -355,10 +362,10 @@ def _budget_section(tree: dict) -> list:
             for x, indent in [(r, ""), *[(c, "    ") for c in r["children"]]]:
                 data.append([P(indent + x["label"], "cell"), P(x["state"]["label"], "cell"), P(money(x["amount"]), "cellr"),
                              *[P(money(q), "cellr") for q in x["quarters"]], P(money(x["actual"]), "cellr"),
-                             P(money(x["remaining"]), "cellr")])
+                             _remaining_cell(x)])
         data.append([PM("<b>Total</b>", "cell"), P("", "cell"), PM(f"<b>{money(summ['amount'])}</b>", "cellr"),
                      *[P(money(q), "cellr") for q in summ["quarters"]], PM(f"<b>{money(summ['actual'])}</b>", "cellr"),
-                     PM(f"<b>{money(summ['remaining'])}</b>", "cellr")])
+                     _remaining_cell(summ, bold=True)])
         if len(data) == 2:
             data.insert(1, [P(f"No {label.lower()} budgets.", "cell")] + [""] * (len(qn) + 4))
         f.append(_grid(data, [1.95 * inch, 1.0 * inch, 0.75 * inch] + [0.52 * inch] * len(qn) + [0.7 * inch, 0.72 * inch]))
@@ -481,15 +488,16 @@ def build_audit_report(db: Session, ctx, settings, fy: FiscalYear, account_id: i
                  + [f"Warning: {w['message']}" for w in check["warnings"]])
     f += [P("• " + x, "body") for x in (items or ["No blockers or warnings."])]
     f += [Spacer(1, 8), PM("Documentation review", "h2"),
-          P("A transaction is documented when it has an attachment or is marked 'no attachment will be provided'. "
-            "When the transaction itself has neither, every allocation (child) must have an attachment or its own "
-            "marker. These items are review warnings; they do not block closure.", "small"), Spacer(1, 2)]
+          P("A transaction is documented when it has an attachment or is marked 'no attachment will be provided' with a "
+            "reason. When the transaction itself has neither, every allocation (child) must have an attachment or its "
+            "own marker with a reason. A marker without a reason is still listed. These items are review warnings; "
+            "they do not block closure.", "small"), Spacer(1, 2)]
     if not missing and not marked:
-        f.append(P("• All applicable transactions are documented by attachments.", "body"))
+        f.append(P("• All applicable transactions are documented by attachments or a stated reason.", "body"))
     if missing:
         f.append(P(f"• Missing supporting attachments ({len(missing)}): {_id_list(missing)}", "body"))
     if marked:
-        f.append(P(f"• Marked 'no attachment will be provided' ({len(marked)}): {_id_list(marked)}", "body"))
+        f.append(P(f"• Marked 'no attachment will be provided' without a reason ({len(marked)}): {_id_list(marked)}", "body"))
     outside = [i for i in missing + marked if i not in in_report]
     if outside:
         f.append(P(f"({len(outside)} of these are outside this report's account/VOID filter.)", "small"))
