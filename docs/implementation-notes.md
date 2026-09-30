@@ -44,8 +44,9 @@ could not otherwise be corrected. Scope and safeguards:
 - Audited as `TRANSACTION_VOID_DATE_CORRECTED` with before/after snapshots and the reason.
 - Tests: `backend/tests/test_cr001_void_date.py` (5 tests) and E2E "CR-001".
 
-**v1.4.0 change requests CR-016 … CR-025 (product owner, 2026-09-29).** Decisions were agreed item by item before
-implementation (plan: project doc `claude/freedger-plan-1.4.md`). Passkeys (part of CR-018) are deferred to 1.5.
+**v1.4.0 / v1.4.1 change requests CR-016 … CR-025 (product owner, 2026-09-29).** Decisions were agreed item by item
+before implementation (plan: project doc `claude/freedger-plan-1.4.md`). 1.4.0 = CR-017/019/021/022; 1.4.1 = CR-016,
+CR-018 (TOTP), CR-020, CR-023 … CR-025. Passkeys (part of CR-018) are deferred to 1.6.
 
 | CR | Decision / implementation |
 |---|---|
