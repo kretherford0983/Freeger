@@ -1,6 +1,6 @@
 # What's new in 1.4 — quick guide
 
-*1.4.0: documentation review, income above budget, bank total, version information. 1.4.1: audit signature page
+*1.4.0: documentation review, income above budget, bank total, version information. 1.4.1: audit signature page, dashboard charts
 (more 1.4.1 features are added below as they are delivered).*
 
 ## Documentation review (Fiscal Year page)
@@ -34,3 +34,10 @@ has a blank line for the date, the wording, and a signature line for each signer
   title such as *Trustee*; printed as "Jane Doe, Trustee". With no signer chosen, three blank lines are printed.
 - After the audit, scan the signed page and add it to the Fiscal Year as its **Audit Signoff** document; it then
   appears in the Fiscal Year Close report.
+
+## Dashboard charts (1.4.1)
+At the bottom of the dashboard, **Charts** shows the selected Fiscal Year (change it with the *Fiscal Year* list):
+income by budget, monthly expenses and income, expense budgets (budgeted vs spent), bank balances at each month end,
+expenses by budget and the cumulative net. Use **Choose charts** to show or hide charts — the choice is saved for
+your account (new users see the first three). Hover a chart for exact amounts, or open **Show data table** under it.
+VOID transactions and transfers between accounts are not included.

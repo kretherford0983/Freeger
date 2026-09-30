@@ -80,6 +80,9 @@ class ChangePasswordIn(In):
 class PreferencesIn(In):
     theme: Literal["light", "dark"] | None = None
     nav_collapsed: bool | None = None  # v1.3 CR-014
+    # v1.4.1 CR-020: which dashboard charts to show, in order (empty list = none)
+    dashboard_charts: list[Literal["income_pie", "monthly", "expense_vs_budget", "balances", "expense_pie",
+                                   "cumulative_net"]] | None = Field(None, max_length=6)
 
 
 Domain = Literal["ADMINISTRATOR", "FINANCIAL", "AUDITOR"]

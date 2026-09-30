@@ -8,14 +8,20 @@ The rest of the 1.4 plan (decisions in docs/implementation-notes.md §1a). Deliv
   saved wordings (shared by the organization, each with a Delete button) or new wording, which can be saved for future
   use. The variables {FY} (Fiscal Year dates), {ORG} (organization) and {FYE} (Fiscal Year end date) are filled in;
   unknown variables are refused. Saving and deleting wordings is recorded in the audit log.
+- **CR-020 Dashboard charts.** The dashboard (financial roles and Auditors) has a *Charts* section for a chosen Fiscal
+  Year: income by budget (donut), monthly expenses (bars) with income (line), expense budgets budgeted vs spent, bank
+  balances at each month end (per account and total), expenses by budget (donut) and cumulative net. **Choose charts**
+  shows or hides each chart; the choice is saved per user (default: the first three). Every chart has a tooltip on
+  hover and a *Show data table* view. VOID transactions and transfers are left out; months follow the Fiscal Year.
 
-Upgrade notes: database migration `0006` adds the table `signature_template` (additive).
+Upgrade notes: database migrations `0006` (table `signature_template`) and `0007` (column
+`app_user.dashboard_charts`) are additive.
 
 ## 1.4.0 — 2026-09-30
 Change requests CR-017, CR-019, CR-021 and CR-022 (decisions recorded in docs/implementation-notes.md §1a). The rest of
 the 1.4 plan — audit signature page (CR-016), MFA (CR-018), dashboard charts (CR-020) and backup/restore
-(CR-023 … CR-025) — follows in **1.4.1**. This is the first production release after 1.2.1, so it also contains
-everything in 1.3.0 (see CHANGELOG.md).
+(CR-023 … CR-025) — follows in **1.4.1**. Beta: pre-release on the test channel only (no production release is
+planned before 1.6).
 - **CR-017 Documentation review.** A transaction (or split allocation) marked "no attachment will be provided" **with a
   reason** now counts as documented: it no longer appears in the Fiscal Year documentation review, the closing
   warnings or the dashboard count. A mark without a reason is still listed. Transfers (which carry the reason

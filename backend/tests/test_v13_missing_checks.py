@@ -102,7 +102,7 @@ def test_cr012_preexisting_duplicates_listed(env, base, app):
 def test_cr014_collapsed_navigation_preference_is_per_user(env):
     assert env.ru.get("/api/auth/me").json()["nav_collapsed"] is False
     r = env.ru.put("/api/me/preferences", {"nav_collapsed": True})
-    assert r.status_code == 200 and r.json() == {"theme": "light", "nav_collapsed": True}
+    assert r.status_code == 200 and r.json()["nav_collapsed"] is True and r.json()["theme"] == "light"
     assert env.ru.get("/api/auth/me").json()["nav_collapsed"] is True
     assert env.bu.get("/api/auth/me").json()["nav_collapsed"] is False  # other users unaffected
     assert env.ru.put("/api/me/preferences", {"nav_collapsed": "maybe"}).status_code == 422

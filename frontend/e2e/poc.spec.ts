@@ -574,3 +574,38 @@ test("CR-016: audit report signature page — wording, saved wordings, signers",
   await expect(page.getByRole("button", { name: "Delete saved wording 1" })).toHaveCount(0);
   await expect(page.getByLabel("Default wording")).toBeChecked();
 });
+
+test("CR-020: dashboard charts — defaults, choose charts per user, data tables, light and dark", async ({ page }) => {
+  await login(page, "bm1");
+  const charts = page.getByRole("region", { name: "Charts" });
+  await expect(charts.getByTestId("chart-income_pie")).toBeVisible();
+  await expect(charts.getByTestId("chart-monthly")).toBeVisible();
+  await expect(charts.getByTestId("chart-expense_vs_budget")).toBeVisible();
+  await expect(charts.getByTestId("chart-balances")).toHaveCount(0);
+  await expect(charts.getByTestId("chart-monthly").locator(".recharts-surface").first()).toBeVisible();
+  await charts.getByTestId("chart-income_pie").screenshot({ path: "e2e-screenshots/light-chart-income-pie.png" });
+  // choose charts: add bank balances + cumulative net, remove the income pie; saved for this user
+  await charts.getByRole("button", { name: "Choose charts" }).click();
+  await charts.getByRole("checkbox", { name: "Bank balances (month end)" }).check();
+  await charts.getByRole("checkbox", { name: "Cumulative net (income − expenses)" }).check();
+  await charts.getByRole("checkbox", { name: "Income by budget" }).uncheck();
+  await charts.getByRole("button", { name: "Done" }).click();
+  await expect(charts.getByTestId("chart-balances")).toBeVisible();
+  await expect(charts.getByTestId("chart-income_pie")).toHaveCount(0);
+  // data table fallback
+  const monthly = charts.getByTestId("chart-monthly");
+  await monthly.getByText("Show data table").click();
+  await expect(monthly.getByRole("table")).toContainText("Expenses");
+  await page.screenshot({ path: "e2e-screenshots/light-dashboard-charts.png", fullPage: true });
+  await page.reload();
+  await expect(page.getByRole("region", { name: "Charts" }).getByTestId("chart-cumulative_net")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Charts" }).getByTestId("chart-income_pie")).toHaveCount(0);
+  await page.getByRole("button", { name: /Switch to dark mode/ }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await page.screenshot({ path: "e2e-screenshots/dark-dashboard-charts.png", fullPage: true });
+  // restore defaults for later tests
+  await page.getByRole("button", { name: /Switch to light mode/ }).click();
+  await charts.getByRole("button", { name: "Choose charts" }).click();
+  for (const n of ["Bank balances (month end)", "Cumulative net (income − expenses)"]) await charts.getByRole("checkbox", { name: n }).uncheck();
+  await charts.getByRole("checkbox", { name: "Income by budget" }).check();
+});

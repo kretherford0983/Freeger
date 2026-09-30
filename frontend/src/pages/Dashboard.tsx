@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { api, money } from "../api";
 import { ErrorBox, FyStatus, Loading, Remaining } from "../components";
 import { Link } from "../router";
 import { useMe } from "../App";
+const DashboardCharts = lazy(() => import("./Charts")); // v1.4.1 CR-020: chart library loaded on demand
 
 export default function Dashboard() {
   const { me } = useMe();
@@ -87,6 +88,9 @@ export default function Dashboard() {
           {fy ? <li>Documentation review warnings ({fy.display_name}): <b>{d.attention.documentation_warnings}</b> {d.attention.documentation_warnings ? <Link to={`/fiscal-years/${fy.id}`}>Review</Link> : null}</li> : null}
         </ul>
       </section>
+      <Suspense fallback={<section className="card"><h2>Charts</h2><p className="hint">Loading charts…</p></section>}>
+        <DashboardCharts fys={d.fiscal_years || []} currentFyId={fy ? fy.id : null} />
+      </Suspense>
     </div>
   );
 }

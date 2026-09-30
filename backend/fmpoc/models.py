@@ -73,6 +73,7 @@ class User(Base):
     security_domain: Mapped[str] = mapped_column(String(20))  # ADMINISTRATOR | FINANCIAL | AUDITOR
     theme: Mapped[str] = mapped_column(String(10), default="light")
     nav_collapsed: Mapped[bool] = mapped_column(Boolean, default=False, server_default=sa_false(), nullable=False)  # v1.3 CR-014
+    dashboard_charts: Mapped[str | None] = mapped_column(String(200), nullable=True)  # v1.4.1 CR-020 (comma list)
     password_changed_at: Mapped[dt.datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow)
     created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"), nullable=True)
