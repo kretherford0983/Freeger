@@ -65,9 +65,11 @@ export default function App() {
 
   const boot = async () => {
     const s = await api.get("/api/system/status");
-    setStatus(s);
+    // HF-001: load the user first, then switch the status - otherwise the sign-in page flashes (and starts its own
+    // CSRF request) between "initialized" and "user loaded".
     if (s.initialized) await loadMe();
     else setMe(null);
+    setStatus(s);
   };
 
   useEffect(() => {

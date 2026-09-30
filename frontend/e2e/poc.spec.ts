@@ -789,6 +789,11 @@ test("v1.5.0: a bookmarked page leads to the dashboard address, two-step setup/v
       await new Promise((r) => setTimeout(r, 250));
     }
     // initialize from a deep link
+    // HF-001: E2E_THROTTLE=6 slows the browser CPU like a busy CI runner (reproduced the sign-in CSRF race)
+    if (process.env.E2E_THROTTLE) {
+      const cdp = await page.context().newCDPSession(page);
+      await cdp.send("Emulation.setCPUThrottlingRate", { rate: Number(process.env.E2E_THROTTLE) });
+    }
     await page.goto(base + "/about");
     await page.getByLabel("Organization / Workspace Name").fill("Server Org");
     await page.getByLabel("Administrator Username").fill("admin");

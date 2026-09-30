@@ -33,7 +33,12 @@ export function getCsrf(): string | null {
   return csrfToken;
 }
 
+// HF-001 (1.5.0): a pre-auth token fetched while signed out must never overwrite a session token that was set
+// meanwhile (a slow /api/auth/csrf answer used to replace the session token right after sign-in -> 403 CSRF_FAILED).
+let csrfGen = 0;
+
 export function setCsrf(token: string | null) {
+  csrfGen += 1;
   csrfToken = token;
 }
 
@@ -106,8 +111,9 @@ export const api = {
 };
 
 export async function preAuthCsrf() {
+  const gen = csrfGen;
   const r = await api.get<{ csrf_token: string }>("/api/auth/csrf");
-  setCsrf(r.csrf_token);
+  if (gen === csrfGen) setCsrf(r.csrf_token); // someone set a (session) token meanwhile: keep it
 }
 
 export function qs(params: Record<string, string | number | boolean | null | undefined>) {

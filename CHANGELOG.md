@@ -7,6 +7,9 @@
   two-step screen instead of the login page.
 - A page left open while the server is upgraded now reloads itself once to pick up the new version (API responses name
   the page build they belong to); the page itself is never cached.
+- **HF-001** Right after setting up a new installation (or on a slow computer), the sign-in page could briefly appear
+  and replace the security token of the new session, so the next action failed ("Missing or invalid CSRF token"). The
+  page no longer flashes and a late sign-in token can no longer overwrite the session's token.
 
 ## 1.4.1 — 2026-09-30
 The rest of the 1.4 plan (decisions in docs/implementation-notes.md §1a). Beta: test channel only.
