@@ -362,3 +362,20 @@ class ReviewResolveIn(In):
 class SignatureTemplateIn(In):
     """v1.4.1 CR-016: wording saved for the audit review signature page."""
     text: str = Field(min_length=1, max_length=4000)
+
+
+class MfaCodeIn(In):
+    """v1.4.1 CR-018: a 6-digit TOTP code or a recovery code (XXXX-XXXX-XXXX)."""
+    code: str = Field(min_length=1, max_length=40)
+
+
+class MfaVerifyIn(MfaCodeIn):
+    trust_browser: bool = False
+
+
+class MfaEnrollStartIn(In):
+    current_code: str | None = Field(None, max_length=40)  # required when changing an existing authenticator
+
+
+class MfaResetIn(In):
+    reason: str = Field(min_length=1, max_length=500)

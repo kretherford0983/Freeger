@@ -105,6 +105,8 @@ class AuthSession(Base):
     last_seen_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow)
     expires_at: Mapped[dt.datetime] = mapped_column(DateTime)
     revoked_at: Mapped[dt.datetime | None] = mapped_column(DateTime, nullable=True)
+    # v1.4.1 CR-018: NULL = fully signed in; VERIFY / ENROLL = password accepted, MFA step outstanding
+    mfa_pending: Mapped[str | None] = mapped_column(String(10), nullable=True)
 
 
 # ---------------------------------------------------------------- fiscal years / budgets
@@ -397,3 +399,38 @@ class SignatureTemplate(Base):
     text: Mapped[str] = mapped_column(Text)
     created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"), nullable=True)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class UserMfa(Base):
+    """v1.4.1 CR-018: TOTP secret (encrypted with the portable key) - active and pending enrollment."""
+    __tablename__ = "user_mfa"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"), unique=True)
+    secret_enc: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    enabled_at: Mapped[dt.datetime | None] = mapped_column(DateTime, nullable=True)
+    last_step: Mapped[int | None] = mapped_column(Integer, nullable=True)  # last accepted TOTP time step (replay)
+    pending_secret_enc: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    pending_created_at: Mapped[dt.datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class MfaRecoveryCode(Base):
+    """v1.4.1 CR-018: one-time recovery codes (SHA-256 of the normalized code; shown once)."""
+    __tablename__ = "mfa_recovery_code"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"), index=True)
+    code_hash: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow)
+    used_at: Mapped[dt.datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class TrustedDevice(Base):
+    """v1.4.1 CR-018: "trust this browser for 30 days" (SHA-256 of the cookie value)."""
+    __tablename__ = "trusted_device"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    label: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow)
+    last_used_at: Mapped[dt.datetime | None] = mapped_column(DateTime, nullable=True)
+    expires_at: Mapped[dt.datetime] = mapped_column(DateTime)
+    revoked_at: Mapped[dt.datetime | None] = mapped_column(DateTime, nullable=True)

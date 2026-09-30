@@ -1,6 +1,6 @@
 // v1.4.1 CR-020: dashboard charts (Recharts). Colors: reference categorical palette, validated for this app's light
 // (#ffffff) and dark (#1b2128) surfaces; income = slot 1 (blue), expense = slot 2 (orange) in every chart.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend, Line, LineChart, Pie, PieChart, ReferenceLine,
   ResponsiveContainer, Tooltip, XAxis, YAxis,
@@ -50,13 +50,23 @@ export default function DashboardCharts({ fys, currentFyId }: { fys: any[]; curr
     api.get(`/api/dashboard/charts?fiscal_year_id=${fy}`).then(setData, setErr);
   }, [fy]);
 
-  const toggle = async (key: string, on: boolean) => {
+  // Saves run one after another (never in parallel), so the last choice always wins on the server.
+  const queue = useRef<Promise<unknown>>(Promise.resolve());
+  const pending = useRef(0);
+  const [saveState, setSaveState] = useState<"saving" | "saved" | null>(null);
+  const toggle = (key: string, on: boolean) => {
     const next = on ? CHARTS.map((c) => c.key).filter((k) => k === key || shown.includes(k)) : shown.filter((k) => k !== key);
     setShown(next); // update at once; saved for the account in the background
-    try {
-      const r = await api.put("/api/me/preferences", { dashboard_charts: next });
-      patchMe({ dashboard_charts: r.dashboard_charts });
-    } catch (e) { setErr(e); }
+    patchMe({ dashboard_charts: next });
+    pending.current += 1;
+    setSaveState("saving");
+    queue.current = queue.current
+      .then(() => api.put("/api/me/preferences", { dashboard_charts: next }))
+      .catch((e) => setErr(e))
+      .finally(() => {
+        pending.current -= 1;
+        if (pending.current === 0) setSaveState("saved");
+      });
   };
 
   if (!fys.length) return null;
@@ -70,6 +80,7 @@ export default function DashboardCharts({ fys, currentFyId }: { fys: any[]; curr
             {fys.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
           </select>
         </label>
+        {saveState ? <span className="hint" role="status">{saveState === "saving" ? "Saving your chart choice…" : "Chart choice saved"}</span> : null}
         <button type="button" className="small" aria-expanded={edit} onClick={() => setEdit(!edit)}>{edit ? "Done" : "Choose charts"}</button>
       </div>
       {edit ? (

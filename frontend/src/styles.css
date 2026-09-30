@@ -240,3 +240,17 @@ select.small { padding: 1px 4px; font-size: 12px; margin-left: 6px; }
 .chart-legend .swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; flex: none; }
 .chart-legend .legend-total { font-weight: 600; margin-top: 4px; }
 .recharts-legend-item-text { color: var(--text) !important; }
+
+/* v1.4.1 CR-018: two-step verification */
+.mfa-card { max-width: 560px; width: 100%; }
+.linklike { background: none; border: 0; padding: 0; color: var(--link); text-decoration: underline; cursor: pointer; font: inherit; }
+.mfa-setup .steps { padding-left: 20px; }
+.mfa-setup .steps > li { margin-bottom: 14px; }
+.mfa-setup .qr { margin: 8px 0; }
+.mfa-setup .qr img { background: #fff; padding: 6px; border-radius: 6px; border: 1px solid var(--border); }
+.secret-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 6px 0; }
+.secret { font-size: 15px; letter-spacing: 1px; padding: 4px 8px; background: var(--surface-2); border-radius: 4px; word-break: break-all; }
+.recovery .codes { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 20px; max-width: 420px; }
+.recovery .codes code { font-size: 15px; letter-spacing: 1px; }
+.badge.green { background: var(--green-bg); color: var(--green-fg); }
+td.ua { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

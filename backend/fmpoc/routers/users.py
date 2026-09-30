@@ -5,21 +5,41 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..deps import Ctx, get_db, require
-from ..models import User
-from ..schemas import PasswordResetIn, UserCreateIn, UserUpdateIn
+from ..models import User, UserMfa
+from ..schemas import MfaResetIn, PasswordResetIn, UserCreateIn, UserUpdateIn
+from ..services import mfa as mfa_svc
 from ..services import users as svc
 
 router = APIRouter(prefix="/api/users", tags=["users"])
 
 
+def _mfa_on(db: Session) -> set[int]:
+    return set(db.scalars(select(UserMfa.user_id).where(UserMfa.enabled_at.is_not(None))))
+
+
+def _out(u: User, on: set[int]) -> dict:
+    return {**svc.out(u), "mfa_enabled": u.id in on}  # v1.4.1 CR-018
+
+
 @router.get("")
 def list_users(db: Session = Depends(get_db), ctx: Ctx = Depends(require("users.view"))):
-    return [svc.out(u) for u in db.scalars(select(User).where(User.workspace_id == ctx.workspace_id).order_by(User.username))]
+    on = _mfa_on(db)
+    return [_out(u, on) for u in db.scalars(select(User).where(User.workspace_id == ctx.workspace_id).order_by(User.username))]
 
 
 @router.get("/{user_id}")
 def get_user(user_id: int, db: Session = Depends(get_db), ctx: Ctx = Depends(require("users.view"))):
-    return svc.out(svc.get(db, ctx, user_id))
+    return _out(svc.get(db, ctx, user_id), _mfa_on(db))
+
+
+@router.post("/{user_id}/reset-mfa")
+def reset_mfa(user_id: int, body: MfaResetIn, db: Session = Depends(get_db),
+              ctx: Ctx = Depends(require("users.manage"))):
+    """v1.4.1 CR-018: the user sets two-step verification up again at the next sign-in (audited, reason required)."""
+    u = svc.get(db, ctx, user_id)
+    mfa_svc.reset(db, ctx, u, body.reason)
+    db.commit()
+    return _out(u, _mfa_on(db))
 
 
 @router.post("", status_code=201)

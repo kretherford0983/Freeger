@@ -1,4 +1,5 @@
 // E2E UI verification (AC-INIT-*, AC-UI-THEME-*, AC-FY-VIS-*, AC-SEC-005/011, AC-AUTH-SELF-001, AC-REG-001).
+import { createHmac } from "node:crypto";
 import { expect, test, type Page } from "@playwright/test";
 
 const PW = "Correct-Horse-9-Battery";
@@ -590,6 +591,7 @@ test("CR-020: dashboard charts — defaults, choose charts per user, data tables
   await charts.getByRole("checkbox", { name: "Cumulative net (income − expenses)" }).check();
   await charts.getByRole("checkbox", { name: "Income by budget" }).uncheck();
   await charts.getByRole("button", { name: "Done" }).click();
+  await expect(charts.getByRole("status")).toHaveText("Chart choice saved");
   await expect(charts.getByTestId("chart-balances")).toBeVisible();
   await expect(charts.getByTestId("chart-income_pie")).toHaveCount(0);
   // data table fallback
@@ -608,4 +610,90 @@ test("CR-020: dashboard charts — defaults, choose charts per user, data tables
   await charts.getByRole("button", { name: "Choose charts" }).click();
   for (const n of ["Bank balances (month end)", "Cumulative net (income − expenses)"]) await charts.getByRole("checkbox", { name: n }).uncheck();
   await charts.getByRole("checkbox", { name: "Income by budget" }).check();
+  await expect(charts.getByRole("status")).toHaveText("Chart choice saved");
+});
+
+// ---- CR-018: TOTP helper (RFC 6238, SHA-1, 30 s) for the E2E tests
+function totp(secret: string, offsetSteps = 0): string {
+  const alpha = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  let bits = "";
+  for (const ch of secret.replace(/[\s=]/g, "").toUpperCase()) bits += alpha.indexOf(ch).toString(2).padStart(5, "0");
+  const key = Buffer.from(bits.match(/.{8}/g)!.map((b) => parseInt(b, 2)));
+  const step = Math.floor(Date.now() / 1000 / 30) + offsetSteps;
+  const msg = Buffer.alloc(8);
+  msg.writeBigUInt64BE(BigInt(step));
+  const h = createHmac("sha1", key).update(msg).digest();
+  const o = h[h.length - 1] & 0xf;
+  const n = ((h[o] & 0x7f) << 24) | (h[o + 1] << 16) | (h[o + 2] << 8) | h[o + 3];
+  return String(n % 1_000_000).padStart(6, "0");
+}
+
+test("CR-018: two-step verification — setup, recovery codes, sign-in, trusted browser, admin reset", async ({ page }) => {
+  await login(page, "bm1");
+  await page.getByRole("link", { name: "My account" }).click();
+  const sec = page.getByRole("region", { name: "Two-step verification" });
+  await expect(sec).toContainText("Off");
+  await sec.getByRole("button", { name: "Set up two-step verification" }).click();
+  await expect(sec.getByRole("img", { name: "QR code for your authenticator app" })).toBeVisible();
+  const secret = (await sec.getByTestId("mfa-secret").textContent())!.replace(/\s/g, "");
+  expect(secret).toMatch(/^[A-Z2-7]{32}$/);
+  await sec.getByLabel("Code from the app").fill("000000");
+  await sec.getByRole("button", { name: "Turn on two-step verification" }).click();
+  await expect(sec.getByRole("alert")).toContainText("does not match");
+  await sec.getByLabel("Code from the app").fill(totp(secret));
+  await sec.getByRole("button", { name: "Turn on two-step verification" }).click();
+  const codes = sec.getByRole("list", { name: "Recovery codes" }).locator("code");
+  await expect(codes).toHaveCount(10);
+  const recovery = (await codes.first().textContent())!;
+  await page.screenshot({ path: "e2e-screenshots/light-mfa-recovery-codes.png", fullPage: true });
+  await expect(sec.getByRole("button", { name: "Continue" })).toBeDisabled();
+  await sec.getByLabel("I have saved my recovery codes").check();
+  await sec.getByRole("button", { name: "Continue" }).click();
+  await expect(sec).toContainText("10 of 10 recovery codes unused");
+  await logout(page);
+
+  // sign in: password, then the code
+  await page.getByLabel("Username").fill("bm1");
+  await page.getByLabel("Password").fill(PW);
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page.getByRole("heading", { name: "Two-step verification" })).toBeVisible();
+  await page.screenshot({ path: "e2e-screenshots/light-mfa-verify.png", fullPage: true });
+  await page.getByLabel("Authentication code").fill("123456");
+  await page.getByRole("button", { name: "Verify" }).click();
+  await expect(page.getByRole("alert")).toContainText("not valid");
+  await page.getByLabel("Authentication code").fill(totp(secret, 1));
+  await page.getByLabel("Trust this browser for 30 days").check();
+  await page.getByRole("button", { name: "Verify" }).click();
+  await expect(page.getByRole("navigation", { name: "Main navigation" })).toBeVisible();
+  await logout(page);
+  await login(page, "bm1"); // trusted browser: no code asked
+  await logout(page);
+
+  // a recovery code works in another browser context
+  const ctx2 = await page.context().browser()!.newContext({ baseURL: page.url().split("/").slice(0, 3).join("/") });
+  const p2 = await ctx2.newPage();
+  await p2.goto("/");
+  await p2.getByLabel("Username").fill("bm1");
+  await p2.getByLabel("Password").fill(PW);
+  await p2.getByRole("button", { name: "Sign in" }).click();
+  await p2.getByRole("button", { name: /Use a recovery code/ }).click();
+  await p2.getByLabel("Recovery code").fill(recovery);
+  await p2.getByRole("button", { name: "Verify" }).click();
+  await expect(p2.getByRole("navigation", { name: "Main navigation" })).toBeVisible();
+  await ctx2.close();
+
+  // administrator resets bm1's two-step verification
+  await login(page, "admin");
+  await page.getByRole("link", { name: "Users", exact: true }).click();
+  const row = page.getByRole("row", { name: /bm1/ });
+  await expect(row).toContainText("On");
+  await row.getByRole("button", { name: "Reset two-step" }).click();
+  const dlg = page.getByRole("dialog");
+  await dlg.getByLabel("Reason (required)").fill("E2E test");
+  await dlg.getByRole("button", { name: "Reset two-step verification" }).click();
+  await expect(dlg.getByRole("status")).toContainText("was reset");
+  await dlg.getByRole("button", { name: "Done" }).click();
+  await expect(page.getByRole("row", { name: /bm1/ })).toContainText("Not set up");
+  await logout(page);
+  await login(page, "bm1"); // local mode: optional again, no code asked (trusted browser was removed too)
 });
