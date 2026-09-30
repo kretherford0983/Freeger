@@ -535,3 +535,42 @@ test("CR-022 / CR-021: version in My Account for every user; bank balance total 
   await page.getByRole("link", { name: "System/About" }).click();
   await expect(page.getByText("Bind address")).toBeVisible();
 });
+
+// ---------------------------------------------------------------- v1.4.1
+test("CR-016: audit report signature page — wording, saved wordings, signers", async ({ page }) => {
+  await login(page, "bm1");
+  const post = await apiAs(page);
+  for (const n of ["Jane Trustee", "John Trustee"]) {
+    expect((await post("/api/entities", { entity_type: "INDIVIDUAL", primary_contact: n, confirmations: ["DUPLICATE_ENTITY"] })).status()).toBe(201);
+  }
+  await page.getByRole("link", { name: "Reports" }).click();
+  await page.getByLabel("Include audit review signature page").check();
+  await expect(page.getByLabel("Selected wording")).toContainText("We, the undersigned");
+  // new wording with an unknown variable is refused before opening the PDF
+  await page.getByLabel("New wording…").check();
+  await page.getByLabel("Signature page wording").fill("We, the Trustees of {ORG}, approve {YEAR}.");
+  await expect(page.getByRole("alert")).toContainText("Unknown variable(s): {YEAR}");
+  await page.getByLabel("Signature page wording").fill("We, the Trustees of {ORG}, approve the records for {FY}.");
+  await page.getByRole("button", { name: "Save for future use" }).click();
+  await expect(page.getByText("Wording saved for future use.")).toBeVisible();
+  await expect(page.getByLabel("Selected wording")).toContainText("We, the Trustees of {ORG}");
+  // signers
+  await page.getByRole("combobox", { name: "Signer 1" }).fill("Jane");
+  await page.getByRole("listbox").getByRole("option", { name: /Jane Trustee/ }).click();
+  await page.getByLabel("Signer 1 title").fill("Trustee");
+  await page.getByRole("button", { name: "+ Add signer" }).click();
+  await page.getByRole("combobox", { name: "Signer 2" }).fill("John");
+  await page.getByRole("listbox").getByRole("option", { name: /John Trustee/ }).click();
+  const href = await page.getByRole("link", { name: "Open printable PDF" }).getAttribute("href");
+  expect(href).toContain("signature_page=true");
+  expect(href).toContain("signature_template_id=");
+  expect(href!.match(/signer_id=/g)!.length).toBe(2);
+  const pdf = await page.request.get(href!);
+  expect(pdf.status()).toBe(200);
+  expect((await pdf.body()).subarray(0, 5).toString()).toBe("%PDF-");
+  await page.screenshot({ path: "e2e-screenshots/light-reports-signature.png", fullPage: true });
+  // delete the saved wording again
+  await page.getByRole("button", { name: "Delete saved wording 1" }).click();
+  await expect(page.getByRole("button", { name: "Delete saved wording 1" })).toHaveCount(0);
+  await expect(page.getByLabel("Default wording")).toBeChecked();
+});

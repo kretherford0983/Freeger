@@ -151,7 +151,8 @@ def test_migration_0003_0004_preserve_existing_data(tmp_path):
     ver = con.execute("SELECT version_num FROM alembic_version").fetchone()[0]
     con.close()
     assert row == (7, "DEPOSIT", "ACTIVE", None, 0)
-    assert ver == "0005_v13"
+    from alembic.script import ScriptDirectory
+    assert ver == ScriptDirectory.from_config(alembic_config(url)).get_current_head()  # latest revision
 
 
 def test_cr005_allocation_flag_api_and_autoclear(env, base):

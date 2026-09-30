@@ -73,6 +73,7 @@ S = {
     "cover_org": ParagraphStyle("co", parent=_ss["Title"], fontName=_FONT, fontSize=16, leading=20),
     "cover_title": ParagraphStyle("ct", parent=_ss["Title"], fontName=_FONT_BOLD, fontSize=28, leading=34),
     "cover_sub": ParagraphStyle("cs", parent=_ss["Title"], fontName=_FONT, fontSize=14, leading=19, spaceAfter=0),
+    "sig_body": ParagraphStyle("sb", parent=_ss["BodyText"], fontName=_FONT, fontSize=11.5, leading=16),
     "cellb": ParagraphStyle("cb", parent=_ss["BodyText"], fontName=_FONT_BOLD, fontSize=7.5, leading=9),
 }
 PAGE_W, PAGE_H = letter
@@ -178,6 +179,37 @@ class _Block(Flowable):
             f.drawOn(canvas, x, cur)
             cur -= sa
         self._draw_fn(canvas, x + (self.aw - self.fw) / 2, y, self.fw, self.fh)
+
+
+class _SignLine(Flowable):
+    """v1.4.1 CR-016: a line to write on, with a caption (plain text, not markup) underneath."""
+
+    def __init__(self, width: float, caption: str):
+        super().__init__()
+        self.lw, self.caption = width, caption
+        self.width, self.height = width, 0.42 * inch
+
+    def draw(self):
+        c = self.canv
+        c.setStrokeColor(colors.black)
+        c.setLineWidth(0.8)
+        c.line(0, 0.2 * inch, self.lw, 0.2 * inch)
+        c.setFillColor(colors.black)
+        c.setFont(_FONT, 10.5)
+        c.drawString(0, 0.02 * inch, self.caption[:90])
+
+
+def _signature_page(doc: "_AuditDoc", sp) -> list:
+    """Date line at the top, the wording, then up to five signature lines stacked vertically (~1 inch each)."""
+    f: list = [_Mark(doc, "Audit review signatures"), Spacer(1, 0.25 * inch), _SignLine(2.3 * inch, "Date"),
+               Spacer(1, 0.45 * inch)]
+    for para in [x.strip() for x in sp.text.split("\n\n") if x.strip()]:
+        f += [P(para, "sig_body"), Spacer(1, 10)]
+    f.append(Spacer(1, 0.2 * inch))
+    lines = [f"{name}, {title}" if title else name for name, title in sp.signers] or ["Name and title"] * 3
+    for cap in lines:
+        f += [Spacer(1, 0.55 * inch), _SignLine(3.4 * inch, cap)]
+    return [KeepTogether(f)]
 
 
 class _AuditDoc(SimpleDocTemplate):
@@ -398,7 +430,7 @@ FY_DOC_LABELS = {"APPROVAL": "Approval document", "AUDIT_SIGNOFF": "Audit Signof
 
 
 def build_audit_report(db: Session, ctx, settings, fy: FiscalYear, account_id: int | None = None,
-                       include_void: bool = True, layout: str = "audit") -> tuple[str, str, dict]:
+                       include_void: bool = True, layout: str = "audit", signature=None) -> tuple[str, str, dict]:
     """Returns (temp file path, download filename, summary). Caller deletes the file.
 
     Layout "audit" (v1.2.1 CR-002; v1.3 Q5): page 1 title page; page 2 Fiscal Year Review introduction; pages 3-n
@@ -406,6 +438,7 @@ def build_audit_report(db: Session, ctx, settings, fy: FiscalYear, account_id: i
     underneath within the 8.5x11 page width.
     Layout "close" (v1.3 CR-008, Fiscal Year Close report): identical, with the Fiscal Year documents (Approval,
     Audit Signoff, other) inserted after the Fiscal Year Review and before the budgets and transactions.
+    signature (v1.4.1 CR-016, audit layout): a resolved signatures.SignaturePage appended as the last page.
     """
     close_layout = layout == "close"
     report_name = "Fiscal Year Close Report" if close_layout else "End of Year Audit Report"
@@ -595,6 +628,10 @@ def build_audit_report(db: Session, ctx, settings, fy: FiscalYear, account_id: i
                 f"{x.original_filename} (removed {x.removed_at:%Y-%m-%d})" for x in removed), "small")]
         f.append(PageBreak())
 
+    if signature is not None:
+        if f and not isinstance(f[-1], PageBreak):
+            f.append(PageBreak())
+        f += _signature_page(doc, signature)
     if f and isinstance(f[-1], PageBreak):
         f.pop()  # no blank page at the end
     doc.build(f)
