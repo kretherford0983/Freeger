@@ -379,3 +379,22 @@ class MfaEnrollStartIn(In):
 
 class MfaResetIn(In):
     reason: str = Field(min_length=1, max_length=500)
+
+
+class BackupCreateIn(In):
+    """v1.4.1 CR-023."""
+    password: str = Field(min_length=1, max_length=200)
+    passphrase: str = Field(min_length=1, max_length=500)
+    passphrase_confirmation: str = Field(min_length=1, max_length=500)
+
+
+class RestoreUploadIn(In):
+    """v1.4.1 CR-024/025: announces the size of the backup file to be uploaded in parts."""
+    size: int = Field(gt=0, le=1024 ** 4)
+    filename: str = Field("backup.fmbak", max_length=255)
+
+
+class RestoreStartIn(In):
+    passphrase: str = Field(min_length=1, max_length=500)
+    password: str | None = Field(None, max_length=200)  # required once the application is initialized
+    confirm: str | None = Field(None, max_length=20)  # "RESTORE" once the application is initialized

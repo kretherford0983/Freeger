@@ -1,7 +1,7 @@
 # Changelog
 
-## 1.4.1 — unreleased (in development)
-The rest of the 1.4 plan (decisions in docs/implementation-notes.md §1a). Delivered so far:
+## 1.4.1 — 2026-09-30
+The rest of the 1.4 plan (decisions in docs/implementation-notes.md §1a). Beta: test channel only.
 - **CR-016 Audit review signature page.** Reports → End of Year Audit → *Include audit review signature page* adds a
   last page with a blank date line, the wording and a signature line for up to five signers (individual Entities,
   each with an optional title, printed as "Jane Doe, Trustee"). Choose the built-in default wording, one of up to four
@@ -20,11 +20,19 @@ The rest of the 1.4 plan (decisions in docs/implementation-notes.md §1a). Deliv
   code on a private computer. My account → *Two-step verification*: change authenticator, remove trusted browsers.
   Users (Administrator): *Reset two-step* (reason required). A locked-out sole Administrator can be reset on the
   server with `FinancialManagementPOC reset-mfa --user NAME`. Passkeys follow in 1.6.
+- **CR-023 Backup.** System/About → *Backup / Restore* (Administrators): one encrypted `.fmbak` file with the
+  database, all attachments and the encryption key (not `config.toml`), protected by a passphrase you choose.
+- **CR-025 Restore.** Upload a backup, enter its passphrase, your password and `RESTORE`: the current data is replaced,
+  kept as a safety copy in `pre-restore/`, the application reloads itself and everyone signs in again with the
+  accounts from the backup. Progress is shown step by step; any failure leaves (or puts back) the current data.
+- **CR-024 Restore when setting up.** The initialization wizard offers *Restore from a backup instead*, to move an
+  installation to a new server. See docs/backup-restore.md.
 
 Upgrade notes: database migrations `0006` (table `signature_template`), `0007` (column `app_user.dashboard_charts`)
 and `0008` (tables `user_mfa`, `mfa_recovery_code`, `trusted_device`; column `auth_session.mfa_pending`) are
 additive. Users already signed in stay signed in; on a server install each user sets up two-step verification at their
-next sign-in (have your phone ready when you first sign in after the upgrade).
+next sign-in (have your phone ready when you first sign in after the upgrade). New folders in the data directory:
+`backup-work/` (temporary) and `pre-restore/` (safety copy after a restore).
 
 ## 1.4.0 — 2026-09-30
 Change requests CR-017, CR-019, CR-021 and CR-022 (decisions recorded in docs/implementation-notes.md §1a). The rest of

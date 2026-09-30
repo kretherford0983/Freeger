@@ -18,8 +18,8 @@ from .config import Settings, is_loopback, load_settings
 from .db import make_engine, make_session_factory, upgrade_database
 from .deps import enforce_csrf
 from .errors import install_handlers
-from .routers import (attachments, audit_log, auth, bank_accounts, budgets, dashboard, entities, fiscal_years,
-                      register, reports, system, users)
+from .routers import (attachments, audit_log, auth, backup, bank_accounts, budgets, dashboard, entities,
+                      fiscal_years, register, reports, system, users)
 from .security import crypto
 from .services import bootstrap
 from .services.auth import LoginRateLimiter
@@ -27,6 +27,9 @@ from .services.auth import LoginRateLimiter
 log = logging.getLogger("fmpoc")
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 MAX_BODY = 6 * 1024 * 1024  # 5 MB attachment + multipart overhead
+UPLOAD_PART_LIMIT = 21 * 1024 * 1024  # v1.4.1: one 20 MB part of a backup upload
+_RESTORE_PART = re.compile(r"^/api/system/restore/uploads/[A-Za-z0-9_-]+$")
+MAINTENANCE_OPEN = {"/api/health", "/api/system/status"}
 
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; "
        "font-src 'self'; connect-src 'self'; frame-src 'self' blob:; object-src 'none'; base-uri 'none'; "
@@ -78,8 +81,11 @@ class BodyLimitMiddleware:
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
         headers = dict(scope.get("headers") or [])
+        limit = self.limit
+        if _RESTORE_PART.match(scope.get("path", "")) and scope.get("method") == "PUT":
+            limit = UPLOAD_PART_LIMIT  # v1.4.1 CR-024/025: backup upload parts
         cl = headers.get(b"content-length")
-        if cl is not None and cl.isdigit() and int(cl) > self.limit:
+        if cl is not None and cl.isdigit() and int(cl) > limit:
             resp = JSONResponse({"error": {"code": "PAYLOAD_TOO_LARGE", "message": "Request body too large."}}, 413)
             return await resp(scope, receive, send)
         seen = 0
@@ -89,7 +95,7 @@ class BodyLimitMiddleware:
             msg = await receive()
             if msg["type"] == "http.request":
                 seen += len(msg.get("body", b""))
-                if seen > self.limit:
+                if seen > limit:
                     raise _TooLarge()
             return msg
 
@@ -135,6 +141,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         raise RuntimeError("The portable encryption key in the application data 'secrets' directory is missing or "
                            "does not match this database. Restore the key file from the same data set.")
     app.state.key = km
+    # v1.4.1 CR-023/024/025: background backup/restore jobs, restore uploads, maintenance mode during a restore
+    from .services.backup import Jobs, cleanup_work
+    app.state.jobs, app.state.uploads, app.state.maintenance = Jobs(), {}, None
+    cleanup_work(settings)
 
     install_handlers(app)
 
@@ -143,7 +153,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         cid = uuid.uuid4().hex[:16]
         request.state.correlation_id = cid
         start = time.perf_counter()
-        response = await call_next(request)
+        path = request.url.path
+        if (app.state.maintenance and path.startswith("/api/") and path not in MAINTENANCE_OPEN
+                and not path.startswith("/api/system/restore/jobs/")):
+            response = JSONResponse({"error": {"code": "MAINTENANCE", "message": "A restore is in progress. Try again "
+                                                                                  "in a moment."}}, status_code=503)
+        else:
+            response = await call_next(request)
         h = response.headers
         h.setdefault("X-Content-Type-Options", "nosniff")
         h.setdefault("X-Frame-Options", "DENY")
@@ -164,7 +180,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.add_middleware(BodyLimitMiddleware)
 
-    for r in (system, auth, users, audit_log, fiscal_years, budgets, entities, bank_accounts, register,
+    for r in (system, backup, auth, users, audit_log, fiscal_years, budgets, entities, bank_accounts, register,
               attachments, dashboard, reports):
         app.include_router(r.router)
 

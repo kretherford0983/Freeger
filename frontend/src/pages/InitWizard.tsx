@@ -1,11 +1,13 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, preAuthCsrf } from "../api";
 import { ErrorBox, Field, GuardedForm } from "../components";
+import { RestorePanel } from "./BackupRestore";
 
 export default function InitWizard({ onDone }: { onDone: () => void }) {
   const [f, setF] = useState({ workspace_name: "", admin_username: "", admin_email: "", password: "", password_confirmation: "" });
   const [err, setErr] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
+  const [restore, setRestore] = useState(false); // v1.4.1 CR-024
   useEffect(() => {
     preAuthCsrf();
   }, []);
@@ -27,6 +29,15 @@ export default function InitWizard({ onDone }: { onDone: () => void }) {
       setBusy(false);
     }
   };
+  if (restore)
+    return (
+      <div className="center">
+        <div className="card auth-card wide-auth">
+          <RestorePanel wizard />
+          <p><button type="button" className="linklike" onClick={() => setRestore(false)}>Back to creating a new organization</button></p>
+        </div>
+      </div>
+    );
   return (
     <div className="center">
       <GuardedForm className="card auth-card" onSubmit={submit} aria-labelledby="init-title">
@@ -42,6 +53,7 @@ export default function InitWizard({ onDone }: { onDone: () => void }) {
         <Field label="Password Confirmation"><input required type="password" autoComplete="new-password" value={f.password_confirmation} onChange={set("password_confirmation")} /></Field>
         <p className="hint">The POC does not provide backup/restore. Protect the application data directory (database, attachments and secrets) yourself.</p>
         <button className="primary" disabled={busy} type="submit">Initialize</button>
+        <p className="hint">Moving an existing installation? <button type="button" className="linklike" onClick={() => setRestore(true)}>Restore from a backup instead</button></p>
       </GuardedForm>
     </div>
   );
