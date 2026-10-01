@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from ..deps import Ctx, get_db, require
-from ..schemas import FundraiserIn, FundraiserPreviewIn, ModulesIn
+from ..schemas import FundraiserBucketIn, FundraiserIn, FundraiserLineIn, FundraiserPreviewIn, ModulesIn
 from ..services import fundraisers as svc
 
 router = APIRouter(prefix="/api", tags=["fundraisers"])
@@ -90,3 +90,43 @@ def delete(fid: int, db: Session = Depends(get_db), ctx: Ctx = Depends(manager))
     svc.delete(db, ctx, svc.get(db, ctx, fid))
     db.commit()
     return {"deleted": True}
+
+
+# ------------------------------------------------------------------ v1.6.1 CR-034: manage (Budget Manager, Register User)
+def line_manager(db: Session = Depends(get_db), ctx: Ctx = Depends(require("fundraiser.lines"))) -> Ctx:
+    svc.require_module(db, ctx)
+    return ctx
+
+
+@router.post("/fundraisers/{fid}/buckets", status_code=201)
+def create_bucket(fid: int, body: FundraiserBucketIn, db: Session = Depends(get_db), ctx: Ctx = Depends(line_manager)):
+    f = svc.get(db, ctx, fid)
+    svc.create_bucket(db, ctx, f, body)
+    db.commit()
+    return svc.detail(db, ctx, f)
+
+
+@router.put("/fundraisers/{fid}/buckets/{bucket_id}")
+def update_bucket(fid: int, bucket_id: int, body: FundraiserBucketIn, db: Session = Depends(get_db),
+                  ctx: Ctx = Depends(line_manager)):
+    f = svc.get(db, ctx, fid)
+    svc.update_bucket(db, ctx, f, svc.get_bucket(db, f, bucket_id), body)
+    db.commit()
+    return svc.detail(db, ctx, f)
+
+
+@router.delete("/fundraisers/{fid}/buckets/{bucket_id}")
+def delete_bucket(fid: int, bucket_id: int, db: Session = Depends(get_db), ctx: Ctx = Depends(line_manager)):
+    f = svc.get(db, ctx, fid)
+    svc.delete_bucket(db, ctx, f, svc.get_bucket(db, f, bucket_id))
+    db.commit()
+    return svc.detail(db, ctx, f)
+
+
+@router.put("/fundraisers/{fid}/lines/{allocation_id}")
+def set_line(fid: int, allocation_id: int, body: FundraiserLineIn, db: Session = Depends(get_db),
+             ctx: Ctx = Depends(line_manager)):
+    f = svc.get(db, ctx, fid)
+    svc.set_line(db, ctx, f, allocation_id, body)
+    db.commit()
+    return svc.detail(db, ctx, f)

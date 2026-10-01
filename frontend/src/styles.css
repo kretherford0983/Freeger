@@ -306,3 +306,13 @@ td.ua { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space
 .att-list { margin: 0; padding-left: 18px; }
 .pre-wrap { white-space: pre-wrap; }
 .table-scroll { overflow-x: auto; }
+/* v1.6.1 CR-034 */
+.fr-excluded td { color: var(--muted); }
+.fr-excluded td.num { text-decoration: line-through; }
+.pill.fr-bucket { margin: 0 4px 2px 0; font-weight: 600; }
+.row-actions { white-space: nowrap; text-align: right; }
+.row-actions button { margin-left: 4px; }
+.fr-bucket-row { display: flex; align-items: flex-end; gap: 8px; margin: 6px 0; }
+.fr-bucket-row .field-inner { flex: 1; }
+.fr-lines td:nth-child(1), .fr-lines td:nth-child(3) { white-space: nowrap; }
+.pill.fr-bucket { white-space: nowrap; }

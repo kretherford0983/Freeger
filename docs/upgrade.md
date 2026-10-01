@@ -10,6 +10,7 @@ Before switching versions the installer stops the service and copies the whole d
 
 | Upgrade | Database change | Rollback |
 |---|---|---|
+| 1.6.0 → 1.6.1 | migration `0011` — **adds** tables `fundraiser_bucket`, `fundraiser_bucket_line`, `fundraiser_classification`, `fundraiser_exclusion` and column `attachment.fundraiser_id` | switch binaries **and** restore the pre-upgrade data backup |
 | 1.5.0 → 1.6.0 | migration `0010` — **adds** column `workspace.fundraisers_enabled` (off) and tables `fundraiser`, `fundraiser_budget` | switch binaries **and** restore the pre-upgrade data backup |
 | 1.4.1 → 1.5.0 | migration `0009` — **adds** column `app_user.dashboard_layout` (NULL = standard dashboard layout) | switch binaries **and** restore the pre-upgrade data backup |
 | 1.3.0 → 1.4.1 | migrations `0006`–`0008` (as below) | switch binaries **and** restore the pre-upgrade data backup |
@@ -29,6 +30,8 @@ were then asked to set up two-step verification; a backup → restore round trip
 (including two-step verification from the backup). Rollback: the 1.4.0 binaries alone refuse the 1.4.1 database
 ("Can't locate revision"); restoring the installer's data snapshot with the 1.4.0 binaries returned exactly the
 pre-upgrade data.
+Verified for 1.6.1: a 1.6.0 server with fundraisers was upgraded with `install.sh`: files identical, every row kept,
+`0011` applied (four new empty tables); rollback started 1.6.0 on the identical data.
 Verified for 1.6.0: a 1.5.0 server with data was upgraded with `install.sh` (test channel): `config.toml`, the key and
 the attachment byte-for-byte identical, every row kept, `0010` applied (two new empty tables, module off). Rollback
 (previous release + snapshot) started 1.5.0 on the identical data.

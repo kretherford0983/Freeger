@@ -228,7 +228,7 @@ export function Loading() {
 export const FY_DOCUMENT_TYPES: [string, string][] = [["APPROVAL", "Approval document"], ["AUDIT_SIGNOFF", "Audit Signoff"], ["UNSPECIFIED", "Other document"]];
 
 export function Attachments({ ownerType, ownerId, canUpload, canRemove, title = "Attachments", documentTypes, canRetype, reloadKey, onChanged, hint }: {
-  ownerType: "fiscal_year" | "transaction" | "allocation";
+  ownerType: "fiscal_year" | "transaction" | "allocation" | "fundraiser";
   ownerId: number;
   canUpload: boolean;
   canRemove: boolean;

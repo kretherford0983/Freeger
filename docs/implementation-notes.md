@@ -61,6 +61,20 @@ passkeys deferred).
 | UI | Menu item *Fundraisers* (when on); list with FY selector + Upcoming; detail page with notices, budgets, tiles, per-FY table, charts (lazy `FundraiserCharts`, shares the dashboard palette/helpers), transactions (link `/register?account=&search=`), attachments; create/edit dialog with budget options per eligible FY, warnings, filter warning and live preview. Admin: *Optional modules* on System/About. |
 | Delete | Allowed unless a Closed FY is involved (archive instead); CR-034 adds the "nothing classified/excluded/bucketed/attached" condition. |
 
+**v1.6.1 CR-034 Fundraiser management.**
+
+| Topic | Implementation |
+|---|---|
+| Access | `fundraiser.lines` = Budget Manager, Register User (buckets, line state, fundraiser documents). Viewing unchanged. |
+| Line state | One call sets the whole state of a line: `PUT /api/fundraisers/{id}/lines/{allocation_id}` `{excluded, exclusion_reason}` **or** `{classification: {kind, amount, note}, buckets: [{bucket_id, amount}]}`. Tables `fundraiser_exclusion`, `fundraiser_classification` (one per fundraiser + line), `fundraiser_bucket_line` (one per bucket + line). Audited `FUNDRAISER_LINE_UPDATED` (before/after). |
+| Figures | counted = 0 for an excluded line, else line amount − classified amount; fundraiser income/expense/net/ROI, the per-FY breakdown, the cumulative chart and the list use counted amounts. Totals also report cash float out/returned and excluded income/expense. Buckets: sum of assigned amounts per kind; unassigned = counted − assigned (per line, never negative). |
+| Validation | Classification kind must match the line's side (`CASH_FLOAT_OUT` = expense, `CASH_FLOAT_RETURNED` = income; only these two types — product owner), amount > 0 and ≤ the line; bucket amounts > 0, each bucket once, sum ≤ counted; an excluded line has neither; the line must currently be part of the fundraiser; buckets must belong to the fundraiser. If a line's amount is reduced later in the Register, the classification is clamped and the line is flagged "More than counted" when its bucket amounts exceed it. |
+| Closed FY | Lines whose budget is in a Closed FY cannot change; a bucket holding such lines cannot be deleted; when all the fundraiser's FYs are closed, buckets and documents are frozen too. |
+| Budget change | Removing/changing a budget drops the adjustments of lines no longer in the fundraiser's budgets (count recorded in the `FUNDRAISER_UPDATED` audit event). Lines hidden only by the description filter keep their (dormant) adjustments. |
+| Buckets | `POST/PUT/DELETE /api/fundraisers/{id}/buckets[/{bucket}]`; unique name per fundraiser (case-insensitive), ≤ 30; deleting a bucket unassigns its lines. |
+| Documents | `attachment.fundraiser_id` (migration `0011`); owner type `fundraiser` in the attachments API (same type/size checks, soft removal). Upload/remove need `fundraiser.lines`; reading needs `fundraiser.view` and the module switched on. |
+| Delete | Refused (`FUNDRAISER_IN_USE`) while buckets, classifications, exclusions or active documents exist — archive instead. |
+
 **v1.5.0 polish CR-026 … CR-032, HF-001 (product owner, 2026-09-30).** 1.5.0 improves existing functionality only
 (plan: project doc `claude/freedger-plan-1.5.md`).
 
