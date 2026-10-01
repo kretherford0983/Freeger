@@ -2,7 +2,24 @@
 
 Versions are `Breaking.Major.Minor` from 1.6.0 (docs/branching.md).
 
-## 1.6.0 — unreleased (in development)
+## 1.6.1 — unreleased (in development)
+Fundraiser module, part 2: managing a fundraiser's transactions. Beta: test channel only.
+- **CR-034 Managing a fundraiser** (Budget Managers and Register Users; everything is recorded in the audit log):
+  - **Buckets** — sub-categories such as *Food sales* or *Raffle*. Assign a transaction line to a bucket, or split it
+    across buckets by amount (*Manage* on the line). Each bucket shows income, expenses and net; whatever is not
+    assigned is shown as *Unassigned*. New chart: income, expenses and net per bucket.
+  - **Cash float** — mark the cash taken out for the cash box (*Cash float out*, on a withdrawal) and the float coming
+    back inside a deposit (*Cash float returned*), each with an amount. Those amounts are left out of the fundraiser's
+    income and expenses and shown separately.
+  - **Exclude a line** that does not belong to the fundraiser (a reason is required); it can be included again.
+  - **Fundraiser documents** — flyers, permits, tally sheets (PDF/JPG/PNG, 5 MB) on the fundraiser page; the
+    transactions' own attachments are still listed below them.
+  - Lines of a closed Fiscal Year are frozen. Removing a budget from a fundraiser drops the buckets, classifications
+    and exclusions of its lines. A fundraiser with buckets, classifications, exclusions or documents can be archived
+    but not deleted.
+  - Database migration `0011` (additive).
+
+## 1.6.0 — 2026-10-01
 First feature release of the 1.6 line: the optional Fundraiser module (core). Beta: test channel only.
 - **CR-033 Fundraiser module.** An Administrator turns it on under System/About → *Optional modules*; it then appears
   in the menu of Budget Managers, Budget Users, Register Users and Auditors (turning it off hides it and keeps the data).

@@ -13,7 +13,7 @@ from ..schemas import AttachmentTypeIn
 from ..services import attachments as svc
 
 router = APIRouter(prefix="/api", tags=["attachments"])
-Owner = Literal["fiscal_year", "transaction", "allocation"]
+Owner = Literal["fiscal_year", "transaction", "allocation", "fundraiser"]
 
 
 @router.get("/attachments")

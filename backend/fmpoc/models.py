@@ -337,6 +337,9 @@ class Attachment(Base):
     fiscal_year_id: Mapped[int | None] = mapped_column(ForeignKey("fiscal_year.id"), nullable=True, index=True)
     transaction_id: Mapped[int | None] = mapped_column(ForeignKey("register_transaction.id"), nullable=True, index=True)
     allocation_id: Mapped[int | None] = mapped_column(ForeignKey("transaction_allocation.id"), nullable=True, index=True)
+    # v1.6.1 CR-034: a fundraiser document (flyer, permit, tally sheet). No DB-level FK (added by a later migration
+    # on SQLite); the service checks the owner.
+    fundraiser_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     removed_at: Mapped[dt.datetime | None] = mapped_column(DateTime, nullable=True)
     removed_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"), nullable=True)
@@ -475,3 +478,51 @@ class FundraiserBudget(Base):
     budget: Mapped["Budget"] = relationship(lazy="joined")
 
     __table_args__ = (UniqueConstraint("fundraiser_id", "fiscal_year_id", "kind", name="uq_fundraiser_budget_fy_kind"),)
+
+
+# ---------------------------------------------------------------- v1.6.1 CR-034 fundraiser management
+class FundraiserBucket(Base):
+    """A sub-category of a fundraiser (e.g. food sales, raffle); holds income and expense lines by amount."""
+    __tablename__ = "fundraiser_bucket"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    fundraiser_id: Mapped[int] = mapped_column(ForeignKey("fundraiser.id"), index=True)
+    name: Mapped[str] = mapped_column(String(80))
+    description: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow)
+    created_by_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class FundraiserExclusion(Base):
+    """A line (allocation) taken out of a fundraiser although its budget and the filter include it."""
+    __tablename__ = "fundraiser_exclusion"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    fundraiser_id: Mapped[int] = mapped_column(ForeignKey("fundraiser.id"), index=True)
+    allocation_id: Mapped[int] = mapped_column(ForeignKey("transaction_allocation.id"))
+    reason: Mapped[str] = mapped_column(String(500))
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow)
+    created_by_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    __table_args__ = (UniqueConstraint("fundraiser_id", "allocation_id", name="uq_fundraiser_exclusion_line"),)
+
+
+class FundraiserClassification(Base):
+    """Part of a line that is not fundraiser income/expense: cash float taken out or returned."""
+    __tablename__ = "fundraiser_classification"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    fundraiser_id: Mapped[int] = mapped_column(ForeignKey("fundraiser.id"), index=True)
+    allocation_id: Mapped[int] = mapped_column(ForeignKey("transaction_allocation.id"))
+    kind: Mapped[str] = mapped_column(String(24))  # CASH_FLOAT_OUT | CASH_FLOAT_RETURNED
+    amount_cents: Mapped[int] = mapped_column(BigInteger)
+    note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow)
+    created_by_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    __table_args__ = (UniqueConstraint("fundraiser_id", "allocation_id", name="uq_fundraiser_classification_line"),)
+
+
+class FundraiserBucketLine(Base):
+    """Amount of a line assigned to a bucket (a line can be split across buckets)."""
+    __tablename__ = "fundraiser_bucket_line"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    bucket_id: Mapped[int] = mapped_column(ForeignKey("fundraiser_bucket.id"), index=True)
+    allocation_id: Mapped[int] = mapped_column(ForeignKey("transaction_allocation.id"))
+    amount_cents: Mapped[int] = mapped_column(BigInteger)
+    __table_args__ = (UniqueConstraint("bucket_id", "allocation_id", name="uq_fundraiser_bucket_line"),)

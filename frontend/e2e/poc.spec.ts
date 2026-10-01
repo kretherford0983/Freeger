@@ -903,6 +903,71 @@ test("CR-033: Administrator turns on fundraisers; Budget Manager creates, filter
   await logout(page);
 });
 
+// ---------------------------------------------------------------- v1.6.1 CR-034: fundraiser management
+test("CR-034: buckets, cash float, exclusion and fundraiser documents", async ({ page }) => {
+  // Budget Manager: no filter, the whole Operations budget (so the fundraiser has expense lines)
+  await login(page, "bm1");
+  await page.getByRole("link", { name: "Fundraisers" }).click();
+  await page.getByRole("link", { name: "Harvest Dinner" }).click();
+  await page.getByRole("button", { name: "Edit" }).click();
+  let dlg = page.getByRole("dialog", { name: "Edit fundraiser" });
+  await dlg.getByLabel("Description filter (optional)").fill("");
+  await dlg.getByLabel("Expense budget (FY2027)").selectOption({ label: "1000 Operations" });
+  await dlg.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByTestId("fr-lines").getByRole("button", { name: /^Manage line/ }).first()).toBeVisible();
+  await logout(page);
+
+  // Register User manages the lines
+  await login(page, "ru1", "Brand-New-Pass-99");
+  await page.getByRole("link", { name: "Fundraisers" }).click();
+  await page.getByRole("link", { name: "Harvest Dinner" }).click();
+  await page.getByRole("button", { name: "New bucket" }).click();
+  dlg = page.getByRole("dialog", { name: "New bucket" });
+  await dlg.getByLabel("Bucket name").fill("Food sales");
+  await dlg.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByTestId("fr-buckets")).toContainText("Food sales");
+  const before = await page.getByTestId("fr-totals").innerText();
+  // line 1: everything into the bucket
+  await page.getByTestId("fr-lines").getByRole("button", { name: /^Manage line/ }).nth(0).click();
+  dlg = page.getByRole("dialog", { name: "Manage transaction line" });
+  await dlg.getByRole("button", { name: "All remaining" }).click();
+  await expect(dlg.getByTestId("fr-line-remaining")).toContainText("unassigned $0.00");
+  await dlg.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByTestId("fr-lines").locator(".fr-bucket").first()).toContainText("Food sales");
+  await expect(page.getByTestId("fr-chart-buckets")).toBeVisible();
+  // line 2: cash float out for the whole amount -> not an expense of the fundraiser
+  await page.getByTestId("fr-lines").getByRole("button", { name: /^Manage line/ }).nth(1).click();
+  dlg = page.getByRole("dialog", { name: "Manage transaction line" });
+  await dlg.getByLabel("Cash float out").check();
+  await dlg.getByLabel("Cash float amount").fill("1.00");
+  await dlg.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByTestId("fr-adjustments")).toContainText("cash float taken out $1.00");
+  expect(await page.getByTestId("fr-totals").innerText()).not.toEqual(before);
+  // line 1 again: exclude (needs a reason; clears the bucket)
+  await page.getByTestId("fr-lines").getByRole("button", { name: /^Manage line/ }).nth(0).click();
+  dlg = page.getByRole("dialog", { name: "Manage transaction line" });
+  await dlg.getByLabel("Exclude this line from the fundraiser").check();
+  await dlg.getByLabel("Reason for excluding").fill("Not for the dinner");
+  await dlg.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByTestId("fr-lines").locator("tr.fr-excluded")).toContainText("Excluded: Not for the dinner");
+  await expect(page.getByTestId("fr-adjustments")).toContainText("1 excluded line");
+  // fundraiser document
+  await page.locator("section.attachments").filter({ hasText: "Fundraiser documents" }).locator("input[type=file]")
+    .setInputFiles({ name: "flyer.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[]/Count 0>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n") });
+  await expect(page.getByRole("heading", { name: "Fundraiser documents (1)" })).toBeVisible();
+  await page.screenshot({ path: "e2e-screenshots/light-fundraiser-manage.png", fullPage: true });
+  await logout(page);
+
+  // a fundraiser in use cannot be deleted
+  await login(page, "bm1");
+  await page.getByRole("link", { name: "Fundraisers" }).click();
+  await page.getByRole("link", { name: "Harvest Dinner" }).click();
+  await page.getByRole("button", { name: "Delete…" }).click();
+  await page.getByRole("dialog", { name: "Delete fundraiser" }).getByRole("button", { name: "Delete" }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "Archive it instead" })).toBeVisible();
+  await logout(page);
+});
+
 // ---------------------------------------------------------------- v1.5.0: license (AGPL-3.0) and source link
 test("v1.5.0: sign-in page and My Account offer the source code, license and third-party notices", async ({ page }) => {
   await page.goto("/");

@@ -1,7 +1,7 @@
 // v1.6.0 CR-033: Fundraiser module - list per Fiscal Year (+ upcoming), details, create/edit (Budget Manager).
 import { lazy, Suspense, useEffect, useRef, useState, type FormEvent } from "react";
 import { api, money, todayIso } from "../api";
-import { ErrorBox, Field, GuardedForm, Loading, Modal } from "../components";
+import { Attachments, ErrorBox, Field, GuardedForm, Loading, Modal } from "../components";
 import { Link, useRouter } from "../router";
 import { useMe } from "../App";
 
@@ -89,10 +89,14 @@ export function FundraiserDetail({ id }: { id: number }) {
   const [err, setErr] = useState<unknown>(null);
   const [editing, setEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [lineEdit, setLineEdit] = useState<any>(null); // v1.6.1 CR-034
+  const [bucketEdit, setBucketEdit] = useState<any>(null);
   const load = () => api.get(`/api/fundraisers/${id}`).then(setF, setErr);
   useEffect(() => { load(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!f) return <><ErrorBox error={err} />{err ? null : <Loading />}</>;
   const manage = can("fundraiser.manage");
+  const canLines = can("fundraiser.lines") && !f.read_only; // Budget Manager / Register User
+  const bucketName = (bid: number) => f.buckets.items.find((b: any) => b.id === bid)?.name || "?";
   const act = async (fn: () => Promise<any>) => {
     setErr(null);
     try { await fn(); } catch (x) { setErr(x); }
@@ -144,6 +148,42 @@ export function FundraiserDetail({ id }: { id: number }) {
         <div className="tile"><div className="tile-label">Net</div><div className={`tile-value ${Number(t.net) < 0 ? "neg" : ""}`}>{money(t.net)}</div></div>
         <div className="tile"><div className="tile-label">Return on expenses (net ÷ expenses)</div><div className="tile-value">{roiText(t.roi)}</div></div>
       </div>
+      {Number(t.cash_float_out) || Number(t.cash_float_returned) || t.excluded_lines ? (
+        <p className="hint" data-testid="fr-adjustments">
+          Not counted above:
+          {Number(t.cash_float_out) ? ` cash float taken out ${money(t.cash_float_out)};` : ""}
+          {Number(t.cash_float_returned) ? ` cash float returned ${money(t.cash_float_returned)};` : ""}
+          {t.excluded_lines ? ` ${t.excluded_lines} excluded line${t.excluded_lines === 1 ? "" : "s"} (income ${money(t.excluded_income)}, expenses ${money(t.excluded_expense)}).` : ""}
+        </p>
+      ) : null}
+
+      <section className="card" aria-labelledby="fr-buckets-h">
+        <div className="charts-head">
+          <h2 id="fr-buckets-h">Buckets</h2>
+          {canLines ? <button className="small" onClick={() => setBucketEdit({})}>New bucket</button> : null}
+        </div>
+        <p className="hint">Buckets break the fundraiser down by offering (for example food sales or a raffle). Assign amounts of transaction lines to them with <b>Manage</b> in the transaction list.</p>
+        {f.buckets.items.length ? (
+          <table className="table compact" data-testid="fr-buckets">
+            <thead><tr><th>Bucket</th><th className="num">Income</th><th className="num">Expenses</th><th className="num">Net</th><th /></tr></thead>
+            <tbody>
+              {f.buckets.items.map((b: any) => (
+                <tr key={b.id}>
+                  <td>{b.name}{b.description ? <span className="muted"> — {b.description}</span> : null}</td>
+                  <td className="num">{money(b.income)}</td><td className="num">{money(b.expense)}</td>
+                  <td className={`num ${Number(b.net) < 0 ? "neg" : ""}`}>{money(b.net)}</td>
+                  <td className="row-actions">{canLines ? <>
+                    <button className="small" aria-label={`Edit bucket ${b.name}`} onClick={() => setBucketEdit(b)}>Edit</button>
+                    <button className="small danger" aria-label={`Delete bucket ${b.name}`} onClick={() => window.confirm(`Delete the bucket “${b.name}”? Its lines become unassigned.`) && act(async () => setF(await api.delete(`/api/fundraisers/${id}/buckets/${b.id}`)))}>Delete</button>
+                  </> : null}</td>
+                </tr>
+              ))}
+              <tr className="subtotal-row"><td>Unassigned</td><td className="num">{money(f.buckets.unassigned.income)}</td><td className="num">{money(f.buckets.unassigned.expense)}</td><td className="num">{money(f.buckets.unassigned.net)}</td><td /></tr>
+            </tbody>
+          </table>
+        ) : <p className="muted">No buckets yet.</p>}
+      </section>
+
       {f.per_fiscal_year.length > 1 ? (
         <section className="card">
           <h2>By Fiscal Year</h2>
@@ -169,25 +209,32 @@ export function FundraiserDetail({ id }: { id: number }) {
           {f.filtered_out_lines ? ` ${f.filtered_out_lines} line${f.filtered_out_lines === 1 ? "" : "s"} in these budgets did not match the filter.` : ""}</p>
         {f.lines.length ? (
           <div className="table-scroll">
-            <table className="table" data-testid="fr-lines">
-              <thead><tr><th>Date</th><th>Type</th><th>Account</th><th>Entity</th><th>Description</th><th>Budget</th><th className="num">Amount</th><th>Attachments</th></tr></thead>
+            <table className="table fr-lines" data-testid="fr-lines">
+              <thead><tr><th>Date</th><th>Type</th><th>Account</th><th>Entity</th><th>Description</th><th>Budget</th><th className="num">Amount</th><th className="num">Counted</th><th>Buckets</th><th>Attachments</th>{canLines ? <th /> : null}</tr></thead>
               <tbody>
                 {f.lines.map((l: any) => (
-                  <tr key={l.allocation_id}>
+                  <tr key={l.allocation_id} className={l.excluded ? "fr-excluded" : ""}>
                     <td>{l.transaction_date}</td>
                     <td>{l.kind === "INCOME" ? "Income" : "Expense"}</td>
                     <td><Link to={`/register?account=${l.bank_account_id}&search=${encodeURIComponent(l.description || "")}`} title="Open in the Register">{l.bank_account}</Link></td>
                     <td>{l.entity || "—"}</td>
-                    <td>{l.description || "—"}</td>
+                    <td>{l.description || "—"}
+                      {l.excluded ? <span className="badge grey" title={l.exclusion_reason}>Excluded: {l.exclusion_reason}</span> : null}
+                      {l.classification ? <span className="badge blue" title={l.classification.note || ""}>{l.classification.label} {money(l.classification.amount)}</span> : null}
+                    </td>
                     <td>{l.budget}</td>
                     <td className="num">{money(l.amount)}</td>
+                    <td className="num">{l.excluded ? "—" : money(l.counted)}</td>
+                    <td>{l.buckets.length ? l.buckets.map((b: any) => <span key={b.bucket_id} className="pill fr-bucket">{bucketName(b.bucket_id)} {money(b.amount)}</span>) : <span className="muted">—</span>}
+                      {l.over_assigned ? <span className="badge yellow">More than counted</span> : null}</td>
                     <td>{l.attachments.length ? l.attachments.map((a: any) => <a key={a.id} href={a.content_url} target="_blank" rel="noopener" className="att-link">{a.original_filename}</a>) : <span className="muted">—</span>}</td>
+                    {canLines ? <td className="row-actions">{l.read_only ? <span className="muted">Closed</span> : <button className="small" aria-label={`Manage line ${l.description || l.transaction_date}`} onClick={() => setLineEdit(l)}>Manage</button>}</td> : null}
                   </tr>
                 ))}
               </tbody>
               <tfoot>
-                <tr className="total-row"><th colSpan={6}>Income</th><th className="num">{money(t.income)}</th><th /></tr>
-                <tr className="total-row"><th colSpan={6}>Expenses</th><th className="num">{money(t.expense)}</th><th /></tr>
+                <tr className="total-row"><th colSpan={7}>Income (counted)</th><th className="num">{money(t.income)}</th><th colSpan={canLines ? 3 : 2} /></tr>
+                <tr className="total-row"><th colSpan={7}>Expenses (counted)</th><th className="num">{money(t.expense)}</th><th colSpan={canLines ? 3 : 2} /></tr>
               </tfoot>
             </table>
           </div>
@@ -195,7 +242,12 @@ export function FundraiserDetail({ id }: { id: number }) {
       </section>
 
       <section className="card">
-        <h2>Attachments</h2>
+        <Attachments ownerType="fundraiser" ownerId={id} canUpload={canLines} canRemove={canLines} title="Fundraiser documents"
+          hint={<p className="hint">Documents about the fundraiser itself — flyers, permits, tally sheets.</p>} />
+      </section>
+
+      <section className="card">
+        <h2>Transaction attachments</h2>
         <p className="hint">Documents attached to the fundraiser's transactions (read only here; manage them in the Register).</p>
         {attachments.length ? (
           <ul className="att-list">
@@ -206,13 +258,15 @@ export function FundraiserDetail({ id }: { id: number }) {
         ) : <p className="muted">No attachments.</p>}
       </section>
 
+      {lineEdit ? <LineDialog f={f} line={lineEdit} onClose={() => setLineEdit(null)} onSaved={(x) => { setF(x); setLineEdit(null); }} /> : null}
+      {bucketEdit ? <BucketDialog f={f} bucket={bucketEdit} onClose={() => setBucketEdit(null)} onSaved={(x) => { setF(x); setBucketEdit(null); }} /> : null}
       {editing ? <FundraiserForm current={f} onClose={() => setEditing(false)} onSaved={(x) => { setF(x); setEditing(false); }} /> : null}
       {confirmDelete ? (
         <Modal title="Delete fundraiser" onClose={() => setConfirmDelete(false)}>
           <p>Delete <b>{f.name}</b>? Its settings are removed (the transactions stay in the Register). To keep it for reporting, archive it instead.</p>
           <div className="actions">
             <button onClick={() => setConfirmDelete(false)}>Cancel</button>
-            <button className="danger" onClick={() => act(async () => { await api.delete(`/api/fundraisers/${id}`); navigate("/fundraisers"); })}>Delete</button>
+            <button className="danger" onClick={() => { setConfirmDelete(false); act(async () => { await api.delete(`/api/fundraisers/${id}`); navigate("/fundraisers"); }); }}>Delete</button>
           </div>
         </Modal>
       ) : null}
@@ -330,6 +384,110 @@ function FundraiserForm({ current, onClose, onSaved }: { current?: any; onClose:
           <button type="button" onClick={onClose}>Cancel</button>
           <button className="primary" type="submit">{current ? "Save" : "Create fundraiser"}</button>
         </div>
+      </GuardedForm>
+    </Modal>
+  );
+}
+
+// ------------------------------------------------------------------ v1.6.1 CR-034: buckets and line management
+function BucketDialog({ f, bucket, onClose, onSaved }: { f: any; bucket: any; onClose: () => void; onSaved: (f: any) => void }) {
+  const [v, setV] = useState({ name: bucket.name || "", description: bucket.description || "" });
+  const [err, setErr] = useState<unknown>(null);
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    setErr(null);
+    const body = { name: v.name, description: v.description || null };
+    try {
+      onSaved(bucket.id ? await api.put(`/api/fundraisers/${f.id}/buckets/${bucket.id}`, body) : await api.post(`/api/fundraisers/${f.id}/buckets`, body));
+    } catch (x) { setErr(x); }
+  };
+  return (
+    <Modal title={bucket.id ? "Edit bucket" : "New bucket"} onClose={onClose}>
+      <GuardedForm onSubmit={submit}>
+        <ErrorBox error={err} />
+        <Field label="Bucket name" hint="For example: Food sales, Raffle, Tickets."><input required maxLength={80} value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} /></Field>
+        <Field label="Description (optional)"><input maxLength={500} value={v.description} onChange={(e) => setV({ ...v, description: e.target.value })} /></Field>
+        <div className="actions"><button type="button" onClick={onClose}>Cancel</button><button className="primary" type="submit">Save</button></div>
+      </GuardedForm>
+    </Modal>
+  );
+}
+
+const toCents = (s: string) => Math.round(Number(s || 0) * 100);
+const fromCents = (c: number) => (c / 100).toFixed(2);
+
+function LineDialog({ f, line, onClose, onSaved }: { f: any; line: any; onClose: () => void; onSaved: (f: any) => void }) {
+  const ctype = f.classification_types.find((c: any) => c.applies_to === line.kind);
+  const [excluded, setExcluded] = useState<boolean>(line.excluded);
+  const [reason, setReason] = useState<string>(line.exclusion_reason || "");
+  const [cls, setCls] = useState<boolean>(!!line.classification);
+  const [clsAmount, setClsAmount] = useState<string>(line.classification?.amount || "");
+  const [clsNote, setClsNote] = useState<string>(line.classification?.note || "");
+  const [amounts, setAmounts] = useState<Record<number, string>>(() => Object.fromEntries(line.buckets.map((b: any) => [b.bucket_id, b.amount])));
+  const [err, setErr] = useState<unknown>(null);
+  const total = toCents(line.amount);
+  const counted = total - (cls ? toCents(clsAmount) : 0);
+  const assigned = Object.values(amounts).reduce((n, a) => n + toCents(a), 0);
+  const remaining = counted - assigned;
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    setErr(null);
+    const body = excluded
+      ? { excluded: true, exclusion_reason: reason }
+      : {
+          excluded: false,
+          classification: cls && ctype ? { kind: ctype.kind, amount: clsAmount, note: clsNote || null } : null,
+          buckets: Object.entries(amounts).filter(([, a]) => toCents(a) > 0).map(([bid, a]) => ({ bucket_id: Number(bid), amount: fromCents(toCents(a)) })),
+        };
+    try { onSaved(await api.put(`/api/fundraisers/${f.id}/lines/${line.allocation_id}`, body)); } catch (x) { setErr(x); }
+  };
+  return (
+    <Modal title="Manage transaction line" onClose={onClose}>
+      <GuardedForm onSubmit={submit}>
+        <p><b>{line.transaction_date}</b> · {line.kind === "INCOME" ? "Income" : "Expense"} · {line.description || line.entity || "—"} · <b>{money(line.amount)}</b></p>
+        <ErrorBox error={err} />
+        <label className="check"><input type="checkbox" checked={excluded} onChange={(e) => setExcluded(e.target.checked)} /> Exclude this line from the fundraiser</label>
+        {excluded ? (
+          <Field label="Reason for excluding" hint="The line stays in the Register and its budget; it just does not count for this fundraiser."><input required maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
+        ) : (
+          <>
+            {ctype ? (
+              <fieldset className="fr-budgets">
+                <legend>Special classification</legend>
+                <label className="check"><input type="checkbox" checked={cls} onChange={(e) => setCls(e.target.checked)} /> {ctype.label}</label>
+                <p className="hint">{line.kind === "EXPENSE"
+                  ? "Cash taken out of the bank for the cash box. It is not an expense of the fundraiser."
+                  : "Cash float coming back inside this deposit. It is not income of the fundraiser."}</p>
+                {cls ? (
+                  <div className="row fields">
+                    <Field label="Cash float amount"><input required inputMode="decimal" value={clsAmount} onChange={(e) => setClsAmount(e.target.value)} placeholder={line.amount} /></Field>
+                    <Field label="Note (optional)"><input maxLength={500} value={clsNote} onChange={(e) => setClsNote(e.target.value)} /></Field>
+                  </div>
+                ) : null}
+              </fieldset>
+            ) : null}
+            <fieldset className="fr-budgets">
+              <legend>Buckets</legend>
+              {f.buckets.items.length ? (
+                <>
+                  {f.buckets.items.map((b: any) => (
+                    <div key={b.id} className="fr-bucket-row">
+                      <label className="field-inner"><span className="field-label">{b.name}</span>
+                        <input inputMode="decimal" aria-label={`Amount for ${b.name}`} value={amounts[b.id] || ""} placeholder="0.00"
+                               onChange={(e) => setAmounts({ ...amounts, [b.id]: e.target.value })} /></label>
+                      <button type="button" className="small" disabled={remaining + toCents(amounts[b.id] || "") <= 0}
+                              onClick={() => setAmounts({ ...amounts, [b.id]: fromCents(remaining + toCents(amounts[b.id] || "")) })}>All remaining</button>
+                    </div>
+                  ))}
+                  <p className={`hint ${remaining < 0 ? "neg" : ""}`} role="status" data-testid="fr-line-remaining">
+                    Counts for the fundraiser: {money(fromCents(counted))} · assigned {money(fromCents(assigned))} · {remaining < 0 ? `over by ${money(fromCents(-remaining))}` : `unassigned ${money(fromCents(remaining))}`}
+                  </p>
+                </>
+              ) : <p className="muted">No buckets yet — create one in the Buckets section first.</p>}
+            </fieldset>
+          </>
+        )}
+        <div className="actions"><button type="button" onClick={onClose}>Cancel</button><button className="primary" type="submit" disabled={!excluded && remaining < 0}>Save</button></div>
       </GuardedForm>
     </Modal>
   );

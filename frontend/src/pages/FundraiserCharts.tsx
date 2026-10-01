@@ -1,6 +1,6 @@
 // v1.6.0 CR-033: fundraiser charts - cumulative income vs expenses (event dates marked) and income vs expenses donut.
 // Same palette and conventions as the dashboard charts (income = slot 1 blue, expense = slot 2 orange).
-import { Cell, Legend, Line, LineChart, Pie, PieChart, ReferenceArea, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from "recharts";
+import { Bar, BarChart, Cell, Legend, Line, LineChart, Pie, PieChart, ReferenceArea, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from "recharts";
 import { money } from "../api";
 import { axisProps, CHROME, ChartCard, compact, DataTable, Masonry, SERIES, tooltipStyle, useNarrow } from "./Charts";
 
@@ -76,10 +76,32 @@ export default function FundraiserCharts({ f, theme }: { f: any; theme: "light" 
     </ChartCard>
   );
 
+  // v1.6.1 CR-034: income / expenses / net per bucket (and what is not assigned to a bucket)
+  const bucketRows = [...f.buckets.items, ...(f.buckets.items.length ? [{ name: "Unassigned", ...f.buckets.unassigned }] : [])]
+    .map((b: any) => ({ label: b.name, income: Number(b.income), expense: Number(b.expense), net: Number(b.net) }));
+  const buckets = bucketRows.length ? (
+    <ChartCard key="buckets" title="Buckets: income, expenses and net" testId="fr-chart-buckets">
+      <ResponsiveContainer width="100%" height={Math.max(180, 64 * bucketRows.length + 60)}>
+        <BarChart data={bucketRows} layout="vertical" margin={{ top: 4, right: 16, bottom: 0, left: 4 }} barGap={2}>
+          <CartesianGrid stroke={c.grid} horizontal={false} />
+          <XAxis type="number" {...ax} tickFormatter={compact} />
+          <YAxis type="category" dataKey="label" {...ax} width={120} />
+          <Tooltip {...tt} formatter={(v: any, n: any) => [moneyFmt(v), n]} />
+          <Legend wrapperStyle={{ color: c.text, fontSize: 13 }} />
+          <Bar dataKey="income" name="Income" fill={s[0]} radius={[0, 4, 4, 0]} maxBarSize={14} isAnimationActive={false} />
+          <Bar dataKey="expense" name="Expenses" fill={s[1]} radius={[0, 4, 4, 0]} maxBarSize={14} isAnimationActive={false} />
+          <Bar dataKey="net" name="Net" fill={c.other} radius={[0, 4, 4, 0]} maxBarSize={14} isAnimationActive={false} />
+        </BarChart>
+      </ResponsiveContainer>
+      <DataTable head={["Bucket", "Income", "Expenses", "Net"]} rows={bucketRows.map((b: any) => [b.label, moneyFmt(b.income), moneyFmt(b.expense), moneyFmt(b.net)])} />
+    </ChartCard>
+  ) : null;
+
   return (
     <section className="card charts" aria-labelledby="fr-charts-h">
       <h2 id="fr-charts-h">Charts</h2>
-      <Masonry narrow={narrow} items={[{ key: "cum", height: 330, el: cumulative }, { key: "donut", height: 300, el: donut }]} />
+      <Masonry narrow={narrow} items={[{ key: "cum", height: 330, el: cumulative }, { key: "donut", height: 300, el: donut },
+                                      ...(buckets ? [{ key: "buckets", height: 64 * bucketRows.length + 130, el: buckets }] : [])]} />
     </section>
   );
 }

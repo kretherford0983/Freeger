@@ -21,14 +21,16 @@ from sqlalchemy.orm import Session
 
 from .. import audit
 from ..errors import AppError, conflict, forbidden, not_found, validation
-from ..models import Attachment, FiscalYear, RegisterTransaction, TransactionAllocation, utcnow
+from ..models import Attachment, FiscalYear, Fundraiser, RegisterTransaction, TransactionAllocation, utcnow
 from .common import get_scoped
 from .register import is_closed_protected
 
 MAX_BYTES = 5 * 1024 * 1024
 CHUNK = 64 * 1024
 EXT_TYPES = {".pdf": "application/pdf", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png"}
-OWNER_TYPES = ("fiscal_year", "transaction", "allocation")
+OWNER_TYPES = ("fiscal_year", "transaction", "allocation", "fundraiser")
+OWNER_COLUMN = {"fiscal_year": "fiscal_year_id", "transaction": "transaction_id", "allocation": "allocation_id",
+                "fundraiser": "fundraiser_id"}
 
 
 def sanitize_filename(name: str | None) -> str:
@@ -87,11 +89,21 @@ def _resolve_owner(db: Session, ctx, owner_type: str, owner_id: int):
         if a is None or a.transaction.workspace_id != ctx.workspace_id or a.removed_at is not None:
             raise not_found("Allocation")
         return a, a.transaction, None
+    if owner_type == "fundraiser":  # v1.6.1 CR-034: fundraiser documents (module must be on)
+        from . import fundraisers as fsvc
+        fsvc.require_module(db, ctx)
+        ctx.require("fundraiser.view")
+        return get_scoped(db, Fundraiser, owner_id, ctx, "Fundraiser"), None, None
     raise validation("Unsupported owner type.", "owner_type")
 
 
 def check_manage(ctx, owner_type: str) -> None:
-    ctx.require("fiscal_year.manage" if owner_type == "fiscal_year" else "transaction.manage")
+    ctx.require({"fiscal_year": "fiscal_year.manage", "fundraiser": "fundraiser.lines"}.get(owner_type, "transaction.manage"))
+
+
+def _fundraiser_open(db: Session, ctx, f: Fundraiser) -> None:
+    from . import fundraisers as fsvc
+    fsvc._require_open(db, ctx, f)
 
 
 FY_DOCUMENT_TYPES = ("APPROVAL", "AUDIT_SIGNOFF", "UNSPECIFIED")  # v1.3 CR-007 (user-selectable)
@@ -131,6 +143,8 @@ def store(db: Session, ctx, settings, owner_type: str, owner_id: int, filename: 
           document_type: str | None = None) -> Attachment:
     check_manage(ctx, owner_type)
     owner, _txn, _fy = _resolve_owner(db, ctx, owner_type, owner_id)
+    if owner_type == "fundraiser":
+        _fundraiser_open(db, ctx, owner)
     if owner_type == "fiscal_year":
         document_type = document_type or "UNSPECIFIED"
         if document_type not in FY_DOCUMENT_TYPES:
@@ -154,8 +168,7 @@ def store(db: Session, ctx, settings, owner_type: str, owner_id: int, filename: 
         att = Attachment(workspace_id=ctx.workspace_id, original_filename=clean, storage_key=key, mime_type=detected,
                          size_bytes=len(data), sha256=hashlib.sha256(data).hexdigest(),
                          uploaded_by_user_id=ctx.user.id, active=True, document_type=document_type)
-        setattr(att, {"fiscal_year": "fiscal_year_id", "transaction": "transaction_id",
-                      "allocation": "allocation_id"}[owner_type], owner.id)
+        setattr(att, OWNER_COLUMN[owner_type], owner.id)
         db.add(att)
         db.flush()
         audit.record(db, ctx, "ATTACHMENT_ADDED", "attachment", att.id, None, snapshot(att))
@@ -191,7 +204,8 @@ def store(db: Session, ctx, settings, owner_type: str, owner_id: int, filename: 
 def snapshot(a: Attachment) -> dict:
     return {"id": a.id, "original_filename": a.original_filename, "mime_type": a.mime_type, "size_bytes": a.size_bytes,
             "sha256": a.sha256, "fiscal_year_id": a.fiscal_year_id, "transaction_id": a.transaction_id,
-            "allocation_id": a.allocation_id, "active": a.active, "document_type": a.document_type,
+            "allocation_id": a.allocation_id, "fundraiser_id": a.fundraiser_id, "active": a.active,
+            "document_type": a.document_type,
             "system_generated": bool(a.system_generated)}
 
 
@@ -203,8 +217,7 @@ def out(a: Attachment) -> dict:
 
 def list_for(db: Session, ctx, owner_type: str, owner_id: int, include_removed: bool) -> list[Attachment]:
     owner, _t, _f = _resolve_owner(db, ctx, owner_type, owner_id)
-    col = {"fiscal_year": Attachment.fiscal_year_id, "transaction": Attachment.transaction_id,
-           "allocation": Attachment.allocation_id}[owner_type]
+    col = getattr(Attachment, OWNER_COLUMN[owner_type])
     q = select(Attachment).where(col == owner.id).order_by(Attachment.id)
     if not include_removed:
         q = q.where(Attachment.active.is_(True))
@@ -212,7 +225,12 @@ def list_for(db: Session, ctx, owner_type: str, owner_id: int, include_removed: 
 
 
 def get(db: Session, ctx, att_id: int) -> Attachment:
-    return get_scoped(db, Attachment, att_id, ctx, "Attachment")
+    a = get_scoped(db, Attachment, att_id, ctx, "Attachment")
+    if a.fundraiser_id:  # v1.6.1 CR-034: fundraiser documents follow the module switch and its viewers
+        from . import fundraisers as fsvc
+        fsvc.require_module(db, ctx)
+        ctx.require("fundraiser.view")
+    return a
 
 
 def path_for(settings, a: Attachment) -> Path:
@@ -231,6 +249,9 @@ def remove(db: Session, ctx, a: Attachment) -> Attachment:
         fy = db.get(FiscalYear, a.fiscal_year_id)
         if fy.status == "CLOSED":
             raise conflict("FISCAL_YEAR_CLOSED", "Closed Fiscal Year documentation cannot be removed.")
+    elif a.fundraiser_id:
+        ctx.require("fundraiser.lines")
+        _fundraiser_open(db, ctx, db.get(Fundraiser, a.fundraiser_id))
     else:
         ctx.require("transaction.manage")
         t = db.get(RegisterTransaction, a.transaction_id) if a.transaction_id else db.get(TransactionAllocation, a.allocation_id).transaction
