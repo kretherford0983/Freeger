@@ -1,5 +1,29 @@
 # Changelog
 
+Versions are `Breaking.Major.Minor` from 1.6.0 (docs/branching.md).
+
+## 1.6.0 — unreleased (in development)
+First feature release of the 1.6 line: the optional Fundraiser module (core). Beta: test channel only.
+- **CR-033 Fundraiser module.** An Administrator turns it on under System/About → *Optional modules*; it then appears
+  in the menu of Budget Managers, Budget Users, Register Users and Auditors (turning it off hides it and keeps the data).
+  - **Budget Managers** create a fundraiser as soon as it is agreed — name, description and the event date(s); budgets
+    can be added later. Up to one income and one expense budget per Fiscal Year, from at most two adjacent Fiscal
+    Years: a Fiscal Year's budgets can be chosen once it is set up and open, when the event is inside it or within
+    3 months of its start or end (e.g. preparation in November for a January event). A fundraiser for an event in a
+    closed Fiscal Year cannot be set up; budgets of a closed Fiscal Year are frozen. Fundraisers can be archived, and
+    deleted while nothing depends on them.
+  - **What counts:** every active line allocated to the chosen budgets (a parent budget includes its sub-budgets),
+    whatever its date; optionally only lines whose description contains a filter text (or matches a regular
+    expression). Warnings for an "Other" budget, a parent budget, a filter and a budget shared with another fundraiser;
+    the form previews how many lines will be included.
+  - **Everyone with access** sees the fundraisers of a Fiscal Year (or *Upcoming — no Fiscal Year yet*) and each
+    fundraiser's details: income, expenses, net and return, a per-Fiscal-Year breakdown, charts (cumulative income and
+    expenses with the event marked; income vs expenses), every included transaction with a link to the Register, and
+    the transactions' attachments.
+  - Everything is recorded in the audit log. Database migration `0010` (additive).
+- Register: a link can open a bank account's register with a search filled in (used by fundraiser lines).
+- New dependency google-re2 (BSD) for regular-expression filters that can never hang the server.
+
 ## 1.5.0 — 2026-10-01
 Polish of existing features and easier installation; nothing new in the data model except one per-user setting. Beta: test channel only.
 - **Sign-in from a bookmarked page** (found testing 1.4.1): signing in — including two-step verification — now always

@@ -406,3 +406,24 @@ class RestoreStartIn(In):
     passphrase: str = Field(min_length=1, max_length=500)
     password: str | None = Field(None, max_length=200)  # required once the application is initialized
     confirm: str | None = Field(None, max_length=20)  # "RESTORE" once the application is initialized
+
+
+# ------------------------------------------------------------------ v1.6.0 CR-033 fundraisers
+class FundraiserIn(In):
+    name: Str(120)
+    description: OptStr(2000) = None
+    start_date: Date
+    end_date: OptDate = None  # defaults to the start date (one-day event)
+    budget_ids: list[int] = Field(default_factory=list, max_length=4)
+    filter_text: OptStr(200) = None
+    filter_regex: bool = False
+
+
+class FundraiserPreviewIn(In):
+    budget_ids: list[int] = Field(default_factory=list, max_length=4)
+    filter_text: OptStr(200) = None
+    filter_regex: bool = False
+
+
+class ModulesIn(In):
+    fundraisers: bool

@@ -10,6 +10,7 @@ Before switching versions the installer stops the service and copies the whole d
 
 | Upgrade | Database change | Rollback |
 |---|---|---|
+| 1.5.0 → 1.6.0 | migration `0010` — **adds** column `workspace.fundraisers_enabled` (off) and tables `fundraiser`, `fundraiser_budget` | switch binaries **and** restore the pre-upgrade data backup |
 | 1.4.1 → 1.5.0 | migration `0009` — **adds** column `app_user.dashboard_layout` (NULL = standard dashboard layout) | switch binaries **and** restore the pre-upgrade data backup |
 | 1.3.0 → 1.4.1 | migrations `0006`–`0008` (as below) | switch binaries **and** restore the pre-upgrade data backup |
 | 1.4.0 → 1.4.1 | migrations `0006` — **adds** table `signature_template`; `0007` — **adds** column `app_user.dashboard_charts`; `0008` — **adds** tables `user_mfa`, `mfa_recovery_code`, `trusted_device` and column `auth_session.mfa_pending`. **After the upgrade every user of a server install sets up two-step verification at the next sign-in** — see below | switch binaries **and** restore the pre-upgrade data backup |
@@ -28,6 +29,9 @@ were then asked to set up two-step verification; a backup → restore round trip
 (including two-step verification from the backup). Rollback: the 1.4.0 binaries alone refuse the 1.4.1 database
 ("Can't locate revision"); restoring the installer's data snapshot with the 1.4.0 binaries returned exactly the
 pre-upgrade data.
+Verified for 1.6.0: a 1.5.0 server with data was upgraded with `install.sh` (test channel): `config.toml`, the key and
+the attachment byte-for-byte identical, every row kept, `0010` applied (two new empty tables, module off). Rollback
+(previous release + snapshot) started 1.5.0 on the identical data.
 Verified for 1.5.0: a 1.4.1 server installation with data (users, accounts, transactions, an attachment) was
 upgraded with the one-command `install.sh` from a (local) release: it chose the test pre-release, verified the
 checksums, read the port from `config.toml`, snapshotted the data and ran `install-server.sh`. `config.toml`, the key

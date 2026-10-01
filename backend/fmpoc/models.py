@@ -50,6 +50,8 @@ class Workspace(Base):
     # Key check value of the portable encryption key; detects key/database mismatch.
     key_check: Mapped[str | None] = mapped_column(String(64), nullable=True)
     next_entity_number: Mapped[int] = mapped_column(Integer, default=1)
+    # v1.6.0 CR-033: optional modules, switched on by an Administrator
+    fundraisers_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=sa_false(), nullable=False)
 
 
 class Role(Base):
@@ -435,3 +437,41 @@ class TrustedDevice(Base):
     last_used_at: Mapped[dt.datetime | None] = mapped_column(DateTime, nullable=True)
     expires_at: Mapped[dt.datetime] = mapped_column(DateTime)
     revoked_at: Mapped[dt.datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+# ---------------------------------------------------------------- v1.6.0 CR-033 fundraisers
+class Fundraiser(Base):
+    __tablename__ = "fundraiser"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspace.id"), index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    start_date: Mapped[dt.date] = mapped_column(Date, index=True)  # physical event dates (display only)
+    end_date: Mapped[dt.date] = mapped_column(Date)
+    filter_text: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    filter_regex: Mapped[bool] = mapped_column(Boolean, default=False, server_default=sa_false(), nullable=False)
+    archived_at: Mapped[dt.datetime | None] = mapped_column(DateTime, nullable=True)
+    archived_by_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow)
+    created_by_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+    updated_by_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    budgets: Mapped[list["FundraiserBudget"]] = relationship(
+        back_populates="fundraiser", lazy="selectin", cascade="all, delete-orphan", order_by="FundraiserBudget.id")
+
+
+class FundraiserBudget(Base):
+    """A budget chosen for a fundraiser: at most one INCOME and one EXPENSE budget per Fiscal Year, at most two
+    Fiscal Years (adjacent). A parent budget includes all its children."""
+    __tablename__ = "fundraiser_budget"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    fundraiser_id: Mapped[int] = mapped_column(ForeignKey("fundraiser.id"), index=True)
+    fiscal_year_id: Mapped[int] = mapped_column(ForeignKey("fiscal_year.id"))
+    budget_id: Mapped[int] = mapped_column(ForeignKey("budget.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(10))  # INCOME | EXPENSE
+
+    fundraiser: Mapped[Fundraiser] = relationship(back_populates="budgets")
+    budget: Mapped["Budget"] = relationship(lazy="joined")
+
+    __table_args__ = (UniqueConstraint("fundraiser_id", "fiscal_year_id", "kind", name="uq_fundraiser_budget_fy_kind"),)

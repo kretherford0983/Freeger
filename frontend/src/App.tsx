@@ -18,6 +18,7 @@ import Register from "./pages/Register";
 import Entities from "./pages/Entities";
 import Account from "./pages/Account";
 import Reports from "./pages/Reports";
+import Fundraisers, { FundraiserDetail } from "./pages/Fundraisers";
 
 export interface Me {
   id: number;
@@ -31,6 +32,7 @@ export interface Me {
   dashboard_charts?: string[];
   dashboard_layout?: { key: string; visible: boolean }[]; // v1.5.0 CR-031
   dashboard_layout_customized?: boolean;
+  modules?: { fundraisers?: boolean }; // v1.6.0 CR-033
   mfa_pending?: "VERIFY" | "ENROLL" | null; // v1.4.1 CR-018
   csrf_token: string;
 }
@@ -127,6 +129,7 @@ function navFor(me: Me) {
     ["/entities", "Entities"],
     ["/reports", "Reports"],
   ];
+  if (me.modules?.fundraisers) fin.splice(6, 0, ["/fundraisers", "Fundraisers"]); // v1.6.0 CR-033 (optional module)
   if (me.security_domain === "ADMINISTRATOR") return [["/", "Dashboard"], ["/users", "Users"], ["/audit-log", "Audit Log"], ["/about", "System/About"]];
   if (me.security_domain === "AUDITOR") return [...fin, ["/users", "Users"], ["/audit-log", "Audit Log"]];
   return fin;
@@ -172,6 +175,8 @@ function Shell({ workspace, warning, onLogout }: { workspace: string; warning: b
   else if (path === "/register") page = guard("/register", <Register />);
   else if (path === "/entities") page = guard("/entities", <Entities />);
   else if (path === "/reports") page = guard("/reports", <Reports />);
+  else if (path === "/fundraisers") page = guard("/fundraisers", <Fundraisers />);
+  else if ((m = match("/fundraisers/:id", path))) page = guard("/fundraisers", <FundraiserDetail id={Number(m.id)} />);
   else page = <p>Page not found.</p>;
 
   const roleNames: Record<string, string> = {

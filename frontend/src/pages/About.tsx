@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import { BuildDetails, Loading } from "../components";
+import { BuildDetails, ErrorBox, Loading } from "../components";
 import { BackupRestore } from "./BackupRestore";
 
 export default function About() {
@@ -16,7 +16,37 @@ export default function About() {
       {a.bind_host ? <dl className="dl"><dt>Bind address</dt><dd>{a.bind_host}:{a.port}</dd></dl> : null}
       {a.insecure_transport_warning ? <div className="alert warn">Network deployment without HTTPS configuration is not secure.</div> : null}
       <div className="alert warn" role="note"><strong>Data protection:</strong> {a.backup_notice}</div>
+      {a.restore_max_mb != null ? <ModulesPanel /> : null}
       {a.restore_max_mb != null ? <BackupRestore maxMb={a.restore_max_mb} /> : null}
     </div>
+  );
+}
+
+/** v1.6.0 CR-033: optional modules, switched on/off by an Administrator (data is kept when a module is off). */
+function ModulesPanel() {
+  const [m, setM] = useState<any>(null);
+  const [err, setErr] = useState<unknown>(null);
+  const [saved, setSaved] = useState(false);
+  useEffect(() => { api.get("/api/system/modules").then(setM, setErr); }, []);
+  const toggle = async (on: boolean) => {
+    setErr(null);
+    setSaved(false);
+    const before = m;
+    setM({ ...m, fundraisers: on }); // shown at once; reverted if saving fails
+    try { setM(await api.put("/api/system/modules", { fundraisers: on })); setSaved(true); } catch (x) { setM(before); setErr(x); }
+  };
+  return (
+    <section className="card" aria-labelledby="modules-h">
+      <h2 id="modules-h">Optional modules</h2>
+      <ErrorBox error={err} />
+      {m ? (
+        <>
+          <label className="check"><input type="checkbox" checked={m.fundraisers} onChange={(e) => toggle(e.target.checked)} /> Fundraiser module</label>
+          <p className="hint">Adds <b>Fundraisers</b> to the menu of Budget Managers, Budget Users, Register Users and Auditors (it appears at their next sign-in or page reload).
+            Turning it off hides the module; fundraisers that were set up are kept.</p>
+          {saved ? <p className="hint" role="status">Saved.</p> : null}
+        </>
+      ) : null}
+    </section>
   );
 }
