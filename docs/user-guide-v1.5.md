@@ -1,0 +1,20 @@
+# What's new in 1.5 — quick guide
+
+*1.5.0 polishes existing features; nothing new is added.*
+
+## Signing in from a bookmark
+Opening any bookmarked Freedger page while signed out shows the sign-in page, then two-step verification (or its
+setup), then the dashboard.
+
+## Bank Accounts in two groups
+The Bank Accounts page has two tables: **Checking & Savings** and **Investments and Other** (investment, cash and
+other accounts). Each table ends with the total of its active accounts. The dashboard's bank balances show the same
+two groups with a subtotal each, then the total of all accounts.
+
+## Preview the audit signature page
+Reports → End of Year Audit → tick *Include audit review signature page*, choose the wording and signers, then click
+**Preview signature page**. The page opens as a PDF in a new tab so you can check it before generating the report.
+
+## Charts
+Dashboard charts are arranged in two columns that each fill from the top, so there are no gaps under short charts.
+On a narrow screen they are shown in one column.

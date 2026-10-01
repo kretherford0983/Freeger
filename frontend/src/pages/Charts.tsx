@@ -42,6 +42,7 @@ export default function DashboardCharts({ fys, currentFyId }: { fys: any[]; curr
   const [data, setData] = useState<any>(null);
   const [err, setErr] = useState<unknown>(null);
   const [edit, setEdit] = useState(false);
+  const narrow = useNarrow(900);
   const [shown, setShown] = useState<string[]>(me.dashboard_charts ?? ["income_pie", "monthly", "expense_vs_budget"]);
 
   useEffect(() => {
@@ -94,16 +95,51 @@ export default function DashboardCharts({ fys, currentFyId }: { fys: any[]; curr
       <ErrorBox error={err} />
       {!shown.length ? <p className="muted">No charts selected. Use <b>Choose charts</b> to add some.</p> : null}
       {data ? (
-        <div className="chart-grid">
-          {CHARTS.filter((c) => shown.includes(c.key)).map((c) => (
-            <ChartCard key={c.key} title={c.title} testId={`chart-${c.key}`}>
-              {renderChart(c.key, data, theme)}
-            </ChartCard>
-          ))}
-        </div>
+        <Masonry narrow={narrow} items={CHARTS.filter((c) => shown.includes(c.key)).map((c) => ({
+          key: c.key, height: estimateHeight(c.key, data),
+          el: <ChartCard key={c.key} title={c.title} testId={`chart-${c.key}`}>{renderChart(c.key, data, theme)}</ChartCard>,
+        }))} />
       ) : shown.length ? <p className="hint">Loading charts…</p> : null}
     </section>
   );
+}
+
+// v1.5.0 CR-030: charts only take the height they need. Two columns; each chart goes into the column that is
+// currently shorter (by estimated height), in the chosen order, so a short chart next to a tall one is followed
+// directly by the next chart instead of leaving an empty gap. One column on narrow screens.
+function useNarrow(px: number) {
+  const q = `(max-width: ${px}px)`;
+  const [narrow, setNarrow] = useState(() => window.matchMedia?.(q).matches ?? false);
+  useEffect(() => {
+    const m = window.matchMedia?.(q);
+    if (!m) return;
+    const on = () => setNarrow(m.matches);
+    m.addEventListener("change", on);
+    return () => m.removeEventListener("change", on);
+  }, [q]);
+  return narrow;
+}
+
+function estimateHeight(key: string, d: any): number {
+  const chrome = 90; // title, padding, "Show data table"
+  if (key === "income_pie" || key === "expense_pie") {
+    const n = (key === "income_pie" ? d.income_by_budget : d.expense_by_budget).slices.length;
+    return chrome + (n ? Math.max(240, 26 * n + 40) : 100);
+  }
+  if (key === "expense_vs_budget") return chrome + (d.expense_vs_budget.length ? Math.max(160, 52 * d.expense_vs_budget.length + 60) : 100);
+  if (key === "cumulative_net") return chrome + 240;
+  return chrome + 260 + (key === "balances" ? 16 * Math.max(0, d.balances.accounts.length - 2) : 0);
+}
+
+export function Masonry({ items, narrow }: { items: { key: string; height: number; el: JSX.Element }[]; narrow: boolean }) {
+  if (narrow) return <div className="chart-cols one"><div className="chart-col">{items.map((i) => i.el)}</div></div>;
+  const cols: { h: number; els: JSX.Element[] }[] = [{ h: 0, els: [] }, { h: 0, els: [] }];
+  for (const i of items) {
+    const c = cols[0].h <= cols[1].h ? cols[0] : cols[1];
+    c.els.push(i.el);
+    c.h += i.height;
+  }
+  return <div className="chart-cols">{cols.map((c, n) => <div key={n} className="chart-col">{c.els}</div>)}</div>;
 }
 
 function ChartCard({ title, testId, children }: { title: string; testId: string; children: [JSX.Element, JSX.Element] | JSX.Element[] }) {

@@ -29,7 +29,7 @@ export function signatureProblem(s: SigState): string | null {
   return null;
 }
 
-export function SignatureOptions({ sig, setSig }: { sig: SigState; setSig: (s: SigState) => void }) {
+export function SignatureOptions({ sig, setSig, preview: previewHref }: { sig: SigState; setSig: (s: SigState) => void; preview?: string | null }) {
   const [tpl, setTpl] = useState<any>(null);
   const [people, setPeople] = useState<any[]>([]);
   const [err, setErr] = useState<unknown>(null);
@@ -111,6 +111,9 @@ export function SignatureOptions({ sig, setSig }: { sig: SigState; setSig: (s: S
           ))}
           {sig.signers.length < 5 ? <button type="button" className="small" onClick={() => set({ signers: [...sig.signers, { entity_id: "", title: "" }] })}>+ Add signer</button> : null}
           <p className="hint">Signers are individual Entities. With no signer chosen, three blank "Name and title" lines are printed.</p>
+          {previewHref ? (
+            <p><a className="button" href={previewHref} target="_blank" rel="noopener">Preview signature page</a> <span className="hint">Opens just this page as a PDF — view or print it without generating the whole report.</span></p>
+          ) : null}
         </div>
       ) : null}
     </fieldset>

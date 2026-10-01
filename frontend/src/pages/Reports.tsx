@@ -74,6 +74,14 @@ function AuditReport({ fys, accounts }: { fys: any[]; accounts: any[] }) {
     }
     return `/api/reports/audit?${p.toString()}`;
   };
+  // v1.5.0 CR-029: the signature page on its own (same wording and signers)
+  const previewUrl = () => {
+    const p = new URLSearchParams({ fiscal_year_id: f.fiscal_year_id });
+    if (sig.choice === "custom") p.set("signature_text", sig.custom);
+    else p.set("signature_template_id", sig.choice);
+    sig.signers.filter((x) => x.entity_id).forEach((x) => { p.append("signer_id", x.entity_id); p.append("signer_title", x.title.trim()); });
+    return `/api/reports/audit/signature-page?${p.toString()}`;
+  };
   return (
     <section className="card">
       <h2>End of Year Audit report</h2>
@@ -92,7 +100,7 @@ function AuditReport({ fys, accounts }: { fys: any[]; accounts: any[] }) {
         </Field>
         <label className="check"><input type="checkbox" checked={f.include_void} onChange={(e) => setF({ ...f, include_void: e.target.checked })} /> Include VOID transactions</label>
       </div>
-      <SignatureOptions sig={sig} setSig={setSig} />
+      <SignatureOptions sig={sig} setSig={setSig} preview={sig.on && !sigErr ? previewUrl() : null} />
       {sigErr ? <div className="alert warn" role="alert">{sigErr}</div> : null}
       <div className="actions left">
         {sigErr ? (

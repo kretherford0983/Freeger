@@ -10,6 +10,15 @@
 - **HF-001** Right after setting up a new installation (or on a slow computer), the sign-in page could briefly appear
   and replace the security token of the new session, so the next action failed ("Missing or invalid CSRF token"). The
   page no longer flashes and a late sign-in token can no longer overwrite the session's token.
+- **CR-028 Bank Accounts in two tables.** The Bank Accounts page shows *Checking & Savings* (CHECKING and SAVINGS
+  accounts) and *Investments and Other* (every other type) as separate tables, each with a total of its active
+  accounts. The dashboard's bank balances table uses the same two groups with a subtotal for each, then the total of
+  all accounts.
+- **CR-029 Preview the audit signature page.** With *Include audit review signature page* ticked, *Preview signature
+  page* opens just that page as a PDF (with the chosen wording and signers) before the full report is generated.
+- **CR-030 Charts fill the space.** Charts are placed in two columns that each fill from the top, so a short chart
+  no longer leaves a gap next to a tall one (one column on narrow screens).
+- **CR-032** The backup passphrase and its confirmation fields line up even when only one has a hint.
 
 ## 1.4.1 — 2026-09-30
 The rest of the 1.4 plan (decisions in docs/implementation-notes.md §1a). Beta: test channel only.

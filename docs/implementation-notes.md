@@ -44,6 +44,18 @@ could not otherwise be corrected. Scope and safeguards:
 - Audited as `TRANSACTION_VOID_DATE_CORRECTED` with before/after snapshots and the reason.
 - Tests: `backend/tests/test_cr001_void_date.py` (5 tests) and E2E "CR-001".
 
+**v1.5.0 polish CR-026 … CR-032, HF-001 (product owner, 2026-09-30).** 1.5.0 improves existing functionality only
+(plan: project doc `claude/freedger-plan-1.5.md`).
+
+| CR | Implementation |
+|---|---|
+| HF-001 | `boot()` loads the signed-in user before leaving the loading state, so the Login page never mounts after initialization; `api.ts` counts CSRF generations and a pre-auth token that arrives after a newer session token is discarded. |
+| Sign-in bookmark | Sign-in and MFA always run on `/` (`navigate("/", {replace})`); `401 MFA_REQUIRED` reloads `/api/auth/me` to show the MFA screen. API responses carry `X-Frontend-Build`; a page from another build reloads once (`_b` marker); `index.html` is served `no-store`. |
+| CR-028 | `services/bank_accounts.group_of`: CHECKING/SAVINGS → `CHECKING_SAVINGS`, every other type → `INVESTMENTS_OTHER`; accounts carry `group`, the dashboard returns `bank_account_groups` (key, label, account ids, active total) beside the unchanged grand total. Bank Accounts page: one table per group with a total row (active accounts); dashboard: one `tbody` per non-empty group with a subtotal. |
+| CR-029 | `GET /api/reports/audit/signature-page` takes the same signature parameters as the audit report and returns only that page (same `_signature_page` renderer, same validation), audited `REPORT_GENERATED` `{report: SIGNATURE_PAGE}`. The Reports page shows *Preview signature page* when the options are valid (preview only, Q). |
+| CR-030 | Two-column masonry: each chart goes into the currently shorter column (height estimated per chart type and data), one column below 900 px. No dependency. |
+| CR-032 | `.row.fields` aligns fields to the top so a hint under one field no longer shifts its neighbour's input. |
+
 **v1.4.0 / v1.4.1 change requests CR-016 … CR-025 (product owner, 2026-09-29).** Decisions were agreed item by item
 before implementation (plan: project doc `claude/freedger-plan-1.4.md`). 1.4.0 = CR-017/019/021/022; 1.4.1 = CR-016,
 CR-018 (TOTP), CR-020, CR-023 … CR-025. Passkeys (part of CR-018) are deferred to 1.6.

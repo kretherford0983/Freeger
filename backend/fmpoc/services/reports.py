@@ -646,6 +646,23 @@ def build_audit_report(db: Session, ctx, settings, fy: FiscalYear, account_id: i
     return path, fname, {"transactions": len(txns), "pages": pages}
 
 
+def build_signature_page(db: Session, ctx, fy: FiscalYear, signature) -> tuple[str, str]:
+    """v1.5.0 CR-029: the audit review signature page on its own (preview / separate printing)."""
+    ws = db.get(Workspace, ctx.workspace_id)
+    title = f"Audit review signature page — {fy.display_name} — {ws.name}"
+    buf = io.BytesIO()
+    doc = _AuditDoc(buf, title="Audit review signature page", author=ws.name)
+    doc.build(_signature_page(doc, signature))
+    fd, path = tempfile.mkstemp(prefix="fmpoc-signature-", suffix=".pdf")
+    os.close(fd)
+    try:
+        _stamp_and_write(buf.getvalue(), doc, path, title)
+    except Exception:
+        os.unlink(path)
+        raise
+    return path, f"{fy.display_name}-audit-signature-page.pdf"
+
+
 # --------------------------------------------------------------------------- Entity activity report
 def entity_activity(db: Session, ctx, *, account_id: int | None, date_from: dt.date, date_to: dt.date,
                     entity_id: int | None, include_details: bool) -> dict:

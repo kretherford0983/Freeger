@@ -5,6 +5,7 @@ import { useMe } from "../App";
 import { EntityForm } from "./Entities";
 
 const TYPES = ["CHECKING", "SAVINGS", "MONEY_MARKET", "CERTIFICATE_OF_DEPOSIT", "INVESTMENT", "CASH", "OTHER"];
+const GROUPS: [string, string][] = [["CHECKING_SAVINGS", "Checking & Savings"], ["INVESTMENTS_OTHER", "Investments and Other"]];
 const REG_DEFAULT: Record<string, boolean> = { CHECKING: true, SAVINGS: true, INVESTMENT: false };
 
 export default function BankAccounts() {
@@ -24,19 +25,7 @@ export default function BankAccounts() {
     } catch (e) { setErr(e); }
   };
   const primary = async (a: any) => { try { await api.post(`/api/bank-accounts/${a.id}/set-primary`); load(); } catch (e) { setErr(e); } };
-  if (!list) return <><ErrorBox error={err} /><Loading /></>;
-  return (
-    <div>
-      <div className="page-head">
-        <h1>Bank Accounts</h1>
-        {manage ? <button className="primary" onClick={() => setModal({ kind: "edit", account: null })}>New bank account</button> : null}
-      </div>
-      <ErrorBox error={err} />
-      <table className="table">
-        <thead><tr><th>Account</th><th>Account #</th><th>Financial Institution</th><th>Type</th><th>Register</th><th>Primary</th><th className="num">Current balance</th><th>Status</th>{manage ? <th /> : null}</tr></thead>
-        <tbody>
-          {list.length === 0 ? <tr><td colSpan={9} className="muted">No bank accounts.</td></tr> : null}
-          {list.map((a) => (
+  const renderRow = (a: any) => (
             <tr key={a.id} className={a.status === "CLOSED" ? "inactive" : ""}>
               <td>{a.account_name}</td>
               <td><code>{revealed[a.id] || a.account_number_masked}</code>{can("bank_account.reveal") ? <button className="small" onClick={() => reveal(a)}>{revealed[a.id] ? "Hide" : "Reveal"}</button> : null}</td>
@@ -56,9 +45,36 @@ export default function BankAccounts() {
                 </td>
               ) : null}
             </tr>
-          ))}
-        </tbody>
-      </table>
+  );
+  if (!list) return <><ErrorBox error={err} /><Loading /></>;
+  return (
+    <div>
+      <div className="page-head">
+        <h1>Bank Accounts</h1>
+        {manage ? <button className="primary" onClick={() => setModal({ kind: "edit", account: null })}>New bank account</button> : null}
+      </div>
+      <ErrorBox error={err} />
+      {/* v1.5.0 CR-028: one table per group, each with a total of its active accounts */}
+      {GROUPS.map(([key, label]) => {
+        const rows = list.filter((a) => a.group === key);
+        const total = rows.filter((a) => a.status === "ACTIVE").reduce((t, a) => t + Math.round(Number(a.current_balance) * 100), 0);
+        return (
+          <section key={key} className="account-group" aria-labelledby={`grp-${key}`}>
+            <h2 id={`grp-${key}`}>{label}</h2>
+            <table className="table" data-testid={`accounts-${key}`}>
+              <thead><tr><th>Account</th><th>Account #</th><th>Financial Institution</th><th>Type</th><th>Register</th><th>Primary</th><th className="num">Current balance</th><th>Status</th>{manage ? <th /> : null}</tr></thead>
+              <tbody>
+                {rows.length === 0 ? <tr><td colSpan={manage ? 9 : 8} className="muted">No accounts in this group.</td></tr> : null}
+                {rows.map(renderRow)}
+              </tbody>
+              {rows.length ? (
+                <tfoot><tr className="total-row"><th colSpan={6} scope="row">Total {label}{rows.some((a) => a.status !== "ACTIVE") ? " (active accounts)" : ""}</th>
+                  <th className={`num ${total < 0 ? "neg" : ""}`}>{money((total / 100).toFixed(2))}</th><th colSpan={manage ? 2 : 1} /></tr></tfoot>
+              ) : null}
+            </table>
+          </section>
+        );
+      })}
       {modal?.kind === "edit" ? <AccountForm account={modal.account} onClose={() => setModal(null)} onSaved={() => { setModal(null); load(); }} /> : null}
       {modal?.kind === "balance" ? <BalanceForm account={modal.account} onClose={() => setModal(null)} onSaved={() => { setModal(null); load(); }} /> : null}
       {modal?.kind === "close" ? <CloseForm account={modal.account} onClose={() => setModal(null)} onSaved={() => { setModal(null); load(); }} /> : null}
