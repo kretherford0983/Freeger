@@ -427,3 +427,27 @@ class FundraiserPreviewIn(In):
 
 class ModulesIn(In):
     fundraisers: bool
+
+
+# ------------------------------------------------------------------ v1.6.1 CR-034 fundraiser management
+class FundraiserBucketIn(In):
+    name: Str(80)
+    description: OptStr(500) = None
+
+
+class FundraiserClassificationIn(In):
+    kind: Literal["CASH_FLOAT_OUT", "CASH_FLOAT_RETURNED"]
+    amount: Amount
+    note: OptStr(500) = None
+
+
+class FundraiserBucketAmountIn(In):
+    bucket_id: int
+    amount: Amount
+
+
+class FundraiserLineIn(In):
+    excluded: bool = False
+    exclusion_reason: OptStr(500) = None
+    classification: FundraiserClassificationIn | None = None
+    buckets: list[FundraiserBucketAmountIn] = Field(default_factory=list, max_length=30)

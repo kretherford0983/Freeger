@@ -36,6 +36,8 @@ PERMISSIONS: dict[str, set[str]] = {
     "modules.manage": {ADMINISTRATOR},
     "fundraiser.view": {BUDGET_MANAGER, BUDGET_USER, REGISTER_USER, AUDITOR},
     "fundraiser.manage": {BUDGET_MANAGER},
+    # v1.6.1 CR-034: buckets, special classifications, exclusions and fundraiser documents
+    "fundraiser.lines": {BUDGET_MANAGER, REGISTER_USER},
 }
 
 

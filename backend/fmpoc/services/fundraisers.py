@@ -25,9 +25,10 @@ from sqlalchemy.orm import Session
 
 from .. import audit
 from ..errors import AppError, not_found, validation
-from ..models import (Attachment, BankAccount, Budget, FiscalYear, Fundraiser, FundraiserBudget, RegisterTransaction,
+from ..models import (Attachment, BankAccount, Budget, FiscalYear, Fundraiser, FundraiserBucket, FundraiserBucketLine,
+                      FundraiserBudget, FundraiserClassification, FundraiserExclusion, RegisterTransaction,
                       TransactionAllocation, Workspace, utcnow)
-from ..money import fmt
+from ..money import fmt, parse_amount
 from . import bank_accounts as bank
 from .common import add_months, budget_label, covering_fiscal_years, fy_brief, get_scoped
 
@@ -35,6 +36,10 @@ WINDOW_MONTHS = 3
 MAX_FISCAL_YEARS = 2
 FILTER_MAX = 200
 KINDS = ("INCOME", "EXPENSE")
+# v1.6.1 CR-034: part of a line that is not fundraiser money. Float out = cash taken from the bank for the cash box
+# (expense side); float returned = that cash coming back inside a deposit (income side).
+CLASSIFICATIONS = {"CASH_FLOAT_OUT": ("EXPENSE", "Cash float out"), "CASH_FLOAT_RETURNED": ("INCOME", "Cash float returned")}
+MAX_BUCKETS = 30
 
 
 # ------------------------------------------------------------------ module switch
@@ -258,6 +263,10 @@ def update(db: Session, ctx, f: Fundraiser, body) -> Fundraiser:
     _apply(db, ctx, f, body, creating=False)
     db.flush()
     after = snapshot(f)
+    if set(after["budget_ids"]) != set(before["budget_ids"]):
+        dropped = _drop_orphan_adjustments(db, f)
+        if dropped:
+            after = {**after, "dropped_line_adjustments": dropped}
     if after != before:
         audit.record(db, ctx, "FUNDRAISER_UPDATED", "fundraiser", f.id, before, after)
     return f
@@ -275,10 +284,12 @@ def set_archived(db: Session, ctx, f: Fundraiser, archived: bool) -> Fundraiser:
 
 
 def delete(db: Session, ctx, f: Fundraiser) -> None:
-    """Allowed while nothing has been classified, excluded, bucketed or attached in the module (CR-034 adds those;
-    in 1.6.0 a fundraiser holds only its settings). Otherwise: archive."""
+    """Allowed while nothing has been classified, excluded, bucketed or attached in the module. Otherwise: archive."""
     if any(fy.status == "CLOSED" for fy in _fys_of(db, f)):
         raise AppError(409, "FISCAL_YEAR_CLOSED", "A fundraiser using a closed Fiscal Year cannot be deleted; archive it.")
+    if has_management_data(db, f):
+        raise AppError(409, "FUNDRAISER_IN_USE", "This fundraiser has buckets, special classifications, exclusions or "
+                       "documents. Archive it instead (or remove those first).")
     audit.record(db, ctx, "FUNDRAISER_DELETED", "fundraiser", f.id, snapshot(f), None)
     db.delete(f)
 
@@ -326,14 +337,51 @@ def _lines(db: Session, f: Fundraiser) -> tuple[list[dict], int]:
          .where(TransactionAllocation.budget_id.in_(list(kind_of)), TransactionAllocation.removed_at.is_(None),
                 RegisterTransaction.status == "ACTIVE")
          .order_by(RegisterTransaction.transaction_date, RegisterTransaction.id, TransactionAllocation.id))
+    excl = {x.allocation_id: x for x in db.scalars(select(FundraiserExclusion).where(FundraiserExclusion.fundraiser_id == f.id))}
+    cls = {x.allocation_id: x for x in db.scalars(select(FundraiserClassification).where(FundraiserClassification.fundraiser_id == f.id))}
+    assigned: dict[int, list[FundraiserBucketLine]] = defaultdict(list)
+    for bl in db.scalars(select(FundraiserBucketLine).join(FundraiserBucket, FundraiserBucket.id == FundraiserBucketLine.bucket_id)
+                         .where(FundraiserBucket.fundraiser_id == f.id).order_by(FundraiserBucketLine.id)):
+        assigned[bl.allocation_id].append(bl)
     rows, skipped = [], 0
     for a, t in db.execute(q):
         if pred is not None and not pred(a.description or ""):
             skipped += 1
             continue
         kind, fy_id = kind_of[a.budget_id]
-        rows.append({"a": a, "t": t, "kind": kind, "fiscal_year_id": fy_id})
+        ex, c = excl.get(a.id), cls.get(a.id)
+        classified = 0 if (ex or c is None) else min(c.amount_cents, a.amount_cents)  # clamp if the line shrank later
+        eff = 0 if ex else a.amount_cents - classified
+        buckets = [] if ex else assigned.get(a.id, [])
+        rows.append({"a": a, "t": t, "kind": kind, "fiscal_year_id": fy_id, "excluded": ex, "classification": c,
+                     "classified": classified, "eff": eff, "buckets": buckets,
+                     "unassigned": max(0, eff - sum(b.amount_cents for b in buckets))})
     return rows, skipped
+
+
+def has_management_data(db: Session, f: Fundraiser) -> bool:
+    for model in (FundraiserExclusion, FundraiserClassification, FundraiserBucket):
+        if db.scalar(select(model.id).where(model.fundraiser_id == f.id).limit(1)) is not None:
+            return True
+    return db.scalar(select(Attachment.id).where(Attachment.fundraiser_id == f.id, Attachment.active.is_(True)).limit(1)) is not None
+
+
+def _drop_orphan_adjustments(db: Session, f: Fundraiser) -> int:
+    """After a budget was removed/changed: adjustments of lines that are no longer in the fundraiser's budgets."""
+    leafs: set[int] = set()
+    for fb in f.budgets:
+        leafs |= set(leaf_ids(db, db.get(Budget, fb.budget_id)))
+    n = 0
+    bucket_ids = list(db.scalars(select(FundraiserBucket.id).where(FundraiserBucket.fundraiser_id == f.id)))
+    items = [*db.scalars(select(FundraiserExclusion).where(FundraiserExclusion.fundraiser_id == f.id)),
+             *db.scalars(select(FundraiserClassification).where(FundraiserClassification.fundraiser_id == f.id)),
+             *(db.scalars(select(FundraiserBucketLine).where(FundraiserBucketLine.bucket_id.in_(bucket_ids))) if bucket_ids else [])]
+    for x in items:
+        a = db.get(TransactionAllocation, x.allocation_id)
+        if a is None or a.budget_id not in leafs:
+            db.delete(x)
+            n += 1
+    return n
 
 
 def preview(db: Session, ctx, budget_ids: list[int], filter_text: str | None, filter_regex: bool) -> dict:
@@ -380,8 +428,9 @@ def _shared_with(db: Session, ws_id: int, leafs: set[int], exclude_id: int | Non
 
 
 def _money_totals(rows: list[dict]) -> dict:
-    inc = sum(r["a"].amount_cents for r in rows if r["kind"] == "INCOME")
-    exp = sum(r["a"].amount_cents for r in rows if r["kind"] == "EXPENSE")
+    """Fundraiser income/expense = line amounts without excluded lines and without classified (cash float) amounts."""
+    inc = sum(r["eff"] for r in rows if r["kind"] == "INCOME")
+    exp = sum(r["eff"] for r in rows if r["kind"] == "EXPENSE")
     return {"income": inc, "expense": exp, "net": inc - exp}
 
 
@@ -476,6 +525,7 @@ def detail(db: Session, ctx, f: Fundraiser) -> dict:
             atts[key].append({"id": x.id, "original_filename": x.original_filename, "mime_type": x.mime_type,
                               "size_bytes": x.size_bytes, "content_url": f"/api/attachments/{x.id}/content"})
     budget_cache: dict[int, dict] = {}
+    closed_fy = {fy.id: fy.status == "CLOSED" for fy in fys}
     lines = []
     for r in rows:
         a, tx = r["a"], r["t"]
@@ -492,12 +542,25 @@ def detail(db: Session, ctx, f: Fundraiser) -> dict:
             "amount": fmt(a.amount_cents), "budget": budget_cache[a.budget_id]["label"],
             "cleared": tx.clear_date is not None,
             "attachments": atts.get(("t", tx.id), []) + atts.get(("a", a.id), []),
+            # v1.6.1 CR-034
+            "excluded": r["excluded"] is not None,
+            "exclusion_reason": r["excluded"].reason if r["excluded"] else None,
+            "classification": None if r["classification"] is None or r["excluded"] else {
+                "kind": r["classification"].kind, "label": CLASSIFICATIONS[r["classification"].kind][1],
+                "amount": fmt(r["classified"]), "note": r["classification"].note},
+            "counted": fmt(r["eff"]),
+            "buckets": [{"bucket_id": b.bucket_id, "amount": fmt(b.amount_cents)} for b in r["buckets"]],
+            "unassigned": fmt(r["unassigned"]),
+            "over_assigned": sum(b.amount_cents for b in r["buckets"]) > r["eff"],
+            "read_only": closed_fy.get(r["fiscal_year_id"], False),
         })
     # cumulative income / expense from the first included transaction to the last (by transaction date)
     by_day: dict[str, list[int]] = {}
     for r in rows:
         d = r["t"].transaction_date.isoformat()
-        by_day.setdefault(d, [0, 0])[0 if r["kind"] == "INCOME" else 1] += r["a"].amount_cents
+        if r["excluded"]:
+            continue
+        by_day.setdefault(d, [0, 0])[0 if r["kind"] == "INCOME" else 1] += r["eff"]
     cum, inc, exp = [], 0, 0
     for d in sorted(by_day):
         inc += by_day[d][0]
@@ -516,8 +579,197 @@ def detail(db: Session, ctx, f: Fundraiser) -> dict:
         "read_only": all_closed,
         "notices": notices(db, ctx.workspace_id, f),
         "totals": {"income": fmt(t["income"]), "expense": fmt(t["expense"]), "net": fmt(t["net"]),
-                   "roi": roi(t["income"], t["expense"]), "classified": fmt(0), "excluded": fmt(0)},
+                   "roi": roi(t["income"], t["expense"]),
+                   "cash_float_out": fmt(sum(r["classified"] for r in rows if r["kind"] == "EXPENSE")),
+                   "cash_float_returned": fmt(sum(r["classified"] for r in rows if r["kind"] == "INCOME")),
+                   "excluded_income": fmt(sum(r["a"].amount_cents for r in rows if r["excluded"] and r["kind"] == "INCOME")),
+                   "excluded_expense": fmt(sum(r["a"].amount_cents for r in rows if r["excluded"] and r["kind"] == "EXPENSE")),
+                   "excluded_lines": sum(1 for r in rows if r["excluded"])},
+        "buckets": _bucket_summary(db, f, rows),
+        "classification_types": [{"kind": k, "applies_to": v[0], "label": v[1]} for k, v in CLASSIFICATIONS.items()],
         "per_fiscal_year": per_fy,
         "lines": lines, "filtered_out_lines": skipped,
         "cumulative": cum,
     }
+
+
+# ------------------------------------------------------------------ v1.6.1 CR-034: buckets, classifications, exclusions
+def _bucket_summary(db: Session, f: Fundraiser, rows: list[dict]) -> dict:
+    buckets = list(db.scalars(select(FundraiserBucket).where(FundraiserBucket.fundraiser_id == f.id)
+                              .order_by(FundraiserBucket.name, FundraiserBucket.id)))
+    agg = {b.id: {"INCOME": 0, "EXPENSE": 0, "lines": 0} for b in buckets}
+    un = {"INCOME": 0, "EXPENSE": 0}
+    for r in rows:
+        if r["excluded"]:
+            continue
+        un[r["kind"]] += r["unassigned"]
+        for bl in r["buckets"]:
+            if bl.bucket_id in agg:
+                agg[bl.bucket_id][r["kind"]] += bl.amount_cents
+                agg[bl.bucket_id]["lines"] += 1
+    items = [{"id": b.id, "name": b.name, "description": b.description, "income": fmt(agg[b.id]["INCOME"]),
+              "expense": fmt(agg[b.id]["EXPENSE"]), "net": fmt(agg[b.id]["INCOME"] - agg[b.id]["EXPENSE"]),
+              "lines": agg[b.id]["lines"]} for b in buckets]
+    return {"items": items, "unassigned": {"income": fmt(un["INCOME"]), "expense": fmt(un["EXPENSE"]),
+                                           "net": fmt(un["INCOME"] - un["EXPENSE"])}}
+
+
+def _bucket_snapshot(b: FundraiserBucket) -> dict:
+    return {"id": b.id, "fundraiser_id": b.fundraiser_id, "name": b.name, "description": b.description}
+
+
+def _check_bucket_name(db: Session, f: Fundraiser, name: str, exclude_id: int | None) -> None:
+    for b in db.scalars(select(FundraiserBucket).where(FundraiserBucket.fundraiser_id == f.id)):
+        if b.id != exclude_id and b.name.casefold() == name.casefold():
+            raise validation("This fundraiser already has a bucket with that name.", "name")
+
+
+def _require_open(db: Session, ctx, f: Fundraiser) -> None:
+    fys = _fys_of(db, f)
+    if fys and all(fy.status == "CLOSED" for fy in fys):
+        raise AppError(409, "FISCAL_YEAR_CLOSED", "The Fiscal Year of this fundraiser is closed; it can no longer be changed.")
+
+
+def create_bucket(db: Session, ctx, f: Fundraiser, body) -> FundraiserBucket:
+    _require_open(db, ctx, f)
+    n = len(list(db.scalars(select(FundraiserBucket.id).where(FundraiserBucket.fundraiser_id == f.id))))
+    if n >= MAX_BUCKETS:
+        raise validation(f"A fundraiser can have at most {MAX_BUCKETS} buckets.", "name")
+    _check_bucket_name(db, f, body.name, None)
+    b = FundraiserBucket(fundraiser_id=f.id, name=body.name, description=body.description or None,
+                         created_by_user_id=ctx.user.id)
+    db.add(b)
+    db.flush()
+    audit.record(db, ctx, "FUNDRAISER_BUCKET_CREATED", "fundraiser_bucket", b.id, None, _bucket_snapshot(b))
+    return b
+
+
+def get_bucket(db: Session, f: Fundraiser, bucket_id: int) -> FundraiserBucket:
+    b = db.get(FundraiserBucket, bucket_id)
+    if b is None or b.fundraiser_id != f.id:
+        raise not_found("Bucket")
+    return b
+
+
+def update_bucket(db: Session, ctx, f: Fundraiser, b: FundraiserBucket, body) -> FundraiserBucket:
+    _require_open(db, ctx, f)
+    _check_bucket_name(db, f, body.name, b.id)
+    before = _bucket_snapshot(b)
+    b.name, b.description = body.name, body.description or None
+    db.flush()
+    if _bucket_snapshot(b) != before:
+        audit.record(db, ctx, "FUNDRAISER_BUCKET_UPDATED", "fundraiser_bucket", b.id, before, _bucket_snapshot(b))
+    return b
+
+
+def delete_bucket(db: Session, ctx, f: Fundraiser, b: FundraiserBucket) -> None:
+    """Removes the bucket and its assignments (the lines become unassigned). Refused when it holds lines of a closed
+    Fiscal Year."""
+    lines = list(db.scalars(select(FundraiserBucketLine).where(FundraiserBucketLine.bucket_id == b.id)))
+    for bl in lines:
+        a = db.get(TransactionAllocation, bl.allocation_id)
+        if a is not None and db.get(FiscalYear, a.budget.fiscal_year_id).status == "CLOSED":
+            raise AppError(409, "FISCAL_YEAR_CLOSED", "This bucket holds lines of a closed Fiscal Year and cannot be deleted.")
+    audit.record(db, ctx, "FUNDRAISER_BUCKET_DELETED", "fundraiser_bucket", b.id,
+                 {**_bucket_snapshot(b), "assignments": [{"allocation_id": x.allocation_id, "amount": fmt(x.amount_cents)} for x in lines]}, None)
+    for bl in lines:
+        db.delete(bl)
+    db.flush()  # assignments first (no ORM relationship orders these deletes)
+    db.delete(b)
+
+
+def _line_state(db: Session, f: Fundraiser, allocation_id: int) -> dict:
+    ex = db.scalar(select(FundraiserExclusion).where(FundraiserExclusion.fundraiser_id == f.id,
+                                                     FundraiserExclusion.allocation_id == allocation_id))
+    c = db.scalar(select(FundraiserClassification).where(FundraiserClassification.fundraiser_id == f.id,
+                                                         FundraiserClassification.allocation_id == allocation_id))
+    bls = list(db.scalars(select(FundraiserBucketLine).join(FundraiserBucket, FundraiserBucket.id == FundraiserBucketLine.bucket_id)
+                          .where(FundraiserBucket.fundraiser_id == f.id, FundraiserBucketLine.allocation_id == allocation_id)
+                          .order_by(FundraiserBucketLine.bucket_id)))
+    return {"ex": ex, "c": c, "bls": bls}
+
+
+def _line_snapshot(st: dict) -> dict:
+    return {"excluded": st["ex"] is not None, "exclusion_reason": st["ex"].reason if st["ex"] else None,
+            "classification": None if st["c"] is None else {"kind": st["c"].kind, "amount": fmt(st["c"].amount_cents),
+                                                           "note": st["c"].note},
+            "buckets": [{"bucket_id": x.bucket_id, "amount": fmt(x.amount_cents)} for x in st["bls"]]}
+
+
+def set_line(db: Session, ctx, f: Fundraiser, allocation_id: int, body) -> None:
+    """Sets the whole fundraiser state of one line: excluded (with reason) OR an optional cash-float classification
+    (amount <= line) plus bucket assignments (sum <= line - classified)."""
+    rows, _skipped = _lines(db, f)
+    row = next((r for r in rows if r["a"].id == allocation_id), None)
+    if row is None:
+        raise not_found("Fundraiser line")
+    fy = db.get(FiscalYear, row["fiscal_year_id"])
+    if fy.status == "CLOSED":
+        raise AppError(409, "FISCAL_YEAR_CLOSED", f"{fy.display_name} is closed; this line can no longer be changed.")
+    amount = row["a"].amount_cents
+    st = _line_state(db, f, allocation_id)
+    before = _line_snapshot(st)
+
+    def cents(value, field):
+        try:
+            return parse_amount(value, allow_zero=False)
+        except ValueError as e:
+            raise validation(str(e).capitalize() + ".", field) from None
+
+    if body.excluded:
+        reason = (body.exclusion_reason or "").strip()
+        if not reason:
+            raise validation("A reason is required to exclude a line.", "exclusion_reason")
+        if body.classification is not None or body.buckets:
+            raise validation("An excluded line cannot have a classification or buckets.", "excluded")
+        if st["ex"] is None:
+            db.add(FundraiserExclusion(fundraiser_id=f.id, allocation_id=allocation_id, reason=reason,
+                                       created_by_user_id=ctx.user.id))
+        else:
+            st["ex"].reason = reason
+        if st["c"] is not None:
+            db.delete(st["c"])
+        for bl in st["bls"]:
+            db.delete(bl)
+    else:
+        if st["ex"] is not None:
+            db.delete(st["ex"])
+        classified = 0
+        if body.classification is None:
+            if st["c"] is not None:
+                db.delete(st["c"])
+        else:
+            kind = body.classification.kind
+            if CLASSIFICATIONS[kind][0] != row["kind"]:
+                side = "an expense (withdrawal)" if CLASSIFICATIONS[kind][0] == "EXPENSE" else "an income (deposit)"
+                raise validation(f"“{CLASSIFICATIONS[kind][1]}” applies to {side} line.", "classification")
+            classified = cents(body.classification.amount, "classification")
+            if classified > amount:
+                raise validation("The classified amount cannot be more than the line amount.", "classification")
+            note = (body.classification.note or "").strip() or None
+            if st["c"] is None:
+                db.add(FundraiserClassification(fundraiser_id=f.id, allocation_id=allocation_id, kind=kind,
+                                                amount_cents=classified, note=note, created_by_user_id=ctx.user.id))
+            else:
+                st["c"].kind, st["c"].amount_cents, st["c"].note = kind, classified, note
+        want: dict[int, int] = {}
+        for item in body.buckets:
+            get_bucket(db, f, item.bucket_id)
+            if item.bucket_id in want:
+                raise validation("A bucket can be listed only once per line.", "buckets")
+            want[item.bucket_id] = cents(item.amount, "buckets")
+        if sum(want.values()) > amount - classified:
+            raise validation("The bucket amounts add up to more than the amount that counts for this line "
+                             f"({fmt(amount - classified)}).", "buckets")
+        for bl in st["bls"]:
+            if bl.bucket_id in want:
+                bl.amount_cents = want.pop(bl.bucket_id)
+            else:
+                db.delete(bl)
+        for bucket_id, c in want.items():
+            db.add(FundraiserBucketLine(bucket_id=bucket_id, allocation_id=allocation_id, amount_cents=c))
+    db.flush()
+    after = _line_snapshot(_line_state(db, f, allocation_id))
+    if after != before:
+        audit.record(db, ctx, "FUNDRAISER_LINE_UPDATED", "fundraiser", f.id,
+                     {"allocation_id": allocation_id, **before}, {"allocation_id": allocation_id, **after})
