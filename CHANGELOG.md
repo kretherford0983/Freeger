@@ -19,6 +19,11 @@
 - **CR-030 Charts fill the space.** Charts are placed in two columns that each fill from the top, so a short chart
   no longer leaves a gap next to a tall one (one column on narrow screens).
 - **CR-032** The backup passphrase and its confirmation fields line up even when only one has a hint.
+- **CR-031 Customize the dashboard.** Financial users and Auditors can choose which dashboard sections are shown and
+  in what order: **Customize dashboard** → a checkbox and ↑/↓ buttons per section (Current Fiscal Year, Budget, Bank
+  account balances, Attention, Charts and, for Auditors, Review summary). Saved for your account; **Reset to
+  default** restores the standard layout. Database migration `0009` (one new column; existing users keep the
+  standard layout).
 
 ## 1.4.1 — 2026-09-30
 The rest of the 1.4 plan (decisions in docs/implementation-notes.md §1a). Beta: test channel only.

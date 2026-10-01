@@ -29,6 +29,8 @@ export interface Me {
   theme: "light" | "dark";
   nav_collapsed?: boolean;
   dashboard_charts?: string[];
+  dashboard_layout?: { key: string; visible: boolean }[]; // v1.5.0 CR-031
+  dashboard_layout_customized?: boolean;
   mfa_pending?: "VERIFY" | "ENROLL" | null; // v1.4.1 CR-018
   csrf_token: string;
 }

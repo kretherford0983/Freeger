@@ -807,6 +807,37 @@ test("CR-028 / CR-030 / CR-029 / CR-032: account groups, chart columns, signatur
   expect(Math.abs(a!.height - b!.height)).toBeLessThan(2);
 });
 
+// ---------------------------------------------------------------- v1.5.0 CR-031: dashboard layout
+test("CR-031: dashboard sections can be hidden, reordered and reset; saved per user", async ({ page }) => {
+  await login(page, "ru1", "Brand-New-Pass-99");
+  const order = () => page.locator(".dash-section").evaluateAll((els) => els.map((e) => e.getAttribute("data-section")));
+  expect(await order()).toEqual(["fiscal_year", "budget", "bank", "attention", "charts"]);
+  await page.getByRole("button", { name: "Customize dashboard" }).click();
+  await expect(page.getByTestId("layout-review")).toHaveCount(0); // Auditors only
+  await page.getByRole("button", { name: "Move Bank account balances up" }).click();
+  await page.getByRole("button", { name: "Move Bank account balances up" }).click();
+  await page.getByTestId("layout-attention").getByRole("checkbox").uncheck();
+  await expect(page.getByRole("status").filter({ hasText: "Dashboard layout saved" })).toBeVisible();
+  expect(await order()).toEqual(["bank", "fiscal_year", "budget", "charts"]);
+  await page.getByRole("button", { name: "Done" }).click();
+  await page.reload();
+  await expect(page.locator(".dash-section").first()).toHaveAttribute("data-section", "bank");
+  expect(await order()).toEqual(["bank", "fiscal_year", "budget", "charts"]);
+  await page.screenshot({ path: "e2e-screenshots/light-dashboard-customized.png", fullPage: true });
+  await logout(page);
+  // another user keeps the default
+  await login(page, "bm1");
+  await expect(page.locator(".dash-section").first()).toHaveAttribute("data-section", "fiscal_year");
+  await logout(page);
+  await login(page, "ru1", "Brand-New-Pass-99");
+  await page.getByRole("button", { name: "Customize dashboard" }).click();
+  await page.getByRole("button", { name: "Reset to default" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Dashboard layout saved" })).toBeVisible();
+  expect(await order()).toEqual(["fiscal_year", "budget", "bank", "attention", "charts"]);
+  await expect(page.getByRole("button", { name: "Reset to default" })).toBeDisabled();
+  await logout(page);
+});
+
 // ---------------------------------------------------------------- v1.5.0: sign-in from a bookmarked page (server mode)
 test("v1.5.0: a bookmarked page leads to the dashboard address, two-step setup/verify, then the dashboard", async ({ page }) => {
   const port = 8800;
