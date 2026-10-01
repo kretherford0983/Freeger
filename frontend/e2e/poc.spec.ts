@@ -811,6 +811,8 @@ test("CR-028 / CR-030 / CR-029 / CR-032: account groups, chart columns, signatur
 test("CR-031: dashboard sections can be hidden, reordered and reset; saved per user", async ({ page }) => {
   await login(page, "ru1", "Brand-New-Pass-99");
   const order = () => page.locator(".dash-section").evaluateAll((els) => els.map((e) => e.getAttribute("data-section")));
+  // wait until the dashboard data has loaded (the sections render after /api/dashboard answers)
+  await expect(page.locator(".dash-section")).toHaveCount(5);
   expect(await order()).toEqual(["fiscal_year", "budget", "bank", "attention", "charts"]);
   await page.getByRole("button", { name: "Customize dashboard" }).click();
   await expect(page.getByTestId("layout-review")).toHaveCount(0); // Auditors only
@@ -830,11 +832,28 @@ test("CR-031: dashboard sections can be hidden, reordered and reset; saved per u
   await expect(page.locator(".dash-section").first()).toHaveAttribute("data-section", "fiscal_year");
   await logout(page);
   await login(page, "ru1", "Brand-New-Pass-99");
+  await expect(page.locator(".dash-section").first()).toHaveAttribute("data-section", "bank");
   await page.getByRole("button", { name: "Customize dashboard" }).click();
   await page.getByRole("button", { name: "Reset to default" }).click();
   await expect(page.getByRole("status").filter({ hasText: "Dashboard layout saved" })).toBeVisible();
   expect(await order()).toEqual(["fiscal_year", "budget", "bank", "attention", "charts"]);
   await expect(page.getByRole("button", { name: "Reset to default" })).toBeDisabled();
+  await logout(page);
+});
+
+// ---------------------------------------------------------------- v1.5.0: license (AGPL-3.0) and source link
+test("v1.5.0: sign-in page and My Account offer the source code, license and third-party notices", async ({ page }) => {
+  await page.goto("/");
+  const legal = page.locator(".login-legal");
+  await expect(legal.getByRole("link", { name: "Source code" })).toHaveAttribute("href", /github\.com\/kretherford0983\/Freeger/);
+  const lic = await page.request.get(await legal.getByRole("link", { name: "License" }).getAttribute("href") as string);
+  expect(await lic.text()).toContain("GNU AFFERO GENERAL PUBLIC LICENSE");
+  const notices = await page.request.get(await legal.getByRole("link", { name: "Third-party notices" }).getAttribute("href") as string);
+  expect(await notices.text()).toContain("recharts");
+  await login(page, "bm1");
+  await page.getByRole("link", { name: "My account" }).click();
+  await expect(page.getByTestId("app-license")).toContainText("AGPL-3.0");
+  await expect(page.getByTestId("app-license").getByRole("link", { name: "Source code" })).toBeVisible();
   await logout(page);
 });
 

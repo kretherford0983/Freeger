@@ -97,7 +97,7 @@ export default function App() {
 
   if (!status || me === undefined) return <div className="center"><Loading /></div>;
   if (!status.initialized) return <InitWizard onDone={boot} />;
-  if (!me) return <Login workspace={status.workspace_name} onLogin={loadMe} />;
+  if (!me) return <Login workspace={status.workspace_name} onLogin={loadMe} legal={status} />;
   if (me.mfa_pending) return <MfaGate me={me} workspace={status.workspace_name} onDone={loadMe} onLogout={() => { setCsrf(null); setMe(null); }} />;
 
   const ctx = {

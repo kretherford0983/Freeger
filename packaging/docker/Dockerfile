@@ -15,6 +15,7 @@ WORKDIR /opt/fmpoc
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/fmpoc fmpoc
+COPY LICENSE THIRD-PARTY-NOTICES.txt ./
 COPY --from=ui /src/backend/fmpoc/static fmpoc/static
 USER app
 VOLUME ["/data"]

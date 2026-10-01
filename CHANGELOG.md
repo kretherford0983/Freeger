@@ -1,6 +1,7 @@
 # Changelog
 
-## 1.5.0 — unreleased (in development)
+## 1.5.0 — 2026-10-01
+Polish of existing features and easier installation; nothing new in the data model except one per-user setting. Beta: test channel only.
 - **Sign-in from a bookmarked page** (found testing 1.4.1): signing in — including two-step verification — now always
   happens on the dashboard address, so a bookmark such as `/about` or `/users` leads to sign-in, then two-step
   verification (or its setup), then the dashboard. A "two-step verification required" answer from the server shows the
@@ -24,6 +25,20 @@
   account balances, Attention, Charts and, for Auditors, Review summary). Saved for your account; **Reset to
   default** restores the standard layout. Database migration `0009` (one new column; existing users keep the
   standard layout).
+- **CR-026 Windows: one file.** Every release has `Freedger-<version>-windows-x64.exe` — download and double-click
+  (local mode, opens the browser; data stays in `%LOCALAPPDATA%\FinancialManagementPOC`). It is not code-signed, so
+  SmartScreen may ask: *More info → Run anyway*. The portable .zip is still published. Before a release is published,
+  the .exe and the .zip are started on a Windows machine and checked (health, version, web page, license).
+- **CR-027 Linux: one command.** `curl -fsSL https://github.com/kretherford0983/Freeger/releases/latest/download/install.sh | sudo bash`
+  installs or upgrades a server: it picks the newest production release (while in beta: the newest test
+  pre-release, with a notice), verifies the checksums and runs that release's `install-server.sh` (same snapshot,
+  rollback copy and untouched `config.toml` as before). `--channel`, `--version` and `--port` options; the port of an
+  existing installation is read from its `config.toml`. See docs/deployment.md.
+- **License: AGPL-3.0.** Freedger is now free software under the GNU Affero General Public License v3.0 (`LICENSE`).
+  `THIRD-PARTY-NOTICES.txt` lists every bundled component with its license; both files are in every package. The
+  sign-in page, My Account and System/About show the license and a *Source code* link to the exact commit of the
+  build. Runtime dependencies, including indirect ones, are now pinned so packages contain exactly what the notices
+  list (CI checks the notices are current).
 
 ## 1.4.1 — 2026-09-30
 The rest of the 1.4 plan (decisions in docs/implementation-notes.md §1a). Beta: test channel only.
