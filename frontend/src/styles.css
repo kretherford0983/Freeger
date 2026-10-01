@@ -278,3 +278,12 @@ td.ua { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space
 .table tfoot .group-sub th { font-weight: 600; }
 .table .group-head th { background: var(--surface-2); color: var(--text); font-size: 13px; }
 .table .subtotal-row td { font-weight: 600; border-bottom: 2px solid var(--border); }
+
+/* v1.5.0 CR-031: Customize dashboard */
+.dash-customize { border: 1px solid var(--border); border-radius: 8px; margin: 0 0 16px; padding: 8px 12px; max-width: 520px; }
+.dash-customize legend { font-size: 13px; color: var(--muted); padding: 0 4px; }
+.dash-customize ol { list-style: none; margin: 0; padding: 0; }
+.dash-customize li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 0; border-bottom: 1px solid var(--border); }
+.dash-customize li:last-child { border-bottom: 0; }
+.dash-customize .move { display: flex; gap: 4px; }
+.dash-customize .move button { min-width: 32px; }

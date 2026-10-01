@@ -15,6 +15,11 @@ two groups with a subtotal each, then the total of all accounts.
 Reports → End of Year Audit → tick *Include audit review signature page*, choose the wording and signers, then click
 **Preview signature page**. The page opens as a PDF in a new tab so you can check it before generating the report.
 
+## Customize the dashboard
+Click **Customize dashboard** (top right of the dashboard). Untick a section to hide it and use **↑** / **↓** to move
+it. Changes are saved for your account straight away. **Reset to default** brings back the standard layout. The
+Administrator dashboard cannot be customized.
+
 ## Charts
 Dashboard charts are arranged in two columns that each fill from the top, so there are no gaps under short charts.
 On a narrow screen they are shown in one column.
