@@ -5,8 +5,15 @@ Native packages need no separately installed Python, Node.js, SQLite, Docker or 
 
 ## Local installation (single user, loopback)
 
-- **Windows**: unzip `FinancialManagementPOC-windows-x64.zip` anywhere (e.g. `%LOCALAPPDATA%\Programs`), double-click
-  `FinancialManagementPOC.cmd`. (PyInstaller variant: run `FinancialManagementPOC.exe`.)
+- **Windows (one file, since 1.5.0)**: download `Freedger-<version>-windows-x64.exe` from the GitHub release and
+  double-click it. A console window shows the address and log — closing it stops Freedger. The .exe unpacks itself
+  to a temporary folder at each start, so starting takes a few seconds. It is not code-signed: Windows SmartScreen may
+  say "Windows protected your PC" — click **More info → Run anyway** (check the file against `SHA256SUMS.txt` from
+  the same release first if you like: `Get-FileHash .\Freedger-<version>-windows-x64.exe`). Data is kept in
+  `%LOCALAPPDATA%\FinancialManagementPOC`, never inside the .exe, so replacing the .exe with a newer one keeps it.
+  Server mode from a command prompt: `Freedger-<version>-windows-x64.exe --mode server`.
+- **Windows (portable folder)**: unzip `FinancialManagementPOC-windows-x64.zip` anywhere (e.g.
+  `%LOCALAPPDATA%\Programs`), double-click `FinancialManagementPOC.cmd`.
 - **Linux**: `tar xzf FinancialManagementPOC-linux-x64.tar.gz && ./FinancialManagementPOC/FinancialManagementPOC`
 
 Startup applies pending Alembic migrations, binds to `127.0.0.1:8765`, waits for `/api/health`, and opens the
@@ -16,6 +23,34 @@ default browser when a desktop session is available. Plain HTTP is acceptable be
 > docs/backup-restore.md) and keep them off this machine together with their passphrase.
 
 ## Server installation (multiple users)
+
+### Linux: one command (since 1.5.0)
+
+```bash
+curl -fsSL https://github.com/kretherford0983/Freeger/releases/latest/download/install.sh | sudo bash
+```
+
+`install.sh` finds the release, downloads the Linux package, `install-server.sh` and `SHA256SUMS.txt` from it,
+verifies the checksums and runs that release's `install-server.sh` (systemd service `fmpoc`, `/opt/fmpoc`,
+data in `/var/lib/fmpoc`, a data snapshot before every upgrade, health check). The same command installs and
+upgrades; `config.toml`, the key, the database and attachments are never replaced.
+
+- **Which release:** by default the newest production release that has this installer (1.5.0 or later). While
+  Freedger is in beta there is none yet, so the newest **test** pre-release is installed and a notice says so.
+  `--channel production` or `--channel test` chooses explicitly; `--version <tag>` installs exactly that release.
+- **Until the first production release** the `latest` address above does not exist yet — use a pre-release's own
+  address (shown in its release notes):
+  `curl -fsSL https://github.com/kretherford0983/Freeger/releases/download/<tag>/install.sh | sudo bash -s -- --version <tag>`
+- **Port:** a new installation uses 8765 (`--port N` to change); an upgrade reads the port from the existing
+  `config.toml`.
+- **Prefer to read it first?**
+  `curl -fsSLO https://github.com/kretherford0983/Freeger/releases/download/<tag>/install.sh`, read it, then
+  `sudo bash install.sh --version <tag>`.
+
+The manual way (copy the package and `install-server.sh` to the server, then
+`sudo bash install-server.sh FinancialManagementPOC-linux-x64-portable.tar.gz`) still works.
+
+### Any platform
 
 ```bash
 FinancialManagementPOC --mode server --host 127.0.0.1 --port 8765 --no-browser     # behind a local reverse proxy
@@ -92,3 +127,10 @@ never dropped or recreated.
 
 On Windows, keep the data directory under the user profile (default `%LOCALAPPDATA%`) or restrict its ACL to the
 service account, because POSIX `chmod 600` is not meaningful there.
+
+## License
+
+Freedger is free software under the GNU Affero General Public License v3.0 (`LICENSE`). Every package contains
+`LICENSE` and `THIRD-PARTY-NOTICES.txt` (all bundled components and their licenses). The app links to its source code
+(sign-in page, My Account, System/About) as AGPL section 13 requires. If you run a **modified** version for other
+people, publish your changes and point `SOURCE_URL` in `backend/fmpoc/legal.py` at them.

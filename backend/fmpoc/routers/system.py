@@ -4,12 +4,14 @@ import secrets
 import threading
 
 from fastapi import APIRouter, Depends, Request, Response
+from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
 from .. import VERSION
 from ..deps import PRE_CSRF_COOKIE, SESSION_COOKIE, Ctx, auth_ctx, get_ctx, get_db
 from ..config import build_info
 from ..errors import AppError
+from ..legal import legal_file, legal_payload
 from ..permissions import ADMINISTRATOR
 from ..schemas import InitializeIn
 from ..security.passwords import policy_errors
@@ -31,13 +33,14 @@ def health():
 def status(request: Request, response: Response, db: Session = Depends(get_db)):
     if request.app.state.maintenance:  # v1.4.1: no database access while a restore swaps the data
         return {"initialized": None, "workspace_name": None, "version": VERSION, "maintenance": "restore",
-                "mode": request.app.state.settings.mode, "insecure_transport_warning": False}
+                "mode": request.app.state.settings.mode, "insecure_transport_warning": False, **legal_payload()}
     initialized = bootstrap.is_initialized(db)
     ws = bootstrap.current_workspace(db) if initialized else None
     s = request.app.state.settings
     return {"initialized": initialized, "workspace_name": ws.name if ws else None, "version": VERSION,
             "maintenance": request.app.state.maintenance,
-            "mode": s.mode, "insecure_transport_warning": request.app.state.insecure_transport_warning}
+            "mode": s.mode, "insecure_transport_warning": request.app.state.insecure_transport_warning,
+            **legal_payload()}
 
 
 @router.post("/system/initialize")
@@ -69,7 +72,16 @@ def initialize(body: InitializeIn, request: Request, response: Response, db: Ses
 
 def version_payload(request: Request) -> dict:
     s = request.app.state.settings
-    return {"version": VERSION, "build": build_info(), "mode": s.mode}
+    return {"version": VERSION, "build": build_info(), "mode": s.mode, **legal_payload()}
+
+
+@router.get("/system/legal/{doc}", response_class=PlainTextResponse)
+def legal(doc: str):
+    """v1.5.0: the license (AGPL-3.0) and third-party notices shipped with this build - public, like the source."""
+    p = legal_file(doc)
+    if p is None:
+        raise AppError(404, "NOT_FOUND", "Not available in this build.")
+    return PlainTextResponse(p.read_text(encoding="utf-8", errors="replace"), headers={"Cache-Control": "no-cache"})
 
 
 @router.get("/system/version")

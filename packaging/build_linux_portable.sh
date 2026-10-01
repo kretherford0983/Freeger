@@ -22,6 +22,7 @@ tar -xzf "$CACHE/$ARCHIVE" -C "$OUT"                       # -> $OUT/python/bin/
    --python-version 3.12 --implementation cp --target "$OUT/python/lib/python3.12/site-packages" \
    -r "$ROOT/backend/requirements.txt"
 cp -r "$ROOT/backend/fmpoc" "$OUT/app/fmpoc"
+cp "$ROOT/LICENSE" "$ROOT/THIRD-PARTY-NOTICES.txt" "$OUT/"   # v1.5.0: AGPL-3.0 + third-party notices
 cat > "$OUT/app/launch.py" <<'PY'
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

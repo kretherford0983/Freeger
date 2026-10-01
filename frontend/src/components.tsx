@@ -441,7 +441,7 @@ export function EntityPicker({ label, entities, value, onChange, placeholder = "
 }
 
 /** v1.4 CR-022: version + build details (no network details). */
-export function BuildDetails({ info }: { info: { version: string; mode?: string; build?: Record<string, string> | null } }) {
+export function BuildDetails({ info }: { info: { version: string; mode?: string; build?: Record<string, string> | null; license?: string; source_url?: string } }) {
   const b = info.build;
   return (
     <dl className="dl" data-testid="build-details">
@@ -456,6 +456,7 @@ export function BuildDetails({ info }: { info: { version: string; mode?: string;
         <><dt>Build</dt><dd>Development build</dd></>
       )}
       {info.mode ? <><dt>Mode</dt><dd>{info.mode === "server" ? "Server" : "Local"}</dd></> : null}
+      {info.license ? <><dt>License</dt><dd data-testid="app-license"><LegalLinks license={info.license} sourceUrl={info.source_url} /></dd></> : null}
     </dl>
   );
 }
@@ -464,4 +465,16 @@ export function BuildDetails({ info }: { info: { version: string; mode?: string;
 export function Remaining({ x }: { x: { remaining: string; above_budget?: string | null } }) {
   if (x.above_budget) return <span className="above">+{money(x.above_budget)} above budget</span>;
   return <span className={Number(x.remaining) < 0 ? "neg" : ""}>{money(x.remaining)}</span>;
+}
+
+/** v1.5.0: AGPL-3.0 - free software; the source code of this build is offered to every user (AGPL section 13). */
+export function LegalLinks({ license, sourceUrl }: { license: string; sourceUrl?: string }) {
+  return (
+    <span className="legal-links">
+      Free software under the {license.replace(/-only$/, "")} license ·{" "}
+      {sourceUrl ? <><a href={sourceUrl} target="_blank" rel="noopener noreferrer">Source code</a> · </> : null}
+      <a href="/api/system/legal/license" target="_blank" rel="noopener">License</a> ·{" "}
+      <a href="/api/system/legal/notices" target="_blank" rel="noopener">Third-party notices</a>
+    </span>
+  );
 }

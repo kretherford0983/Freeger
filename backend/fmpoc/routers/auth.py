@@ -13,6 +13,8 @@ from ..schemas import ChangePasswordIn, LoginIn, MfaCodeIn, MfaEnrollStartIn, Mf
 from ..services import auth as svc
 from ..services import mfa
 from ..services.charts import charts_for
+from ..services.dashboard_layout import encode as encode_layout
+from ..services.dashboard_layout import is_customized, layout_for
 
 router = APIRouter(prefix="/api", tags=["auth"])
 
@@ -46,6 +48,7 @@ def me_payload(ctx: Ctx) -> dict:
     return {"mfa_pending": None,"id": u.id, "username": u.username, "email": u.email, "display_name": u.display_name,
             "security_domain": u.security_domain, "roles": sorted(ctx.roles), "permissions": sorted(ctx.perms),
             "theme": u.theme, "nav_collapsed": bool(u.nav_collapsed), "dashboard_charts": charts_for(u),
+            "dashboard_layout": layout_for(u), "dashboard_layout_customized": is_customized(u),
             "csrf_token": ctx.session.csrf_token}
 
 
@@ -204,6 +207,11 @@ def preferences(body: PreferencesIn, db: Session = Depends(get_db), ctx: Ctx = D
         ctx.user.nav_collapsed = body.nav_collapsed  # v1.3 CR-014
     if body.dashboard_charts is not None:  # v1.4.1 CR-020
         ctx.user.dashboard_charts = ",".join(dict.fromkeys(body.dashboard_charts))
+    if body.reset_dashboard_layout:  # v1.5.0 CR-031
+        ctx.user.dashboard_layout = None
+    elif body.dashboard_layout is not None:
+        ctx.user.dashboard_layout = encode_layout(body.dashboard_layout)
     db.commit()
     return {"theme": ctx.user.theme, "nav_collapsed": bool(ctx.user.nav_collapsed),
-            "dashboard_charts": charts_for(ctx.user)}
+            "dashboard_charts": charts_for(ctx.user), "dashboard_layout": layout_for(ctx.user),
+            "dashboard_layout_customized": is_customized(ctx.user)}

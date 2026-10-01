@@ -773,3 +773,156 @@ test("CR-024: a new installation is set up from the backup in the initialization
     child.kill();
   }
 });
+
+// ---------------------------------------------------------------- v1.5.0 UI polish
+test("CR-028 / CR-030 / CR-029 / CR-032: account groups, chart columns, signature preview, aligned passphrase fields", async ({ page }) => {
+  await login(page, "bm1");
+  // CR-030: charts in two independent columns
+  const charts = page.getByRole("region", { name: "Charts" });
+  await expect(charts.locator(".chart-cols > .chart-col")).toHaveCount(2);
+  // CR-028: dashboard groups with subtotals
+  await expect(page.getByTestId("bank-group-CHECKING_SAVINGS")).toContainText("Subtotal Checking & Savings");
+  await expect(page.getByTestId("bank-total")).toContainText("Total (all accounts)");
+  await page.getByRole("link", { name: "Bank Accounts" }).click();
+  await expect(page.getByRole("heading", { name: "Checking & Savings" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Investments and Other" })).toBeVisible();
+  await expect(page.getByTestId("accounts-CHECKING_SAVINGS")).toContainText("Total Checking & Savings");
+  await page.screenshot({ path: "e2e-screenshots/light-bank-accounts-groups.png", fullPage: true });
+  // CR-029: preview only the signature page
+  await page.getByRole("link", { name: "Reports" }).click();
+  await page.getByLabel("Include audit review signature page").check();
+  const preview = page.getByRole("link", { name: "Preview signature page" });
+  const href = await preview.getAttribute("href");
+  expect(href).toContain("/api/reports/audit/signature-page?");
+  const pdf = await page.request.get(href!);
+  expect(pdf.status()).toBe(200);
+  expect(pdf.headers()["content-type"]).toBe("application/pdf");
+  await logout(page);
+  // CR-032: passphrase fields line up
+  await login(page, "admin");
+  await page.getByRole("link", { name: "System/About" }).click();
+  const a = await page.getByLabel("Backup passphrase").boundingBox();
+  const b = await page.getByLabel("Repeat the passphrase").boundingBox();
+  expect(Math.abs(a!.y - b!.y)).toBeLessThan(2);
+  expect(Math.abs(a!.height - b!.height)).toBeLessThan(2);
+});
+
+// ---------------------------------------------------------------- v1.5.0 CR-031: dashboard layout
+test("CR-031: dashboard sections can be hidden, reordered and reset; saved per user", async ({ page }) => {
+  await login(page, "ru1", "Brand-New-Pass-99");
+  const order = () => page.locator(".dash-section").evaluateAll((els) => els.map((e) => e.getAttribute("data-section")));
+  // wait until the dashboard data has loaded (the sections render after /api/dashboard answers)
+  await expect(page.locator(".dash-section")).toHaveCount(5);
+  expect(await order()).toEqual(["fiscal_year", "budget", "bank", "attention", "charts"]);
+  await page.getByRole("button", { name: "Customize dashboard" }).click();
+  await expect(page.getByTestId("layout-review")).toHaveCount(0); // Auditors only
+  await page.getByRole("button", { name: "Move Bank account balances up" }).click();
+  await page.getByRole("button", { name: "Move Bank account balances up" }).click();
+  await page.getByTestId("layout-attention").getByRole("checkbox").uncheck();
+  await expect(page.getByRole("status").filter({ hasText: "Dashboard layout saved" })).toBeVisible();
+  expect(await order()).toEqual(["bank", "fiscal_year", "budget", "charts"]);
+  await page.getByRole("button", { name: "Done" }).click();
+  await page.reload();
+  await expect(page.locator(".dash-section").first()).toHaveAttribute("data-section", "bank");
+  expect(await order()).toEqual(["bank", "fiscal_year", "budget", "charts"]);
+  await page.screenshot({ path: "e2e-screenshots/light-dashboard-customized.png", fullPage: true });
+  await logout(page);
+  // another user keeps the default
+  await login(page, "bm1");
+  await expect(page.locator(".dash-section").first()).toHaveAttribute("data-section", "fiscal_year");
+  await logout(page);
+  await login(page, "ru1", "Brand-New-Pass-99");
+  await expect(page.locator(".dash-section").first()).toHaveAttribute("data-section", "bank");
+  await page.getByRole("button", { name: "Customize dashboard" }).click();
+  await page.getByRole("button", { name: "Reset to default" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Dashboard layout saved" })).toBeVisible();
+  expect(await order()).toEqual(["fiscal_year", "budget", "bank", "attention", "charts"]);
+  await expect(page.getByRole("button", { name: "Reset to default" })).toBeDisabled();
+  await logout(page);
+});
+
+// ---------------------------------------------------------------- v1.5.0: license (AGPL-3.0) and source link
+test("v1.5.0: sign-in page and My Account offer the source code, license and third-party notices", async ({ page }) => {
+  await page.goto("/");
+  const legal = page.locator(".login-legal");
+  await expect(legal.getByRole("link", { name: "Source code" })).toHaveAttribute("href", /github\.com\/kretherford0983\/Freeger/);
+  const lic = await page.request.get(await legal.getByRole("link", { name: "License" }).getAttribute("href") as string);
+  expect(await lic.text()).toContain("GNU AFFERO GENERAL PUBLIC LICENSE");
+  const notices = await page.request.get(await legal.getByRole("link", { name: "Third-party notices" }).getAttribute("href") as string);
+  expect(await notices.text()).toContain("recharts");
+  await login(page, "bm1");
+  await page.getByRole("link", { name: "My account" }).click();
+  await expect(page.getByTestId("app-license")).toContainText("AGPL-3.0");
+  await expect(page.getByTestId("app-license").getByRole("link", { name: "Source code" })).toBeVisible();
+  await logout(page);
+});
+
+// ---------------------------------------------------------------- v1.5.0: sign-in from a bookmarked page (server mode)
+test("v1.5.0: a bookmarked page leads to the dashboard address, two-step setup/verify, then the dashboard", async ({ page }) => {
+  const port = 8800;
+  const bundle = process.env.FM_BUNDLE;
+  const dataDir = mkdtempSync(join(tmpdir(), "fm-srv-"));
+  const args = ["--mode", "server", "--host", "127.0.0.1", "--no-browser", "--port", String(port), "--data-dir", dataDir];
+  const child = spawn(bundle || process.env.FM_PYTHON || "python", bundle ? args : ["-m", "fmpoc", ...args],
+    { cwd: existsSync(join(process.cwd(), "..", "backend")) ? join(process.cwd(), "..", "backend") : join(process.cwd(), "backend"), stdio: "ignore" });
+  try {
+    const base = `http://127.0.0.1:${port}`;
+    for (let i = 0; i < 120; i++) {
+      try { if ((await fetch(`${base}/api/health`)).ok) break; } catch { /* starting */ }
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    // initialize from a deep link
+    // HF-001: E2E_THROTTLE=6 slows the browser CPU like a busy CI runner (reproduced the sign-in CSRF race)
+    if (process.env.E2E_THROTTLE) {
+      const cdp = await page.context().newCDPSession(page);
+      await cdp.send("Emulation.setCPUThrottlingRate", { rate: Number(process.env.E2E_THROTTLE) });
+    }
+    await page.goto(base + "/about");
+    await page.getByLabel("Organization / Workspace Name").fill("Server Org");
+    await page.getByLabel("Administrator Username").fill("admin");
+    await page.getByLabel("Administrator Email Address").fill("admin@example.org");
+    await page.getByLabel("Password", { exact: true }).fill(PW);
+    await page.getByLabel("Password Confirmation").fill(PW);
+    await page.getByRole("button", { name: "Initialize" }).click();
+    await expect(page.getByRole("heading", { name: "Set up two-step verification" })).toBeVisible();
+    await expect(page).toHaveURL(base + "/");
+    const secret = (await page.getByTestId("mfa-secret").textContent())!.replace(/\s/g, "");
+    await page.getByLabel("Code from the app").fill(totp(secret));
+    await page.getByRole("button", { name: "Turn on two-step verification" }).click();
+    await page.getByLabel("I have saved my recovery codes").check();
+    await page.getByRole("button", { name: "Continue" }).click();
+    await expect(page.getByRole("heading", { name: "Administration" })).toBeVisible();
+    await page.getByRole("button", { name: "Sign out" }).click();
+
+    // a bookmark into the app: sign-in and the two-step step happen on "/", then the dashboard opens
+    await page.goto(base + "/users");
+    await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
+    await expect(page).toHaveURL(base + "/");
+    await page.getByLabel("Username").fill("admin");
+    await page.getByLabel("Password").fill(PW);
+    await page.getByRole("button", { name: "Sign in" }).click();
+    await expect(page.getByRole("heading", { name: "Two-step verification" })).toBeVisible();
+    await page.getByLabel("Authentication code").fill(totp(secret, 1));
+    await page.getByRole("button", { name: "Verify" }).click();
+    await expect(page.getByRole("heading", { name: "Administration" })).toBeVisible();
+    await expect(page).toHaveURL(base + "/");
+
+    // a page left open across a server upgrade reloads itself once (no loop)
+    let loads = 0;
+    page.on("load", () => { loads += 1; });
+    await page.route("**/api/**", async (route) => {
+      const r = await route.fetch();
+      await route.fulfill({ response: r, headers: { ...r.headers(), "x-frontend-build": "index-NEWER.js" } });
+    });
+    await page.getByRole("link", { name: "Users", exact: true }).click();
+    await page.waitForTimeout(2500);
+    expect(loads).toBe(1);
+    await expect(page.getByRole("heading", { name: "Users" })).toBeVisible();
+    await page.unroute("**/api/**");
+    await page.getByRole("link", { name: "Dashboard", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Administration" })).toBeVisible();
+    await expect.poll(() => page.url()).not.toContain("_b=");  // marker dropped once the builds match again
+  } finally {
+    child.kill();
+  }
+});

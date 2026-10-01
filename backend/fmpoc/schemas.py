@@ -77,12 +77,20 @@ class ChangePasswordIn(In):
     new_password_confirmation: Annotated[str, StringConstraints(max_length=256)]
 
 
+class DashboardSectionIn(In):
+    key: Literal["fiscal_year", "budget", "review", "bank", "attention", "charts"]
+    visible: bool
+
+
 class PreferencesIn(In):
     theme: Literal["light", "dark"] | None = None
     nav_collapsed: bool | None = None  # v1.3 CR-014
     # v1.4.1 CR-020: which dashboard charts to show, in order (empty list = none)
     dashboard_charts: list[Literal["income_pie", "monthly", "expense_vs_budget", "balances", "expense_pie",
                                    "cumulative_net"]] | None = Field(None, max_length=6)
+    # v1.5.0 CR-031: dashboard sections in display order with visibility; reset_dashboard_layout -> default
+    dashboard_layout: list[DashboardSectionIn] | None = Field(None, max_length=6)
+    reset_dashboard_layout: bool | None = None
 
 
 Domain = Literal["ADMINISTRATOR", "FINANCIAL", "AUDITOR"]

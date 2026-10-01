@@ -46,6 +46,26 @@ def delete_signature_template(template_id: int, db: Session = Depends(get_db),
     return {"ok": True}
 
 
+@router.get("/audit/signature-page")
+def signature_page_preview(request: Request, fiscal_year_id: int = Query(...),
+                           signature_template_id: str | None = Query(None, max_length=20),
+                           signature_text: str | None = Query(None, max_length=sig.MAX_TEXT + 500),
+                           signer_id: list[int] = Query([]), signer_title: list[str] = Query([]),
+                           db: Session = Depends(get_db), ctx: Ctx = Depends(require("financial.view"))):
+    """v1.5.0 CR-029: preview/print the signature page without generating the whole audit report."""
+    fy = get_scoped(db, FiscalYear, fiscal_year_id, ctx, "Fiscal Year")
+    signature = sig.resolve(db, ctx, fy, db.get(Workspace, ctx.workspace_id), signature_template_id, signature_text,
+                            signer_id, signer_title)
+    path, fname = svc.build_signature_page(db, ctx, fy, signature)
+    audit.record(db, ctx, "REPORT_GENERATED", "fiscal_year", fy.id, None,
+                 {"report": "SIGNATURE_PAGE", "wording": signature.source, "signers": len(signature.signers)})
+    db.commit()
+    headers = {"Content-Disposition": _disposition("inline", fname), "Cache-Control": "private, no-store",
+               "X-Frame-Options": "SAMEORIGIN", "Content-Security-Policy": "default-src 'none'; frame-ancestors 'self'"}
+    return FileResponse(path, media_type="application/pdf", headers=headers,
+                        background=BackgroundTask(lambda: os.path.exists(path) and os.unlink(path)))
+
+
 @router.get("/audit")
 def audit_report(request: Request, fiscal_year_id: int = Query(...), bank_account_id: int | None = None,
                  include_void: bool = True, download: bool = False,

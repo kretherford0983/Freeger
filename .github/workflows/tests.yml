@@ -30,6 +30,8 @@ jobs:
           npm --prefix frontend ci
       - name: Version consistency (backend config.py = frontend package.json)
         run: bash scripts/version.sh --check
+      - name: Third-party notices up to date (v1.5.0 - every shipped dependency listed with its license)
+        run: python scripts/third_party_notices.py --check
       - name: Backend tests (AC-mapped, incl. security negative tests)
         run: cd backend && python -m pytest -p no:warnings
       - name: Frontend typecheck + production build

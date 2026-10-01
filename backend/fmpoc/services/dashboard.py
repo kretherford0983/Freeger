@@ -54,6 +54,13 @@ def financial(db: Session, ctx) -> dict:
                            "is_primary": a["is_primary"], "register_enabled": a["register_enabled"]} for a in accounts],
         # v1.4 CR-021: total of the active accounts listed above.
         "bank_accounts_total": fmt(sum(parse_amount(a["current_balance"], allow_negative=True) for a in accounts)),
+        # v1.5.0 CR-028: the same accounts in the two groups of the Bank Accounts page, each with a subtotal
+        "bank_account_groups": [
+            {"key": key, "label": label,
+             "account_ids": [a["id"] for a in accounts if a["group"] == key],
+             "total": fmt(sum(parse_amount(a["current_balance"], allow_negative=True)
+                              for a in accounts if a["group"] == key))}
+            for key, label in bank.GROUPS],
         "attention": {"pending_fiscal_year_reviews": _pending_reviews(db, ws), "uncleared_transactions": uncleared,
                       "documentation_warnings": len(documentation_review(db, fy)) if fy is not None else 0},
     }
