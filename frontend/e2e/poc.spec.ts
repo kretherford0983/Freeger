@@ -801,6 +801,7 @@ test("CR-028 / CR-030 / CR-029 / CR-032: account groups, chart columns, signatur
   // CR-032: passphrase fields line up
   await login(page, "admin");
   await page.getByRole("link", { name: "System/About" }).click();
+  await expect(page.getByLabel("Fundraiser module")).toBeVisible(); // the modules panel loads above and shifts the page
   const a = await page.getByLabel("Backup passphrase").boundingBox();
   const b = await page.getByLabel("Repeat the passphrase").boundingBox();
   expect(Math.abs(a!.y - b!.y)).toBeLessThan(2);
@@ -965,6 +966,29 @@ test("CR-034: buckets, cash float, exclusion and fundraiser documents", async ({
   await page.getByRole("button", { name: "Delete…" }).click();
   await page.getByRole("dialog", { name: "Delete fundraiser" }).getByRole("button", { name: "Delete" }).click();
   await expect(page.getByRole("alert").filter({ hasText: "Archive it instead" })).toBeVisible();
+  await logout(page);
+});
+
+// ---------------------------------------------------------------- v1.6.2 CR-035: fundraiser report
+test("CR-035: fundraiser report PDF; Audit and Close reports can include fundraisers", async ({ page }) => {
+  await login(page, "bm1");
+  await page.getByRole("link", { name: "Fundraisers" }).click();
+  await page.getByRole("link", { name: "Harvest Dinner" }).click();
+  const href = await page.getByRole("link", { name: "Report (PDF)" }).getAttribute("href");
+  const pdf = await page.request.get(href!);
+  expect(pdf.status()).toBe(200);
+  expect(pdf.headers()["content-type"]).toBe("application/pdf");
+  await page.getByRole("link", { name: "Reports" }).click();
+  await expect(page.getByLabel("Include fundraisers")).toBeChecked();
+  const audit = await page.getByRole("link", { name: "Open printable PDF" }).getAttribute("href");
+  expect(audit).toContain("include_fundraisers=true");
+  const withFr = await page.request.get(audit!);
+  expect(withFr.status()).toBe(200);
+  await page.getByLabel("Include fundraisers").uncheck();
+  const without = await page.getByRole("link", { name: "Open printable PDF" }).getAttribute("href");
+  expect(without).not.toContain("include_fundraisers");
+  const plain = await page.request.get(without!);
+  expect((await withFr.body()).length).toBeGreaterThan((await plain.body()).length);
   await logout(page);
 });
 

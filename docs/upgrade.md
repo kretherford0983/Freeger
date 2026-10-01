@@ -10,6 +10,7 @@ Before switching versions the installer stops the service and copies the whole d
 
 | Upgrade | Database change | Rollback |
 |---|---|---|
+| 1.6.1 → 1.6.2 | none | switch binaries only |
 | 1.6.0 → 1.6.1 | migration `0011` — **adds** tables `fundraiser_bucket`, `fundraiser_bucket_line`, `fundraiser_classification`, `fundraiser_exclusion` and column `attachment.fundraiser_id` | switch binaries **and** restore the pre-upgrade data backup |
 | 1.5.0 → 1.6.0 | migration `0010` — **adds** column `workspace.fundraisers_enabled` (off) and tables `fundraiser`, `fundraiser_budget` | switch binaries **and** restore the pre-upgrade data backup |
 | 1.4.1 → 1.5.0 | migration `0009` — **adds** column `app_user.dashboard_layout` (NULL = standard dashboard layout) | switch binaries **and** restore the pre-upgrade data backup |

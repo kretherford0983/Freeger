@@ -2,7 +2,19 @@
 
 Versions are `Breaking.Major.Minor` from 1.6.0 (docs/branching.md).
 
-## 1.6.1 — unreleased (in development)
+## 1.6.2 — unreleased (in development)
+Fundraiser module, part 3: the fundraiser report. Beta: test channel only. No database change.
+- **CR-035 Fundraiser report.** **Report (PDF)** on a fundraiser's page (everyone who can see the fundraiser):
+  event, budgets and filter; income, expenses, net and return; cash float and excluded amounts; breakdown per Fiscal
+  Year; buckets; every counted transaction line; excluded lines with their reasons; then the fundraiser documents and
+  the transactions' attachments reproduced.
+- The same section can be added to the **End of Year Audit** and **Fiscal Year Close** reports (*Include
+  fundraisers*, ticked by default when the module is on): all non-archived fundraisers with a budget in that Fiscal
+  Year, after the transactions and before the signature page. A fundraiser spanning two Fiscal Years is shown complete
+  in both years' reports, with that report's year marked. The Close report stored automatically when a Fiscal Year is
+  closed includes them too.
+
+## 1.6.1 — 2026-10-01
 Fundraiser module, part 2: managing a fundraiser's transactions. Beta: test channel only.
 - **CR-034 Managing a fundraiser** (Budget Managers and Register Users; everything is recorded in the audit log):
   - **Buckets** — sub-categories such as *Food sales* or *Raffle*. Assign a transaction line to a bucket, or split it

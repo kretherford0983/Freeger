@@ -61,6 +61,20 @@ passkeys deferred).
 | UI | Menu item *Fundraisers* (when on); list with FY selector + Upcoming; detail page with notices, budgets, tiles, per-FY table, charts (lazy `FundraiserCharts`, shares the dashboard palette/helpers), transactions (link `/register?account=&search=`), attachments; create/edit dialog with budget options per eligible FY, warnings, filter warning and live preview. Admin: *Optional modules* on System/About. |
 | Delete | Allowed unless a Closed FY is involved (archive instead); CR-034 adds the "nothing classified/excluded/bucketed/attached" condition. |
 
+**v1.6.2 CR-035 Fundraiser report (decisions 2026-10-01).** `services/reports._fundraiser_section` builds one
+fundraiser from `fundraisers.detail` (so the PDF always matches the page): metadata, warnings, summary (income,
+expenses, net, ROI; cash float and excluded amounts), per-FY table, buckets + Unassigned, counted lines (date, FY,
+transaction #, type, entity/description + classification, budget, amount, counted, buckets), excluded lines with
+reasons, then the fundraiser documents and each line's transaction/allocation attachments rendered with the audit
+report's engine (images drawn, PDF pages merged, SHA-256 verified). No charts (product owner).
+`GET /api/fundraisers/{id}/report` (`fundraiser.view`, module on; audited `REPORT_GENERATED {report: FUNDRAISER}`).
+`build_audit_report(..., fundraisers=True)` inserts every non-archived fundraiser with a budget in the Fiscal Year
+(`fundraisers.for_fiscal_year_report`; nothing when the module is off) after the transaction pages and before the
+signature page; a two-FY fundraiser is complete in both reports, the report's year marked "(this report)".
+`/api/reports/audit?include_fundraisers=true` (default false), `/api/reports/fy-close?include_fundraisers=` (default
+true); the Close report stored at closing always passes true. The summary in the `REPORT_GENERATED` event counts the
+fundraisers. UI: *Report (PDF)* on the fundraiser page; *Include fundraisers* (default on) for both reports.
+
 **v1.6.1 CR-034 Fundraiser management.**
 
 | Topic | Implementation |
