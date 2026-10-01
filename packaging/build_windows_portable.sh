@@ -53,6 +53,7 @@ print("installed wheels:\n  " + "\n  ".join(sorted(used)))
 PY
 # application code (no tests, no caches)
 cp -r "$ROOT/backend/fmpoc" "$OUT/app/fmpoc"
+cp "$ROOT/LICENSE" "$ROOT/THIRD-PARTY-NOTICES.txt" "$OUT/"   # v1.5.0: AGPL-3.0 + third-party notices
 cat > "$OUT/app/launch.py" <<'PY'
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

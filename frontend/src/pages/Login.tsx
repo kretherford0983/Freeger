@@ -1,8 +1,8 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, preAuthCsrf } from "../api";
-import { ErrorBox, Field, GuardedForm } from "../components";
+import { ErrorBox, Field, GuardedForm, LegalLinks } from "../components";
 
-export default function Login({ workspace, onLogin }: { workspace: string; onLogin: () => void }) {
+export default function Login({ workspace, onLogin, legal }: { workspace: string; onLogin: () => void; legal?: { license?: string; source_url?: string } }) {
   const [username, setU] = useState("");
   const [password, setP] = useState("");
   const [err, setErr] = useState<unknown>(null);
@@ -31,6 +31,7 @@ export default function Login({ workspace, onLogin }: { workspace: string; onLog
         <Field label="Password"><input required type="password" autoComplete="current-password" value={password} onChange={(e) => setP(e.target.value)} /></Field>
         <button className="primary" type="submit">Sign in</button>
       </GuardedForm>
+      {legal?.license ? <p className="hint login-legal">Freedger · <LegalLinks license={legal.license} sourceUrl={legal.source_url} /></p> : null}
     </div>
   );
 }

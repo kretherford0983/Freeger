@@ -14,8 +14,11 @@
 | `main` | production | tests + packages + **GitHub release** `v<version>` and git tag | production server |
 
 Packages in every build: `FinancialManagementPOC-linux-x64-portable.tar.gz` (servers), `FinancialManagementPOC-windows-x64.zip`,
+`Freedger-<version>-windows-x64.exe` (one file, since 1.5.0), `install.sh` (one-command Linux install, since 1.5.0),
 `install-server.sh`, `build-info.json` (version, branch, commit, run) and `SHA256SUMS.txt`. Each package is smoke-tested
-(started from a clean environment and checked for the expected version) before it is published.
+(started from a clean environment and checked for the expected version — the Windows .exe and zip on a Windows
+runner) before it is published. To try the packages of a feature branch without publishing anything, run the
+**build** workflow by hand on that branch (Actions → build → Run workflow).
 Workflow-run copies of the packages are kept 7 days (develop) or 1 day (test/main — the GitHub release keeps the
 permanent copy), so Actions artifact storage stays well within the GitHub Pro allowance (1 GB).
 
@@ -36,8 +39,9 @@ permanent copy), so Actions artifact storage stays well within the GitHub Pro al
    `git push -u origin feature/cr-NNN-short-name` → the `ci` workflow runs.
 3. **Pull request feature → develop** on GitHub; merge when green (squash or merge commit — your choice).
 4. **Promote to test**: pull request **develop → test**, merge with *Create a merge commit*. The build publishes a
-   pre-release `v1.4.0-test.N`; download the portable package + `install-server.sh` from it and install on the test
-   server exactly as today (`sudo bash install-server.sh FinancialManagementPOC-linux-x64-portable.tar.gz`).
+   pre-release `v1.5.0-test.N`; install it on the test server with the command in its release notes
+   (`curl -fsSL …/releases/download/<tag>/install.sh | sudo bash -s -- --version <tag>`), or as before with
+   `sudo bash install-server.sh FinancialManagementPOC-linux-x64-portable.tar.gz`.
 5. **Release**: when testing is accepted, pull request **test → main**, merge with *Create a merge commit*. The build
    publishes release `v1.4.0` (notes = the CHANGELOG section). Install it in production the same way.
 6. After merging on GitHub, update your local branches: `git checkout develop && git pull` (and `test`/`main` when

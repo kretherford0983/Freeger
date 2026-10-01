@@ -68,6 +68,8 @@ bash scripts/security_check.sh                    # pip-audit + npm audit + secu
 | Linux x86-64 self-contained | `bash packaging/build_linux.sh` | PyInstaller onedir → `dist/FinancialManagementPOC-linux-x64.tar.gz` |
 | Windows x86-64 self-contained (portable) | `bash packaging/build_windows_portable.sh` | Runs on any OS; relocatable CPython + win_amd64 wheels → `dist/FinancialManagementPOC-windows-x64.zip`; launch `FinancialManagementPOC.cmd` |
 | Windows x86-64 self-contained (PyInstaller) | `pwsh packaging/build_windows.ps1` | Build on Windows → `FinancialManagementPOC.exe` |
+| Windows x86-64 one-file .exe (1.5.0) | `pyinstaller --noconfirm --distpath dist packaging/pyinstaller/fmpoc-onefile.spec` | Build on Windows (CI: `windows-latest`) → `Freedger-<version>-windows-x64.exe`, smoke-tested with the portable zip |
+| Linux one-command install (1.5.0) | `packaging/linux/install.sh` | Release asset: `curl -fsSL …/install.sh \| sudo bash` — see docs/deployment.md |
 | Docker (optional, server) | `docker build -f packaging/docker/Dockerfile -t fmpoc .` | plus `docker-compose.yml` with Caddy HTTPS |
 | Docker from bundle (no registry needed) | `bash packaging/docker/build_bundle_image.sh` | used for verification in this run |
 
@@ -86,3 +88,12 @@ scripts/                  security_check.sh, run_tests.sh
 spec/                     benchmark package (authoritative, unchanged)
 docs/                     implementation documentation and acceptance results
 ```
+
+## License
+
+Freedger is free software: you can redistribute it and/or modify it under the terms of the
+[GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0-only). If you run a modified version for other people
+over a network, you must offer them its source code. Bundled third-party components keep their own licenses — see
+[THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt) (regenerate with `python scripts/third_party_notices.py`; CI
+checks it is current).
+

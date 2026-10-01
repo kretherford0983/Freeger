@@ -838,6 +838,22 @@ test("CR-031: dashboard sections can be hidden, reordered and reset; saved per u
   await logout(page);
 });
 
+// ---------------------------------------------------------------- v1.5.0: license (AGPL-3.0) and source link
+test("v1.5.0: sign-in page and My Account offer the source code, license and third-party notices", async ({ page }) => {
+  await page.goto("/");
+  const legal = page.locator(".login-legal");
+  await expect(legal.getByRole("link", { name: "Source code" })).toHaveAttribute("href", /github\.com\/kretherford0983\/Freeger/);
+  const lic = await page.request.get(await legal.getByRole("link", { name: "License" }).getAttribute("href") as string);
+  expect(await lic.text()).toContain("GNU AFFERO GENERAL PUBLIC LICENSE");
+  const notices = await page.request.get(await legal.getByRole("link", { name: "Third-party notices" }).getAttribute("href") as string);
+  expect(await notices.text()).toContain("recharts");
+  await login(page, "bm1");
+  await page.getByRole("link", { name: "My account" }).click();
+  await expect(page.getByTestId("app-license")).toContainText("AGPL-3.0");
+  await expect(page.getByTestId("app-license").getByRole("link", { name: "Source code" })).toBeVisible();
+  await logout(page);
+});
+
 // ---------------------------------------------------------------- v1.5.0: sign-in from a bookmarked page (server mode)
 test("v1.5.0: a bookmarked page leads to the dashboard address, two-step setup/verify, then the dashboard", async ({ page }) => {
   const port = 8800;

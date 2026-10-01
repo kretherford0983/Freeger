@@ -28,6 +28,11 @@ were then asked to set up two-step verification; a backup → restore round trip
 (including two-step verification from the backup). Rollback: the 1.4.0 binaries alone refuse the 1.4.1 database
 ("Can't locate revision"); restoring the installer's data snapshot with the 1.4.0 binaries returned exactly the
 pre-upgrade data.
+Verified for 1.5.0: a 1.4.1 server installation with data (users, accounts, transactions, an attachment) was
+upgraded with the one-command `install.sh` from a (local) release: it chose the test pre-release, verified the
+checksums, read the port from `config.toml`, snapshotted the data and ran `install-server.sh`. `config.toml`, the key
+and the attachment were byte-for-byte identical, every row was kept and `0009` was applied. Rollback (previous
+release + the snapshot) started 1.4.1 on the identical data.
 Earlier: upgrading a 1.2.1 server with data to 1.3.0 left `config.toml`, the key and all
 attachments byte-for-byte identical, kept every row, applied `0005`, labelled the existing Fiscal Year document "Other"
 and reported the Audit Signoff as the only new closing requirement.
@@ -38,6 +43,16 @@ every attachment file byte-for-byte identical, kept all rows, and the audit/enti
 documentation review worked on the pre-existing data.
 
 ## Steps
+
+**Since 1.5.0 — one command on the server** (does steps 1–4 below; the data snapshot and rollback copy are the same):
+```bash
+curl -fsSL https://github.com/kretherford0983/Freeger/releases/download/<tag>/install.sh | sudo bash -s -- --version <tag>
+```
+(`<tag>` e.g. `v1.5.0-test.14`; after the first production release:
+`curl -fsSL https://github.com/kretherford0983/Freeger/releases/latest/download/install.sh | sudo bash`.)
+The port of the existing installation is read from `config.toml`. Then continue with *Verify*.
+
+**Manual:**
 
 1. Copy the new package and installer to the server (from the Freedger folder on your PC):
    ```powershell

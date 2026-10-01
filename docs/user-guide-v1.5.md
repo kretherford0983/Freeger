@@ -20,6 +20,16 @@ Click **Customize dashboard** (top right of the dashboard). Untick a section to 
 it. Changes are saved for your account straight away. **Reset to default** brings back the standard layout. The
 Administrator dashboard cannot be customized.
 
+## Installing
+- **Windows:** download `Freedger-<version>-windows-x64.exe` from the release page and double-click it. If Windows
+  says "Windows protected your PC", click **More info → Run anyway**. Keep the black window open while you use
+  Freedger; closing it stops the app. Your data is kept separately, so a newer .exe simply replaces the old one.
+- **Linux server:** one command installs or upgrades — see docs/deployment.md (*Linux: one command*).
+
+## License and source code
+Freedger is free software (AGPL-3.0). The sign-in page and **My account** show links to the source code, the license
+and the third-party notices.
+
 ## Charts
 Dashboard charts are arranged in two columns that each fill from the top, so there are no gaps under short charts.
 On a narrow screen they are shown in one column.
