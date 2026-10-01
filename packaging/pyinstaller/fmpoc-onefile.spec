@@ -21,7 +21,7 @@ if os.path.isfile(os.path.join(PKG, "build_info.json")):  # written by CI (versi
     datas.append((os.path.join(PKG, "build_info.json"), "fmpoc"))
 hidden = (collect_submodules("fmpoc") + collect_submodules("uvicorn") + collect_submodules("alembic")
           + ["sqlalchemy.dialects.sqlite", "argon2", "argon2._password_hasher", "multipart", "python_multipart",
-             "PIL.PngImagePlugin", "PIL.JpegImagePlugin"] + collect_submodules("reportlab")
+             "PIL.PngImagePlugin", "PIL.JpegImagePlugin", "re2", "re2._re2"] + collect_submodules("reportlab")
           + collect_submodules("pypdf") + collect_submodules("segno") + ["pyotp"])
 
 a = Analysis([os.path.join(SPECPATH, "entry.py")], pathex=[os.path.join(ROOT, "backend")], datas=datas,

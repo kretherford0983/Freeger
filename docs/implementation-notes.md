@@ -44,6 +44,23 @@ could not otherwise be corrected. Scope and safeguards:
 - Audited as `TRANSACTION_VOID_DATE_CORRECTED` with before/after snapshots and the reason.
 - Tests: `backend/tests/test_cr001_void_date.py` (5 tests) and E2E "CR-001".
 
+**v1.6.0 CR-033 Fundraiser module, core (product owner, 2026-10-01).** Plan with every decision: project doc
+`claude/freedger-plan-1.6.md` (1.6.0 = CR-033; 1.6.1 CR-034 manage, 1.6.2 CR-035 report, 1.6.3 CR-036 reminders;
+passkeys deferred).
+
+| Topic | Implementation |
+|---|---|
+| Switch | `workspace.fundraisers_enabled` (migration `0010`, default off). `GET/PUT /api/system/modules` (`modules.manage` = Administrator, audited `MODULE_ENABLED/DISABLED`). `/api/auth/me` returns `modules`. Every fundraiser endpoint answers `404 MODULE_DISABLED` while off; data is kept. |
+| Access | `fundraiser.view` = Budget Manager, Budget User, Register User, Auditor; `fundraiser.manage` = Budget Manager (create, edit, archive/restore, delete, budget options, preview). Administrators: no access (no financial data). |
+| Model | `fundraiser` (name, description, event `start_date`/`end_date` — display only, `filter_text`, `filter_regex`, `archived_at`) and `fundraiser_budget` (fundraiser, fiscal year, budget, kind INCOME/EXPENSE; unique per fundraiser + FY + kind). |
+| FY rule | `services/fundraisers.in_window`: a FY's budgets are selectable when the FY exists, is not Closed and the event lies inside it or within 3 months of its start/end (`add_months`). ≤ 2 Fiscal Years, adjacent in the workspace's FY order. Shell = no budgets. Creating/moving the event is refused when the FY covering the start date is Closed (`FISCAL_YEAR_CLOSED`). Budgets of a Closed FY cannot be removed/changed/added; moving the event must keep them in the window. Notices: `NO_BUDGETS`, `FY_WITHOUT_BUDGET` (an open FY in the window not used yet), `FUTURE_FY` (the window reaches past the last FY set up). |
+| Inclusion | ACTIVE transactions, live allocations whose budget is a chosen budget (a parent = itself + all children, so the system "Other" leaf of a simple budget is covered), any transaction date, then the filter on the allocation description. Filter: RE2 (`google-re2`, linear time, case-insensitive; `literal` mode for plain text, so a plain filter is never a pattern); invalid/unsupported patterns → 422; ≤ 200 chars. |
+| Warnings | `OTHER_BUDGET` (an "Other" child next to explicit sub-budgets), `PARENT_BUDGET` (a parent with explicit sub-budgets), `FILTER`, `SHARED_BUDGET` (overlapping leaf budgets with another non-archived fundraiser). `POST /api/fundraisers/preview` gives matched/total lines and non-matching samples for the form. |
+| Figures | Income/expense/net per fundraiser and per FY, ROI = net ÷ expense (none without expenses), cumulative series by transaction date, included lines with bank account, entity, budget and the transaction + allocation attachments. Status derived from today vs event dates (Planned/In progress/Ended) or Archived. Classified/excluded amounts are 0 until CR-034. |
+| Listing | Under every FY its event dates or budgets touch; "Upcoming" = touches no existing FY. Archived hidden unless requested. |
+| UI | Menu item *Fundraisers* (when on); list with FY selector + Upcoming; detail page with notices, budgets, tiles, per-FY table, charts (lazy `FundraiserCharts`, shares the dashboard palette/helpers), transactions (link `/register?account=&search=`), attachments; create/edit dialog with budget options per eligible FY, warnings, filter warning and live preview. Admin: *Optional modules* on System/About. |
+| Delete | Allowed unless a Closed FY is involved (archive instead); CR-034 adds the "nothing classified/excluded/bucketed/attached" condition. |
+
 **v1.5.0 polish CR-026 … CR-032, HF-001 (product owner, 2026-09-30).** 1.5.0 improves existing functionality only
 (plan: project doc `claude/freedger-plan-1.5.md`).
 

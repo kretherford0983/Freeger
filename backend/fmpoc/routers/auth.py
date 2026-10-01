@@ -3,7 +3,7 @@ from __future__ import annotations
 import secrets
 
 from fastapi import APIRouter, Depends, Request, Response
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
 from .. import audit
 from ..deps import PRE_CSRF_COOKIE, SESSION_COOKIE, Ctx, auth_ctx, get_ctx, get_db, pre_mfa_ctx
@@ -15,6 +15,7 @@ from ..services import mfa
 from ..services.charts import charts_for
 from ..services.dashboard_layout import encode as encode_layout
 from ..services.dashboard_layout import is_customized, layout_for
+from ..services.fundraisers import module_enabled
 
 router = APIRouter(prefix="/api", tags=["auth"])
 
@@ -49,6 +50,7 @@ def me_payload(ctx: Ctx) -> dict:
             "security_domain": u.security_domain, "roles": sorted(ctx.roles), "permissions": sorted(ctx.perms),
             "theme": u.theme, "nav_collapsed": bool(u.nav_collapsed), "dashboard_charts": charts_for(u),
             "dashboard_layout": layout_for(u), "dashboard_layout_customized": is_customized(u),
+            "modules": {"fundraisers": module_enabled(object_session(u), u.workspace_id)},  # v1.6.0 CR-033
             "csrf_token": ctx.session.csrf_token}
 
 

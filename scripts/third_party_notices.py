@@ -152,6 +152,8 @@ def render(groups) -> str:
         "OpenSSL (Apache-2.0), SQLite (public domain), libffi (MIT), zlib (zlib), bzip2, xz/liblzma, mpdecimal",
         "and Tcl/Tk; their licenses are documented at",
         "https://gregoryszorc.com/docs/python-build-standalone/main/running.html#licensing",
+        "The google-re2 package contains the RE2 library (BSD-3-Clause, below) built with Abseil",
+        "(https://github.com/abseil/abseil-cpp, Apache-2.0).",
         "",
         "INVENTORY",
     ] + inventory(groups) + [""]

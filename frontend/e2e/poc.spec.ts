@@ -841,6 +841,68 @@ test("CR-031: dashboard sections can be hidden, reordered and reset; saved per u
   await logout(page);
 });
 
+// ---------------------------------------------------------------- v1.6.0 CR-033: fundraisers
+test("CR-033: Administrator turns on fundraisers; Budget Manager creates, filters and views one; shells are upcoming", async ({ page }) => {
+  await login(page, "admin");
+  await page.getByRole("link", { name: "System/About" }).click();
+  await page.getByLabel("Fundraiser module").check();
+  await expect(page.getByRole("status").filter({ hasText: "Saved." })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Fundraisers" })).toHaveCount(0);
+  await logout(page);
+
+  await login(page, "bm1");
+  await page.getByRole("link", { name: "Fundraisers" }).click();
+  await page.getByRole("button", { name: "New fundraiser" }).click();
+  let dlg = page.getByRole("dialog", { name: "New fundraiser" });
+  await dlg.getByLabel("Name").fill("Harvest Dinner");
+  await dlg.getByLabel("Event start date").fill("2026-10-15");
+  const exp = dlg.getByLabel("Expense budget (FY2027)");
+  await exp.selectOption({ label: "1000 Operations" });
+  await expect(dlg.getByRole("note").filter({ hasText: "includes all of its sub-budgets" })).toBeVisible();
+  const travel = await exp.locator("option", { hasText: "1000-01 Travel" }).getAttribute("value");
+  await exp.selectOption(travel!);
+  await expect(dlg.getByRole("note").filter({ hasText: "includes all of its sub-budgets" })).toHaveCount(0);
+  await expect(dlg.getByTestId("fr-preview")).toContainText("will be included");
+  await dlg.getByRole("button", { name: "Create fundraiser" }).click();
+  await expect(page.getByRole("heading", { name: /Harvest Dinner/ })).toBeVisible();
+  await expect(page.getByTestId("fr-event")).toHaveText("2026-10-15");
+  await expect(page.getByRole("row", { name: /FY2027 Expense 1000-01 Travel/ })).toBeVisible();
+  // a filter that matches nothing: warning + no lines
+  await page.getByRole("button", { name: "Edit" }).click();
+  dlg = page.getByRole("dialog", { name: "Edit fundraiser" });
+  await dlg.getByLabel("Description filter (optional)").fill("zzz-no-match");
+  await expect(dlg.getByText("Filter in use:")).toBeVisible();
+  await expect(dlg.getByTestId("fr-preview")).toContainText("0 of");
+  await dlg.getByRole("button", { name: "Save" }).click();
+  await expect(page.locator("[data-code=FILTER]")).toBeVisible();
+  await expect(page.getByTestId("fr-totals")).toContainText("$0.00");
+  await page.screenshot({ path: "e2e-screenshots/light-fundraiser-detail.png", fullPage: true });
+  // a shell for an event beyond every Fiscal Year: no budgets yet, listed as upcoming
+  await page.getByRole("link", { name: "← Fundraisers" }).click();
+  await page.getByRole("button", { name: "New fundraiser" }).click();
+  dlg = page.getByRole("dialog", { name: "New fundraiser" });
+  await dlg.getByLabel("Name").fill("Spring Fair 2028");
+  await dlg.getByLabel("Event start date").fill("2028-03-04");
+  await expect(dlg.getByText("No open Fiscal Year is within 3 months of the event yet")).toBeVisible();
+  await dlg.getByRole("button", { name: "Create fundraiser" }).click();
+  await expect(page.locator("[data-code=NO_BUDGETS]")).toBeVisible();
+  await page.getByRole("link", { name: "← Fundraisers" }).click();
+  await expect(page.getByTestId("fundraiser-list")).toContainText("Harvest Dinner");
+  await page.getByLabel("Fundraisers Fiscal Year").selectOption({ label: "Upcoming — no Fiscal Year yet" });
+  await expect(page.getByTestId("fundraiser-list")).toContainText("Spring Fair 2028");
+  await expect(page.getByTestId("fundraiser-list")).not.toContainText("Harvest Dinner");
+  await logout(page);
+
+  // viewers see it, without management buttons
+  await login(page, "ru1", "Brand-New-Pass-99");
+  await page.getByRole("link", { name: "Fundraisers" }).click();
+  await expect(page.getByRole("button", { name: "New fundraiser" })).toHaveCount(0);
+  await page.getByRole("link", { name: "Harvest Dinner" }).click();
+  await expect(page.getByRole("heading", { name: /Harvest Dinner/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Edit" })).toHaveCount(0);
+  await logout(page);
+});
+
 // ---------------------------------------------------------------- v1.5.0: license (AGPL-3.0) and source link
 test("v1.5.0: sign-in page and My Account offer the source code, license and third-party notices", async ({ page }) => {
   await page.goto("/");

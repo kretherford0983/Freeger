@@ -32,6 +32,10 @@ PERMISSIONS: dict[str, set[str]] = {
     "entity.create_financial_institution": {BUDGET_MANAGER, REGISTER_USER},
     "entity.manage_financial_institution": {BUDGET_MANAGER},
     "review.resolve": {BUDGET_MANAGER, REGISTER_USER},
+    # v1.6.0 CR-033: optional modules (switched on by an Administrator) and the Fundraiser module
+    "modules.manage": {ADMINISTRATOR},
+    "fundraiser.view": {BUDGET_MANAGER, BUDGET_USER, REGISTER_USER, AUDITOR},
+    "fundraiser.manage": {BUDGET_MANAGER},
 }
 
 
