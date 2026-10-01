@@ -9,11 +9,11 @@ import { api, money } from "../api";
 import { ErrorBox } from "../components";
 import { useMe } from "../App";
 
-const SERIES = {
+export const SERIES = {
   light: ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"],
   dark: ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767"],
 };
-const CHROME = {
+export const CHROME = {
   light: { text: "#1b1f24", muted: "#5b6573", grid: "#e1e0d9", axis: "#c3c2b7", surface: "#ffffff", neutral: "#c3c2b7", other: "#898781" },
   dark: { text: "#e6eaef", muted: "#9aa6b4", grid: "#2c3440", axis: "#46515e", surface: "#1b2128", neutral: "#52606f", other: "#898781" },
 };
@@ -28,7 +28,7 @@ export const CHARTS: { key: string; title: string }[] = [
 ];
 
 const num = (v: string | null | undefined) => (v === null || v === undefined ? null : Number(v));
-const compact = (v: number) => {
+export const compact = (v: number) => {
   const a = Math.abs(v);
   const s = a >= 1e6 ? `${(a / 1e6).toFixed(1)}M` : a >= 1e3 ? `${(a / 1e3).toFixed(a >= 1e4 ? 0 : 1)}k` : `${a.toFixed(0)}`;
   return `${v < 0 ? "-" : ""}$${s}`;
@@ -107,7 +107,7 @@ export default function DashboardCharts({ fys, currentFyId }: { fys: any[]; curr
 // v1.5.0 CR-030: charts only take the height they need. Two columns; each chart goes into the column that is
 // currently shorter (by estimated height), in the chosen order, so a short chart next to a tall one is followed
 // directly by the next chart instead of leaving an empty gap. One column on narrow screens.
-function useNarrow(px: number) {
+export function useNarrow(px: number) {
   const q = `(max-width: ${px}px)`;
   const [narrow, setNarrow] = useState(() => window.matchMedia?.(q).matches ?? false);
   useEffect(() => {
@@ -142,7 +142,7 @@ export function Masonry({ items, narrow }: { items: { key: string; height: numbe
   return <div className="chart-cols">{cols.map((c, n) => <div key={n} className="chart-col">{c.els}</div>)}</div>;
 }
 
-function ChartCard({ title, testId, children }: { title: string; testId: string; children: [JSX.Element, JSX.Element] | JSX.Element[] }) {
+export function ChartCard({ title, testId, children }: { title: string; testId: string; children: [JSX.Element, JSX.Element] | JSX.Element[] }) {
   const [chart, table] = children as JSX.Element[];
   return (
     <figure className="chart-card" data-testid={testId}>
@@ -156,7 +156,7 @@ function ChartCard({ title, testId, children }: { title: string; testId: string;
   );
 }
 
-function tooltipStyle(theme: "light" | "dark") {
+export function tooltipStyle(theme: "light" | "dark") {
   const c = CHROME[theme];
   return {
     contentStyle: { background: c.surface, border: `1px solid ${c.axis}`, borderRadius: 6, color: c.text, fontSize: 13 },
@@ -165,7 +165,7 @@ function tooltipStyle(theme: "light" | "dark") {
   };
 }
 
-function axisProps(theme: "light" | "dark") {
+export function axisProps(theme: "light" | "dark") {
   const c = CHROME[theme];
   return { tick: { fill: c.muted, fontSize: 12 }, axisLine: { stroke: c.axis }, tickLine: false as const };
 }
@@ -299,7 +299,7 @@ function renderChart(key: string, d: any, theme: "light" | "dark"): JSX.Element[
   ];
 }
 
-function DataTable({ head, rows, foot }: { head: string[]; rows: string[][]; foot?: string[] }) {
+export function DataTable({ head, rows, foot }: { head: string[]; rows: string[][]; foot?: string[] }) {
   return (
     <table className="table compact">
       <thead><tr>{head.map((h, i) => <th key={i} className={i ? "num" : ""}>{h}</th>)}</tr></thead>

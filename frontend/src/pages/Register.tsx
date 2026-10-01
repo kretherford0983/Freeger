@@ -31,7 +31,11 @@ export default function Register() {
       setAccounts(reg);
       setFys(y);
       const primary = reg.find((x: any) => x.is_primary) || reg.find((x: any) => x.status === "ACTIVE") || reg[0];
-      setF((p) => ({ ...p, bank_account_id: primary ? String(primary.id) : "", fiscal_year_id: nat.default_fiscal_year_id ? String(nat.default_fiscal_year_id) : "" }));
+      // v1.6.0: deep link from a fundraiser line - /register?account=<id>&search=<text> (all dates)
+      const q = new URLSearchParams(window.location.search);
+      const linked = reg.find((x: any) => String(x.id) === q.get("account"));
+      if (linked) setF((p) => ({ ...p, bank_account_id: String(linked.id), fiscal_year_id: "", search: q.get("search") || "" }));
+      else setF((p) => ({ ...p, bank_account_id: primary ? String(primary.id) : "", fiscal_year_id: nat.default_fiscal_year_id ? String(nat.default_fiscal_year_id) : "" }));
     }, setErr);
   }, []);
   const load = () => {

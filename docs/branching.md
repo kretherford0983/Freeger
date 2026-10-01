@@ -47,8 +47,16 @@ permanent copy), so Actions artifact storage stays well within the GitHub Pro al
 6. After merging on GitHub, update your local branches: `git checkout develop && git pull` (and `test`/`main` when
    needed).
 
-**Versioning:** the first feature of a new release bumps the version on its feature branch (e.g. 1.3.0 → 1.4.0) and
-adds the CHANGELOG section; later features of the same release add to that section.
+**Versioning (from 1.6.0): `Breaking.Major.Minor`** (same three numbers as before, so tags, pre-releases and the
+pipeline are unchanged):
+- **Breaking** (1.x → 2.0) — very large changes that may break the app, e.g. moving the data to a different database
+  server. Users decide deliberately whether to upgrade.
+- **Major** (1.5 → 1.6) — one or more large new features within the current Breaking line.
+- **Minor** (1.6.0 → 1.6.1) — fixes, polish and performance; occasionally one planned feature of a Major line is
+  released on its own so beta feedback can come in before the next one.
+
+The first feature of a new release bumps the version on its feature branch (e.g. 1.5.0 → 1.6.0) and adds the
+CHANGELOG section; later features of the same release add to that section.
 
 **Hotfix** (urgent production fix): branch `hotfix/short-name` from `main`, bump the patch version (e.g. 1.4.1),
 pull request into `main`; afterwards pull request `main → test` and `main → develop` so the fix is not lost.
