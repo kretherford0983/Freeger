@@ -23,6 +23,14 @@ Everything from 1.1 to 1.6.5 (sections below, kept as written) was published on 
 - **Installer:** `install-server.sh` reads the health-check port from the existing `config.toml` and takes its data
   snapshot before every upgrade even when the service was stopped; `install.sh` can still install a release from
   before the rename (`--version <tag>`).
+- **Cash count sheet — signature rows.** The sheet is meant to be printed before it is known who will count. Each
+  person now gets one row across the page: **Signature**, **Printed** name and **Date**, with room to write. A row
+  left empty in *Cash count sheet…* is filled in by hand; a chosen signer's name is printed on the *Printed* line.
+  The dialog starts with three empty rows. Up to five rows; at most three may be empty, or two next to chosen
+  signers. Always two lines for notes. (Before: a single line captioned "Name and title".)
+- **Cash count sheet — checks.** Page 1 now lists 13 checks, level with the 13 bill and coin lines, which leaves the
+  room for notes and signatures. An optional **page 2** (on by default) has 30 more check lines and their own total:
+  print it on the back with two-sided printing, as a second sheet, or leave it out when it is not needed.
 - The source code moved to `github.com/kretherford0983/Fundwarden` (the old address redirects).
 - Unchanged on purpose (internal): Python package `fmpoc`, `database/fmpoc.sqlite3`, `logs/fmpoc.log`, `FM_*`
   settings, the `.fmbak` format.

@@ -525,24 +525,30 @@ function CancelDialog({ f, onClose, onSaved }: { f: any; onClose: () => void; on
 
 function CountSheetDialog({ f, onClose }: { f: any; onClose: () => void }) {
   const [people, setPeople] = useState<any[]>([]);
-  const [signers, setSigners] = useState<{ entity_id: string; title: string }[]>([{ entity_id: "", title: "" }]);
+  const [signers, setSigners] = useState<{ entity_id: string; title: string }[]>([0, 1, 2].map(() => ({ entity_id: "", title: "" })));
+  const [extra, setExtra] = useState(true);   // 1.6.6: page 2 with more check lines (print on the back)
   const [err, setErr] = useState<unknown>(null);
   useEffect(() => {
     api.get("/api/entities").then((es: any[]) => setPeople(es.filter((e) => e.entity_type === "INDIVIDUAL" && !e.is_system && e.active !== false)), setErr);
   }, []);
   const chosen = signers.filter((x) => x.entity_id);
   const ids = chosen.map((x) => x.entity_id);
+  const blank = signers.length - chosen.length;
+  const maxBlank = chosen.length ? 2 : 3;   // 1.6.6: room to print names by hand - 3 blank rows, or 2 next to chosen signers
   const problem = new Set(ids).size !== ids.length ? "Each signer can be listed only once."
-    : signers.some((x) => !x.entity_id && x.title.trim()) ? "A title was entered without choosing a signer." : null;
+    : signers.some((x) => !x.entity_id && x.title.trim()) ? "A title was entered without choosing a signer."
+    : blank > maxBlank ? `At most ${maxBlank} rows can be left empty${chosen.length ? " next to chosen signers" : ""}. Choose a signer for the others or remove them.` : null;
   const p = new URLSearchParams();
   chosen.forEach((x) => { p.append("signer_id", x.entity_id); p.append("signer_title", x.title.trim()); });
-  const href = `/api/fundraisers/${f.id}/count-sheet${chosen.length ? `?${p.toString()}` : ""}`;
+  if (!extra) p.append("extra_checks", "false");
+  p.append("blank_lines", String(blank));   // 1.6.6: a row left empty prints a blank row
+  const href = `/api/fundraisers/${f.id}/count-sheet?${p.toString()}`;
   const upd = (i: number, patch: object) => setSigners(signers.map((y, j) => (j === i ? { ...y, ...patch } : y)));
   return (
     <Modal title="Cash count sheet" onClose={onClose}>
       <p>A blank sheet to print: bills and coins, checks, totals, notes and signature lines. Fill it in by hand at the count, have everyone sign, then scan it and add it under <b>Fundraiser documents</b>.</p>
       <ErrorBox error={err} />
-      <h3>Signers (up to 5, optional)</h3>
+      <h3>Signature lines (1 to 5)</h3>
       {signers.map((x, i) => (
         <div key={i} className="sig-signer row">
           <div className="grow"><EntityPicker label={`Signer ${i + 1}`} entities={people} value={x.entity_id} onChange={(v) => upd(i, { entity_id: v })} /></div>
@@ -550,8 +556,11 @@ function CountSheetDialog({ f, onClose }: { f: any; onClose: () => void }) {
           {signers.length > 1 ? <button type="button" className="small" aria-label={`Remove signer ${i + 1}`} onClick={() => setSigners(signers.filter((_, j) => j !== i))}>Remove</button> : null}
         </div>
       ))}
-      {signers.length < 5 ? <button type="button" className="small" onClick={() => setSigners([...signers, { entity_id: "", title: "" }])}>+ Add signer</button> : null}
-      <p className="hint">Signers are individual Entities. With no signer chosen, three blank "Name and title" lines are printed.</p>
+      {signers.length < 5 && blank < maxBlank ? <button type="button" className="small" onClick={() => setSigners([...signers, { entity_id: "", title: "" }])}>+ Add signature line</button> : null}
+      <p className="hint">Each row prints <b>Signature</b>, <b>Printed</b> name and <b>Date</b> lines. Choose a signer (an individual Entity) to have the name printed, or leave the row empty to fill it in by hand. Up to 5 rows; at most 3 may be empty (2 when signers are chosen) so there is room to write.</p>
+      <h3>Checks</h3>
+      <label className="check"><input type="checkbox" checked={extra} onChange={(e) => setExtra(e.target.checked)} /> Add page 2 for more checks</label>
+      <p className="hint">Page 1 has 13 check lines. Page 2 has 30 more and their own total — print it on the back (two-sided printing) or as a second sheet, or print page 1 only when it is not needed.</p>
       {problem ? <div className="alert error" role="alert">{problem}</div> : null}
       <div className="actions">
         <button type="button" onClick={onClose}>Close</button>

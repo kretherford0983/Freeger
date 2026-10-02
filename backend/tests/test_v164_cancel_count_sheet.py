@@ -50,16 +50,42 @@ def test_cash_count_sheet(env, base):
     assert r.status_code == 200 and r.headers["content-type"] == "application/pdf"
     assert "fundraiser-Autumn-Fair-cash-count-sheet.pdf" in r.headers["content-disposition"]
     pages, text = _text(r.content)
-    assert pages == 1
+    # 1.6.6: 13 check lines beside the 13 bill/coin lines; page 2 (the back) has 30 more and their own total
+    assert pages == 2 and "continue on page 2" in text and "additional checks" in text
+    assert "Total of the checks on this page" in text and " 43 " in text and " 44 " not in text
+    pages, text = _text(env.bu.get(f"/api/fundraisers/{fid}/count-sheet?extra_checks=false").content)
+    assert pages == 1 and "page 2" not in text and " 13 " in text and " 14 " not in text
     for want in ("Cash count sheet", "Acme Org", "Autumn Fair", "2026-09-20", "Date of count", "Time", "$100", "$2", "25¢",
                  "Check no.", "Cash total", "Check total", "Total counted", "Notes", "agree with the amounts"):
         assert want in text, want
-    assert "Location" not in text and text.count("Name and title") == 3
-    # chosen signers (up to five individuals, optional titles) - still one page
+    # 1.6.6: one row per person - Signature | Printed | Date; three blank rows by default, two notes lines always
+    assert "Location" not in text and "Name and title" not in text
+    assert text.count("Signature") == 3 and text.count("Printed") == 3 and text.count("Date") == 3 + 1  # + "Date of count"
+    assert text.count("_" * 80) >= 2
+    for n in (1, 2, 3):  # as many blank rows as asked for, at most three when no signer is chosen
+        pages, text = _text(env.bu.get(f"/api/fundraisers/{fid}/count-sheet?extra_checks=false&blank_lines={n}").content)
+        assert pages == 1 and text.count("Signature") == n and text.count("Printed") == n, n
+    assert env.bu.get(f"/api/fundraisers/{fid}/count-sheet?blank_lines=4").status_code == 422
+    # chosen signers (up to five individuals, optional titles): the name is pre-printed on the "Printed" line
     people = [env.entity(f"Person {i}", etype="INDIVIDUAL")["id"] for i in range(5)]
-    q = "&".join(f"signer_id={p}" for p in people) + "&signer_title=Treasurer"
+    q = "extra_checks=false&" + "&".join(f"signer_id={p}" for p in people) + "&signer_title=Treasurer"
     pages, text = _text(env.ru.get(f"/api/fundraisers/{fid}/count-sheet?{q}").content)
-    assert pages == 1 and "Person 0, Treasurer" in text and "Person 4" in text and "Name and title" not in text
+    assert pages == 1 and "Person 0, Treasurer" in text and "Person 4" in text
+    assert text.count("Signature") == 5 and text.count("Printed") == 5 and text.count("_" * 80) >= 2
+    # chosen signers followed by blank rows: at most two blank rows then, at most five rows in total
+    q2 = f"extra_checks=false&signer_id={people[0]}&signer_title=Treasurer&signer_id={people[1]}&signer_id={people[2]}&blank_lines=2"
+    pages, text = _text(env.ru.get(f"/api/fundraisers/{fid}/count-sheet?{q2}").content)
+    assert pages == 1 and "Person 0, Treasurer" in text and "Person 2" in text
+    assert text.count("Signature") == 5 and text.count("Printed") == 5 and text.count("Date") == 5 + 1
+    assert env.ru.get(f"/api/fundraisers/{fid}/count-sheet?signer_id={people[0]}&blank_lines=3").status_code == 422
+    assert env.ru.get(f"/api/fundraisers/{fid}/count-sheet?{q}&blank_lines=1").status_code == 422
+    # worst case for the page: the longest fundraiser name (120 characters, wraps in the header and the statement)
+    long_id = env.bm.post("/api/fundraisers", {"name": ("Annual Spring Pancake Breakfast and Silent Auction " * 3)[:120],
+                                               "start_date": "2026-09-20", "end_date": "2026-09-22",
+                                               "budget_ids": [base["inc"]["id"]]}).json()["id"]
+    for query in ("extra_checks=false", q, q2, f"extra_checks=false&signer_id={people[0]}&signer_id={people[1]}&blank_lines=2"):
+        assert _text(env.ru.get(f"/api/fundraisers/{long_id}/count-sheet?{query}").content)[0] == 1, query
+        assert _text(env.ru.get(f"/api/fundraisers/{long_id}/count-sheet?{query.replace('extra_checks=false', 'extra_checks=true')}").content)[0] == 2, query
     org = env.entity("Some Company")["id"]
     assert env.ru.get(f"/api/fundraisers/{fid}/count-sheet?signer_id={org}").status_code == 422
     assert env.ru.get(f"/api/fundraisers/{fid}/count-sheet?signer_id={people[0]}&signer_id={people[0]}").status_code == 422

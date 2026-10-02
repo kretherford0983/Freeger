@@ -70,8 +70,11 @@ Register) and the transactions' attachments. Notices remind you, for example, to
   fundraiser shows *Cancelled* everywhere, including its report and the Audit / Close reports. Money already spent or
   received stays listed and counted. **Reinstate** undoes it.
 - **Cash count sheet…** opens a one-page PDF to print for the count: bills and coins, checks, the totals (you can
-  fill in just the totals), notes and signature lines. Optionally choose up to five signers so their names are
-  printed under the lines. Scan the signed sheet and add it under *Fundraiser documents*.
+  fill in just the totals), notes and one signature row per person: **Signature**, **Printed** name and **Date**
+  (1.6.6). The dialog starts with three empty rows — for when you do not yet know who will count. Choose a signer
+  in a row to have the name printed. Up to five rows; at most three may be empty (two next to chosen signers).
+  Page 1 has 13 check lines; **page 2** (optional, on by default) has 30 more — print it on the back or as a second
+  sheet. Scan the signed sheet and add it under *Fundraiser documents*.
 
 ## Archive or delete
 **Archive** hides a finished fundraiser from the list (tick *Show archived* to see it). **Delete** removes a
