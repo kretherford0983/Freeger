@@ -39,11 +39,12 @@ permanent copy), so Actions artifact storage stays well within the GitHub Pro al
    `git push -u origin feature/cr-NNN-short-name` → the `ci` workflow runs.
 3. **Pull request feature → develop** on GitHub; merge when green (squash or merge commit — your choice).
 4. **Promote to test**: pull request **develop → test**, merge with *Create a merge commit*. The build publishes a
-   pre-release `v1.5.0-test.N`; install it on the test server with the command in its release notes
+   pre-release `v<version>-test.N`; install it on the test server with the command in its release notes
    (`curl -fsSL …/releases/download/<tag>/install.sh | sudo bash -s -- --version <tag>`), or as before with
    `sudo bash install-server.sh FinancialManagementPOC-linux-x64-portable.tar.gz`.
 5. **Release**: when testing is accepted, pull request **test → main**, merge with *Create a merge commit*. The build
-   publishes release `v1.4.0` (notes = the CHANGELOG section). Install it in production the same way.
+   publishes release `v<version>` (notes = that version's CHANGELOG section) and marks it *latest*. Install it in
+   production with `curl -fsSL …/releases/latest/download/install.sh | sudo bash`.
 6. After merging on GitHub, update your local branches: `git checkout develop && git pull` (and `test`/`main` when
    needed).
 
@@ -58,11 +59,16 @@ pipeline are unchanged):
 The first feature of a new release bumps the version on its feature branch (e.g. 1.5.0 → 1.6.0) and adds the
 CHANGELOG section; later features of the same release add to that section.
 
-**Hotfix** (urgent production fix): branch `hotfix/short-name` from `main`, bump the patch version (e.g. 1.4.1),
+**Production releases start with 1.6.6 (planned).** Before that (beta) every version existed only as a test pre-release and
+fixes simply went into the next version. From then on, `main` is what people run:
+
+**Hotfix** (urgent production fix): branch `hotfix/short-name` from `main`, bump the Minor number (e.g. 1.6.6 → 1.6.7),
 pull request into `main`; afterwards pull request `main → test` and `main → develop` so the fix is not lost.
 
 ## One-time GitHub settings (Settings tab of the repository)
-1. **General → Default branch**: `develop` (new pull requests then target develop by default).
+1. **General → Default branch**: `main` — visitors then see the README and docs of the production release (choose
+   `develop` as the base when opening a feature pull request). `Closes #n` in a commit closes the issue when the
+   commit reaches `main`, i.e. when the fix is released.
 2. **General → Pull Requests**: allow *merge commits* (needed for develop→test→main); squash merging optional.
 3. **Rules → Rulesets → New branch ruleset** (or *Branches → Add branch protection rule*), one for `main`, `test` and
    `develop` (target: include those three branches):

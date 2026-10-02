@@ -1,30 +1,78 @@
-# Financial Management POC (Freedger)
+# Freedger
 
-Working implementation of the **Financial Management POC Agent-Agnostic Benchmark v1.1** (specification in
-[`spec/`](spec/), unchanged). Cash/register and budget-management application with fiscal years, hierarchical
-budgets, entities, encrypted bank accounts, continuous registers, split allocations, cross-fiscal-year review,
-attachments, void lifecycle, immutable audit trail, role separation, and self-contained Windows/Linux packaging.
+**Free financial ledger for small organizations** — clubs, associations, booster groups and similar bodies that
+keep a checkbook, a budget and an annual audit. Freedger runs on your own Windows PC or Linux server; your data
+stays in one folder you control. Current version: **1.6.5** (test channel; the first production release is planned as 1.6.6) —
+[download](https://github.com/kretherford0983/Freeger/releases/latest) · [changelog](CHANGELOG.md).
+
+## What it does
+
+- **Fiscal years and budgets** — hierarchical income/expense budgets per Fiscal Year, budget adjustments, a
+  Fiscal Year close with a stored **Close report**.
+- **Registers** — continuous checking/savings/investment registers, split allocations across budgets, transfers
+  between accounts, void lifecycle, duplicate and check-number protection, missing-check review.
+- **Documentation** — attachments (PDF/PNG/JPEG) on transactions and allocations, typed Fiscal Year documents
+  (approval, audit signoff), a documentation review that shows what is still missing.
+- **Reports** — printable **End of Year Audit** PDF (budgets, every transaction with its attachments, signature
+  page), Entity activity report with CSV, Fiscal Year Close report, dashboard with charts and a per-user layout.
+- **Fundraisers** (optional module) — budgets, buckets, cash float, exclusions, documents, a fundraiser report,
+  cancelled fundraisers and a printable cash count sheet.
+- **Reminders** — personal and organization reminders with a notification bell and dashboard section.
+- **Roles** — Administrator, Budget Manager, Budget User, Register User, Auditor (read-only), with strict
+  separation between administration and financial work.
+- **Security** — Argon2id passwords, two-step verification (TOTP) with recovery codes, server-side sessions, CSRF
+  protection, AES-256-GCM encrypted bank account numbers, an append-only audit trail, encrypted backup/restore.
+
+## Install
 
 | | |
 |---|---|
-| Frontend | React 18 + TypeScript (Vite build, served by FastAPI; no router/UI libraries) |
-| Backend | Python 3.11/3.12, FastAPI, SQLAlchemy 2, Alembic, SQLite |
-| Security | Argon2id, server-side sessions (HttpOnly/SameSite=Strict), CSRF tokens, AES-256-GCM + HMAC fingerprint for account numbers, append-only audit (DB triggers), CSP & security headers |
-| Tests | 135 backend API tests (AC/CR-ID named) + 11 Playwright E2E UI tests (run against source **and** the packaged Linux builds) |
+| **Windows (single user)** | Download `Freedger-<version>-windows-x64.exe` from the [latest release](https://github.com/kretherford0983/Freeger/releases/latest) and double-click it. |
+| **Linux server (multiple users)** | `curl -fsSL https://github.com/kretherford0983/Freeger/releases/latest/download/install.sh \| sudo bash` — installs or upgrades a systemd service; put an HTTPS reverse proxy in front of it. |
+
+The first start shows the **Initialization Wizard** (organization name, administrator account). There are no
+default credentials. Details, HTTPS, Docker and moving data between machines: [docs/deployment.md](docs/deployment.md).
+Upgrades never touch your data or configuration: [docs/upgrade.md](docs/upgrade.md). **Make encrypted backups
+regularly** (System/About → Backup / Restore) and keep them off the machine: [docs/backup-restore.md](docs/backup-restore.md).
+
+Freedger is provided without warranty (see [License](#license)). It is a record-keeping tool, not accounting,
+tax or legal advice.
 
 ## Documentation
 
-- [docs/acceptance-results.md](docs/acceptance-results.md) — status and evidence for **every** acceptance criterion
-- [docs/implementation-notes.md](docs/implementation-notes.md) — design decisions, specification ambiguities raised, limitations
-- [docs/configuration.md](docs/configuration.md) — settings, config file, environment variables, data layout
-- [docs/deployment.md](docs/deployment.md) — local/server modes, HTTPS reverse proxy, Docker, data portability
-- [docs/security.md](docs/security.md) — security controls and dependency-vulnerability check commands/results
-- [docs/manual-verification.md](docs/manual-verification.md) — procedures for criteria that need a real desktop/OS
-- [docs/benchmark-results.md](docs/benchmark-results.md) — completed evaluation results template
-- [docs/upgrade.md](docs/upgrade.md) — upgrading a Linux server install without touching data/config
-- [CHANGELOG.md](CHANGELOG.md)
+**Using Freedger** — the guides describe what each release line added; read them in order for the full picture:
+[1.2](docs/user-guide-v1.2.md) (reports, transfers) · [1.3](docs/user-guide-v1.3.md) (Fiscal Year documents, close
+report) · [1.4](docs/user-guide-v1.4.md) (audit signatures, two-step verification, charts, backup) ·
+[1.5](docs/user-guide-v1.5.md) (dashboard layout, installers) · [1.6](docs/user-guide-v1.6.md) (fundraisers,
+reminders).
 
-## Quick start (from source)
+**Running Freedger**
+- [docs/deployment.md](docs/deployment.md) — local and server installation, HTTPS reverse proxy, Docker, data portability
+- [docs/upgrade.md](docs/upgrade.md) — upgrading and rolling back; database changes per version
+- [docs/backup-restore.md](docs/backup-restore.md) — encrypted backups, restore, disaster recovery
+- [docs/configuration.md](docs/configuration.md) — settings, config file, environment variables, data layout
+- [docs/security.md](docs/security.md) — security controls and dependency-vulnerability checks
+
+**Developing Freedger**
+- [docs/branching.md](docs/branching.md) — branches, builds, releases and versioning (`Breaking.Major.Minor`)
+- [docs/implementation-notes.md](docs/implementation-notes.md) — design decisions, including every change request (§1a)
+- [CHANGELOG.md](CHANGELOG.md) — what changed in each version
+
+**Origin.** Freedger started as an implementation of the *Financial Management POC Agent-Agnostic Benchmark v1.1*.
+The specification is kept unchanged in [`spec/`](spec/); [docs/acceptance-results.md](docs/acceptance-results.md),
+[docs/benchmark-results.md](docs/benchmark-results.md) and [docs/manual-verification.md](docs/manual-verification.md)
+record the results against that specification as of version 1.1 and are not updated for later versions. For the
+same reason packages, the service and the data folder still carry the names `FinancialManagementPOC` / `fmpoc`.
+
+## Technology
+
+| | |
+|---|---|
+| Frontend | React 18 + TypeScript (Vite build, served by FastAPI) |
+| Backend | Python 3.11/3.12, FastAPI, SQLAlchemy 2, Alembic, SQLite |
+| Tests | 230+ backend API tests (incl. security negative tests) and 31 Playwright E2E UI tests, run on every pull request; every package is smoke-tested before it is published |
+
+## Build from source
 
 ```bash
 python3 -m venv .venv && . .venv/bin/activate          # Windows: .venv\Scripts\activate
@@ -33,61 +81,53 @@ npm --prefix frontend ci && npm --prefix frontend run build   # emits backend/fm
 cd backend && python -m fmpoc                          # local mode: http://127.0.0.1:8765, opens browser
 ```
 
-The first launch shows the **Initialization Wizard** (workspace name, administrator username, email, password,
-confirmation). No default credentials exist. The Administrator then creates Financial users (Budget Manager /
-Budget User / Register User) and Auditors under **Users**.
+Useful options: `--mode server --host 0.0.0.0 --port 8765 --data-dir DIR --no-browser` (see
+[docs/configuration.md](docs/configuration.md)). Frontend development with hot reload: run the backend
+(`python -m fmpoc --no-browser`) and `npm --prefix frontend run dev` (Vite proxies `/api` to port 8765).
 
-Since 1.2: **Reports** (printable End of Year Audit PDF — title, FY review, budgets, then one page per transaction
-with its attachments reproduced at page width; Entity activity report with CSV), **Transfer…** between register
-accounts (with Entity), a searchable entity picker, "no attachment will be provided" flags on transactions and split
-allocations, and a Fiscal Year **documentation review**.
-Since 1.3: typed Fiscal Year documents (Approval / Audit Signoff), a **Fiscal Year Close report**, attachments in
-the transaction form, duplicate and check-number protection, a **missing check** review, and a fixed, collapsible
-menu with a pinned register header (see CHANGELOG.md and docs/user-guide-v1.3.md; current version 1.3.0).
-
-Useful options: `--mode server --host 0.0.0.0 --port 8765 --data-dir DIR --no-browser` (see configuration docs).
-
-Frontend development with hot reload: run the backend (`python -m fmpoc --no-browser`) and `npm --prefix frontend run dev`
-(Vite proxies `/api` to port 8765).
-
-## Tests
+### Tests
 
 ```bash
-cd backend && python -m pytest                    # 135 API tests incl. security negative tests
+cd backend && python -m pytest                    # API tests incl. security negative tests
 cd frontend && npx tsc --noEmit -p . && npm run build
 cd frontend && FM_PYTHON=$(which python) npx playwright test                     # E2E vs source
 cd frontend && FM_BUNDLE=../dist/FinancialManagementPOC/FinancialManagementPOC npx playwright test   # E2E vs package
-bash scripts/security_check.sh                    # pip-audit + npm audit + security tests (AC-SEC-024)
+bash scripts/security_check.sh                    # pip-audit + npm audit + security tests
 ```
 
-## Packaging
+### Packaging
 
 | Artifact | Command | Notes |
 |---|---|---|
 | Linux x86-64 portable (servers, glibc ≥ 2.27) | `bash packaging/build_linux_portable.sh` | → `dist/FinancialManagementPOC-linux-x64-portable.tar.gz`; install with `sudo bash packaging/linux/install-server.sh <tarball>` |
 | Linux x86-64 self-contained | `bash packaging/build_linux.sh` | PyInstaller onedir → `dist/FinancialManagementPOC-linux-x64.tar.gz` |
-| Windows x86-64 self-contained (portable) | `bash packaging/build_windows_portable.sh` | Runs on any OS; relocatable CPython + win_amd64 wheels → `dist/FinancialManagementPOC-windows-x64.zip`; launch `FinancialManagementPOC.cmd` |
-| Windows x86-64 self-contained (PyInstaller) | `pwsh packaging/build_windows.ps1` | Build on Windows → `FinancialManagementPOC.exe` |
-| Windows x86-64 one-file .exe (1.5.0) | `pyinstaller --noconfirm --distpath dist packaging/pyinstaller/fmpoc-onefile.spec` | Build on Windows (CI: `windows-latest`) → `Freedger-<version>-windows-x64.exe`, smoke-tested with the portable zip |
-| Linux one-command install (1.5.0) | `packaging/linux/install.sh` | Release asset: `curl -fsSL …/install.sh \| sudo bash` — see docs/deployment.md |
+| Windows x86-64 portable folder | `bash packaging/build_windows_portable.sh` | Runs on any OS; relocatable CPython + win_amd64 wheels → `dist/FinancialManagementPOC-windows-x64.zip`; launch `FinancialManagementPOC.cmd` |
+| Windows x86-64 one-file .exe | `pyinstaller --noconfirm --distpath dist packaging/pyinstaller/fmpoc-onefile.spec` | Build on Windows (CI: `windows-latest`) → `Freedger-<version>-windows-x64.exe` |
+| Windows x86-64 PyInstaller folder | `pwsh packaging/build_windows.ps1` | Build on Windows → `FinancialManagementPOC.exe` |
+| Linux one-command install | `packaging/linux/install.sh` | Published with every release — see [docs/deployment.md](docs/deployment.md) |
 | Docker (optional, server) | `docker build -f packaging/docker/Dockerfile -t fmpoc .` | plus `docker-compose.yml` with Caddy HTTPS |
-| Docker from bundle (no registry needed) | `bash packaging/docker/build_bundle_image.sh` | used for verification in this run |
+| Docker from bundle (no registry needed) | `bash packaging/docker/build_bundle_image.sh` | image from the self-contained Linux bundle |
 
 CI/CD (GitHub Actions, `.github/workflows/`): every pull request and feature branch runs the full test suite; merges
-into `develop`, `test` and `main` build the packages, and `test`/`main` publish GitHub pre-releases/releases.
-Branching strategy and release process: [docs/branching.md](docs/branching.md).
+into `develop`, `test` and `main` build the packages; `test` publishes a pre-release `v<version>-test.<n>` and `main`
+publishes the production release `v<version>`. See [docs/branching.md](docs/branching.md).
 
-## Repository layout
+### Repository layout
 
 ```
 backend/fmpoc/            FastAPI app (routers/, services/, security/, migrations/, static/ = built UI)
-backend/tests/            pytest suite (test names reference AC IDs)
+backend/tests/            pytest suite
 frontend/src/             React + TypeScript UI;  frontend/e2e/  Playwright tests
-packaging/                PyInstaller spec, Linux/Windows build scripts, Docker
-scripts/                  security_check.sh, run_tests.sh
-spec/                     benchmark package (authoritative, unchanged)
-docs/                     implementation documentation and acceptance results
+packaging/                PyInstaller specs, Linux/Windows build scripts, installers, Docker
+scripts/                  version, promotion and release checks, security_check.sh
+spec/                     original benchmark specification (unchanged)
+docs/                     user guides, operations and implementation documentation
 ```
+
+## Issues and contributions
+
+Bugs and enhancement requests: [GitHub issues](https://github.com/kretherford0983/Freeger/issues). Please do **not**
+put real financial data, account numbers or backups in an issue.
 
 ## License
 
@@ -96,4 +136,3 @@ Freedger is free software: you can redistribute it and/or modify it under the te
 over a network, you must offer them its source code. Bundled third-party components keep their own licenses — see
 [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt) (regenerate with `python scripts/third_party_notices.py`; CI
 checks it is current).
-

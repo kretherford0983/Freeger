@@ -1,4 +1,4 @@
-# Backup and restore (1.4.1)
+# Backup and restore (since 1.4.1)
 
 Administrators create and restore backups on **System/About → Backup / Restore**. A new installation can also be
 set up from a backup in the **initialization wizard** ("Restore from a backup instead").
