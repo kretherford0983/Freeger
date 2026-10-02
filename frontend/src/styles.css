@@ -328,3 +328,9 @@ td.ua { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space
 .reminder-main { display: grid; gap: 2px; }
 /* v1.6.4 CR-037 */
 .pill-fr-cancelled { background: var(--err-bg); color: var(--danger); border-color: var(--err-border); }
+
+/* v1.6.5 (issue #15): dashboard bank balances - separated groups like the Bank Accounts page */
+.dash-bank-group { margin-bottom: 20px; }
+.dash-bank-group h3 { font-size: 15px; margin: 14px 0 6px; }
+.dash-bank-total { margin-top: 4px; }
+.dash-bank-total th { font-size: 15px; color: var(--text); }
