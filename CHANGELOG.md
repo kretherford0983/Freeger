@@ -2,7 +2,13 @@
 
 Versions are `Breaking.Major.Minor` from 1.6.0 (docs/branching.md).
 
-## 1.6.4 — unreleased (in development)
+## 1.6.5 — unreleased (in development)
+Polish. Beta: test channel only. No database change.
+- **Dashboard bank account balances** (GitHub issue #15): *Checking & Savings* and *Investments and Other* are now
+  separate tables with their own heading and subtotal and space between them, and the total of all accounts stands
+  on its own below — matching the Bank Accounts page.
+
+## 1.6.4 — 2026-10-02
 Two fundraiser additions. Beta: test channel only.
 - **CR-037 Cancelled fundraisers.** A Budget Manager can **mark a fundraiser as cancelled** (a reason is required)
   when it did not take place as planned, and **reinstate** it later. The fundraiser shows the status *Cancelled* and

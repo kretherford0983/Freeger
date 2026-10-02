@@ -72,22 +72,27 @@ export default function Dashboard() {
     bank: (
       <section className="card">
         <h2>Bank account balances</h2>
-        <table className="table">
-          <thead><tr><th>Account</th><th className="num">Current balance</th></tr></thead>
-          {/* v1.5.0 CR-028: same two groups as the Bank Accounts page, each with a subtotal */}
-          {(d.bank_account_groups || []).filter((g: any) => g.account_ids.length).map((g: any) => (
-            <tbody key={g.key} data-testid={`bank-group-${g.key}`}>
-              <tr className="group-head"><th colSpan={2} scope="rowgroup">{g.label}</th></tr>
-              {d.bank_accounts.filter((a: any) => g.account_ids.includes(a.id)).map((a: any) => (
-                <tr key={a.id}><td>{a.label} {a.is_primary ? <span className="pill">Primary</span> : null}</td><td className="num">{money(a.current_balance)}</td></tr>
-              ))}
-              <tr className="subtotal-row"><td>Subtotal {g.label}</td><td className={`num ${Number(g.total) < 0 ? "neg" : ""}`}>{money(g.total)}</td></tr>
-            </tbody>
-          ))}
-          {d.bank_accounts.length ? (
-            <tfoot><tr className="total-row" data-testid="bank-total"><th scope="row">Total (all accounts)</th><th className={`num ${Number(d.bank_accounts_total) < 0 ? "neg" : ""}`}>{money(d.bank_accounts_total)}</th></tr></tfoot>
-          ) : null}
-        </table>
+        {/* v1.5.0 CR-028: same two groups as the Bank Accounts page. v1.6.5 (issue #15): one table per group with a
+            heading and space between them, then the grand total on its own - like the Bank Accounts page. */}
+        {(d.bank_account_groups || []).filter((g: any) => g.account_ids.length).map((g: any) => (
+          <div key={g.key} className="dash-bank-group" data-testid={`bank-group-${g.key}`}>
+            <h3 id={`dash-bank-${g.key}`}>{g.label}</h3>
+            <table className="table" aria-labelledby={`dash-bank-${g.key}`}>
+              <thead><tr><th>Account</th><th className="num">Current balance</th></tr></thead>
+              <tbody>
+                {d.bank_accounts.filter((a: any) => g.account_ids.includes(a.id)).map((a: any) => (
+                  <tr key={a.id}><td>{a.label} {a.is_primary ? <span className="pill">Primary</span> : null}</td><td className="num">{money(a.current_balance)}</td></tr>
+                ))}
+              </tbody>
+              <tfoot><tr className="total-row"><th scope="row">Subtotal {g.label}</th><th className={`num ${Number(g.total) < 0 ? "neg" : ""}`}>{money(g.total)}</th></tr></tfoot>
+            </table>
+          </div>
+        ))}
+        {d.bank_accounts.length ? (
+          <table className="table dash-bank-total">
+            <tbody><tr className="total-row" data-testid="bank-total"><th scope="row">Total (all accounts)</th><th className={`num ${Number(d.bank_accounts_total) < 0 ? "neg" : ""}`}>{money(d.bank_accounts_total)}</th></tr></tbody>
+          </table>
+        ) : <p className="muted">No bank accounts.</p>}
       </section>
     ),
     attention: (

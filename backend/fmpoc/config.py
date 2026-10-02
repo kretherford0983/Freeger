@@ -13,7 +13,7 @@ from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 
 APP_NAME = "FinancialManagementPOC"
-VERSION = "1.6.4"
+VERSION = "1.6.5"
 
 
 BUILD_INFO_FILE = Path(__file__).with_name("build_info.json")

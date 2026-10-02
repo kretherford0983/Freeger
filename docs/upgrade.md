@@ -10,6 +10,7 @@ Before switching versions the installer stops the service and copies the whole d
 
 | Upgrade | Database change | Rollback |
 |---|---|---|
+| 1.6.4 → 1.6.5 | none | switch binaries only |
 | 1.6.3 → 1.6.4 | migration `0013` — **adds** columns `fundraiser.cancelled_at`, `cancelled_by_user_id`, `cancel_reason` | switch binaries **and** restore the pre-upgrade data backup |
 | 1.6.2 → 1.6.3 | migration `0012` — **adds** table `reminder` | switch binaries **and** restore the pre-upgrade data backup |
 | 1.6.1 → 1.6.2 | none | switch binaries only |
