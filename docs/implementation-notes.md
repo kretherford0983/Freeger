@@ -61,6 +61,21 @@ passkeys deferred).
 | UI | Menu item *Fundraisers* (when on); list with FY selector + Upcoming; detail page with notices, budgets, tiles, per-FY table, charts (lazy `FundraiserCharts`, shares the dashboard palette/helpers), transactions (link `/register?account=&search=`), attachments; create/edit dialog with budget options per eligible FY, warnings, filter warning and live preview. Admin: *Optional modules* on System/About. |
 | Delete | Allowed unless a Closed FY is involved (archive instead); CR-034 adds the "nothing classified/excluded/bucketed/attached" condition. |
 
+**v1.6.4 CR-037 / CR-038 (product owner, 2026-10-01).**
+CR-037: `fundraiser.cancelled_at/_by_user_id/cancel_reason` (migration `0013`). `POST /api/fundraisers/{id}/cancel
+{reason}` (required) and `/reinstate` - Budget Manager (`fundraiser.manage`), refused when all its Fiscal Years are
+closed, audited `FUNDRAISER_CANCELLED/REINSTATED`. Status `CANCELLED` replaces Planned/In progress/Ended (Archived
+still wins); nothing else changes - lines are counted as before. The page shows a banner with the reason; the
+fundraiser report section (and so the Audit/Close reports) starts with "CANCELLED - this fundraiser did not take place
+as planned" and the reason.
+CR-038: `GET /api/fundraisers/{id}/count-sheet?signer_id=&signer_title=` (`fundraiser.view`; audited
+`REPORT_GENERATED {report: CASH_COUNT_SHEET}`), `reports.build_count_sheet`: one Letter page - organization,
+fundraiser, event date; date/time of count (no location - product owner); bills $100-$1 and coins $1-1¢ (count,
+amount); 16 check lines; Cash total / Check total / Total counted (usable alone); notes; agreement statement;
+signature + date lines. Signers reuse `signatures.resolve_signers` (0-5 distinct active individual Entities, title
+≤ 60); none → three blank "Name and title" lines; four or five signers are laid out two per row to stay on one page.
+Nothing is stored: the signed sheet comes back as a fundraiser document.
+
 **v1.6.3 CR-036 Reminders and notifications.** Table `reminder` (migration `0012`): scope PERSONAL/ORGANIZATION,
 owner, title, details, `due_date`, `notify_days_before` (0–365), optional link (FISCAL_YEAR/BUDGET/BANK_ACCOUNT + id),
 resolution (at, by, note). Show date = due date − days before, compared with the **server's local date**. States:

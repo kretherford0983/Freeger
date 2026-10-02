@@ -1,13 +1,13 @@
 // v1.6.0 CR-033: Fundraiser module - list per Fiscal Year (+ upcoming), details, create/edit (Budget Manager).
 import { lazy, Suspense, useEffect, useRef, useState, type FormEvent } from "react";
 import { api, money, todayIso } from "../api";
-import { Attachments, ErrorBox, Field, GuardedForm, Loading, Modal } from "../components";
+import { Attachments, EntityPicker, ErrorBox, Field, GuardedForm, Loading, Modal } from "../components";
 import { Link, useRouter } from "../router";
 import { useMe } from "../App";
 
 const FundraiserCharts = lazy(() => import("./FundraiserCharts")); // chart library loaded on demand
 
-const STATUS: Record<string, string> = { PLANNED: "Planned", IN_PROGRESS: "In progress", ENDED: "Ended", ARCHIVED: "Archived" };
+const STATUS: Record<string, string> = { PLANNED: "Planned", IN_PROGRESS: "In progress", ENDED: "Ended", ARCHIVED: "Archived", CANCELLED: "Cancelled" };
 const UPCOMING = "upcoming";
 
 export function FundraiserStatus({ status }: { status: string }) {
@@ -91,6 +91,8 @@ export function FundraiserDetail({ id }: { id: number }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [lineEdit, setLineEdit] = useState<any>(null); // v1.6.1 CR-034
   const [bucketEdit, setBucketEdit] = useState<any>(null);
+  const [cancelling, setCancelling] = useState(false); // v1.6.4 CR-037
+  const [countSheet, setCountSheet] = useState(false); // v1.6.4 CR-038
   const load = () => api.get(`/api/fundraisers/${id}`).then(setF, setErr);
   useEffect(() => { load(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!f) return <><ErrorBox error={err} />{err ? null : <Loading />}</>;
@@ -109,12 +111,16 @@ export function FundraiserDetail({ id }: { id: number }) {
       <div className="page-head">
         <h1>{f.name} <FundraiserStatus status={f.status} /></h1>
         <a className="button" href={`/api/fundraisers/${id}/report`} target="_blank" rel="noopener">Report (PDF)</a>
+        <button onClick={() => setCountSheet(true)}>Cash count sheet…</button>
         {manage ? (
           <div className="row">
             {!f.read_only ? <button onClick={() => setEditing(true)}>Edit</button> : null}
             {f.archived
               ? <button onClick={() => act(async () => setF(await api.post(`/api/fundraisers/${id}/restore`)))}>Restore</button>
               : <button onClick={() => act(async () => setF(await api.post(`/api/fundraisers/${id}/archive`)))}>Archive</button>}
+            {f.read_only ? null : f.cancelled
+              ? <button onClick={() => act(async () => setF(await api.post(`/api/fundraisers/${id}/reinstate`)))}>Reinstate</button>
+              : <button onClick={() => setCancelling(true)}>Mark as cancelled…</button>}
             <button className="danger" onClick={() => setConfirmDelete(true)}>Delete…</button>
           </div>
         ) : null}
@@ -126,6 +132,7 @@ export function FundraiserDetail({ id }: { id: number }) {
         {f.filter_text ? <><dt>Description filter</dt><dd><code>{f.filter_text}</code>{f.filter_regex ? " (regular expression)" : " (contains, any case)"}</dd></> : null}
       </dl>
       <ErrorBox error={err} />
+      {f.cancelled ? <div className="alert error" role="note" data-testid="fr-cancelled"><b>Cancelled</b> — this fundraiser did not take place as planned. Reason: {f.cancel_reason} <span className="muted">({String(f.cancelled_at).slice(0, 10)})</span>. Its transactions are still listed and counted below.</div> : null}
       {f.read_only ? <div className="alert info" role="note">The Fiscal Year of this fundraiser is closed; it can no longer be changed.</div> : null}
       {f.notices.length ? (
         <ul className="notices" aria-label="Notices">
@@ -259,6 +266,8 @@ export function FundraiserDetail({ id }: { id: number }) {
         ) : <p className="muted">No attachments.</p>}
       </section>
 
+      {cancelling ? <CancelDialog f={f} onClose={() => setCancelling(false)} onSaved={(x) => { setF(x); setCancelling(false); }} /> : null}
+      {countSheet ? <CountSheetDialog f={f} onClose={() => setCountSheet(false)} /> : null}
       {lineEdit ? <LineDialog f={f} line={lineEdit} onClose={() => setLineEdit(null)} onSaved={(x) => { setF(x); setLineEdit(null); }} /> : null}
       {bucketEdit ? <BucketDialog f={f} bucket={bucketEdit} onClose={() => setBucketEdit(null)} onSaved={(x) => { setF(x); setBucketEdit(null); }} /> : null}
       {editing ? <FundraiserForm current={f} onClose={() => setEditing(false)} onSaved={(x) => { setF(x); setEditing(false); }} /> : null}
@@ -490,6 +499,64 @@ function LineDialog({ f, line, onClose, onSaved }: { f: any; line: any; onClose:
         )}
         <div className="actions"><button type="button" onClick={onClose}>Cancel</button><button className="primary" type="submit" disabled={!excluded && remaining < 0}>Save</button></div>
       </GuardedForm>
+    </Modal>
+  );
+}
+
+// ------------------------------------------------------------------ v1.6.4 CR-037: cancel; CR-038: cash count sheet
+function CancelDialog({ f, onClose, onSaved }: { f: any; onClose: () => void; onSaved: (f: any) => void }) {
+  const [reason, setReason] = useState("");
+  const [err, setErr] = useState<unknown>(null);
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    try { onSaved(await api.post(`/api/fundraisers/${f.id}/cancel`, { reason })); } catch (x) { setErr(x); }
+  };
+  return (
+    <Modal title="Mark fundraiser as cancelled" onClose={onClose}>
+      <GuardedForm onSubmit={submit}>
+        <p>Use this when <b>{f.name}</b> did not take place as planned. Expenses and deposits already made stay listed and counted; the fundraiser, its report and the Audit / Close reports show that it was cancelled. You can reinstate it later.</p>
+        <ErrorBox error={err} />
+        <Field label="Reason"><input required maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
+        <div className="actions"><button type="button" onClick={onClose}>Back</button><button className="primary" type="submit">Mark as cancelled</button></div>
+      </GuardedForm>
+    </Modal>
+  );
+}
+
+function CountSheetDialog({ f, onClose }: { f: any; onClose: () => void }) {
+  const [people, setPeople] = useState<any[]>([]);
+  const [signers, setSigners] = useState<{ entity_id: string; title: string }[]>([{ entity_id: "", title: "" }]);
+  const [err, setErr] = useState<unknown>(null);
+  useEffect(() => {
+    api.get("/api/entities").then((es: any[]) => setPeople(es.filter((e) => e.entity_type === "INDIVIDUAL" && !e.is_system && e.active !== false)), setErr);
+  }, []);
+  const chosen = signers.filter((x) => x.entity_id);
+  const ids = chosen.map((x) => x.entity_id);
+  const problem = new Set(ids).size !== ids.length ? "Each signer can be listed only once."
+    : signers.some((x) => !x.entity_id && x.title.trim()) ? "A title was entered without choosing a signer." : null;
+  const p = new URLSearchParams();
+  chosen.forEach((x) => { p.append("signer_id", x.entity_id); p.append("signer_title", x.title.trim()); });
+  const href = `/api/fundraisers/${f.id}/count-sheet${chosen.length ? `?${p.toString()}` : ""}`;
+  const upd = (i: number, patch: object) => setSigners(signers.map((y, j) => (j === i ? { ...y, ...patch } : y)));
+  return (
+    <Modal title="Cash count sheet" onClose={onClose}>
+      <p>A blank sheet to print: bills and coins, checks, totals, notes and signature lines. Fill it in by hand at the count, have everyone sign, then scan it and add it under <b>Fundraiser documents</b>.</p>
+      <ErrorBox error={err} />
+      <h3>Signers (up to 5, optional)</h3>
+      {signers.map((x, i) => (
+        <div key={i} className="sig-signer row">
+          <div className="grow"><EntityPicker label={`Signer ${i + 1}`} entities={people} value={x.entity_id} onChange={(v) => upd(i, { entity_id: v })} /></div>
+          <label className="field-inner"><span className="field-label">Title (optional)</span><input aria-label={`Signer ${i + 1} title`} maxLength={60} value={x.title} placeholder="e.g. Treasurer" onChange={(e) => upd(i, { title: e.target.value })} /></label>
+          {signers.length > 1 ? <button type="button" className="small" aria-label={`Remove signer ${i + 1}`} onClick={() => setSigners(signers.filter((_, j) => j !== i))}>Remove</button> : null}
+        </div>
+      ))}
+      {signers.length < 5 ? <button type="button" className="small" onClick={() => setSigners([...signers, { entity_id: "", title: "" }])}>+ Add signer</button> : null}
+      <p className="hint">Signers are individual Entities. With no signer chosen, three blank "Name and title" lines are printed.</p>
+      {problem ? <div className="alert error" role="alert">{problem}</div> : null}
+      <div className="actions">
+        <button type="button" onClick={onClose}>Close</button>
+        {problem ? null : <a className="button primary" href={href} target="_blank" rel="noopener">Open sheet (PDF)</a>}
+      </div>
     </Modal>
   );
 }

@@ -1,7 +1,7 @@
 # What's new in 1.6 — quick guide
 
 *1.6.0: the optional Fundraiser module (core). 1.6.1: buckets, cash float, exclusions and fundraiser documents.
-1.6.2: the fundraiser report. 1.6.3: reminders and notifications.*
+1.6.2: the fundraiser report. 1.6.3: reminders and notifications. 1.6.4: cancelled fundraisers and the cash count sheet.*
 
 ## Turning the module on (Administrator)
 System/About → **Optional modules** → tick **Fundraiser module**. Budget Managers, Budget Users, Register Users and
@@ -58,6 +58,14 @@ Register) and the transactions' attachments. Notices remind you, for example, to
   can be resolved by Budget Managers and Register Users; Budget Users and Auditors just see them. A resolved reminder
   can be **reopened**.
 - A reminder can be edited or deleted only before it is shown.
+
+## Cancelled fundraisers and the cash count sheet (1.6.4)
+- **Mark as cancelled…** (Budget Manager) when a fundraiser did not take place as planned; give the reason. The
+  fundraiser shows *Cancelled* everywhere, including its report and the Audit / Close reports. Money already spent or
+  received stays listed and counted. **Reinstate** undoes it.
+- **Cash count sheet…** opens a one-page PDF to print for the count: bills and coins, checks, the totals (you can
+  fill in just the totals), notes and signature lines. Optionally choose up to five signers so their names are
+  printed under the lines. Scan the signed sheet and add it under *Fundraiser documents*.
 
 ## Archive or delete
 **Archive** hides a finished fundraiser from the list (tick *Show archived* to see it). **Delete** removes a

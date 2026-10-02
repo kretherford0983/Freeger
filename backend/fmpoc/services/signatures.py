@@ -118,6 +118,11 @@ def resolve(db: Session, ctx, fy: FiscalYear, ws: Workspace, template_id: str | 
         if row is None or row.workspace_id != ctx.workspace_id:
             raise validation("Unknown saved wording.", "signature_template_id")
         raw, source = row.text, f"saved:{row.id}"
+    return SignaturePage(render(raw, fy, ws), resolve_signers(db, ctx, signer_ids, signer_titles), source)
+
+
+def resolve_signers(db: Session, ctx, signer_ids: list[int], signer_titles: list[str]) -> list[tuple[str, str | None]]:
+    """0-5 distinct active individual Entities with optional titles (also used by the cash count sheet, CR-038)."""
     if len(signer_ids) > MAX_SIGNERS:
         raise validation(f"At most {MAX_SIGNERS} signers can be listed.", "signer_id")
     if len(set(signer_ids)) != len(signer_ids):
@@ -134,4 +139,4 @@ def resolve(db: Session, ctx, fy: FiscalYear, ws: Workspace, template_id: str | 
         if title and len(title) > MAX_TITLE:
             raise validation(f"A signer title may be at most {MAX_TITLE} characters.", "signer_title")
         signers.append((e.display_name, title))
-    return SignaturePage(render(raw, fy, ws), signers, source)
+    return signers

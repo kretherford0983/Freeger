@@ -658,7 +658,7 @@ def build_audit_report(db: Session, ctx, settings, fy: FiscalYear, account_id: i
 
 
 # --------------------------------------------------------------------------- v1.6.2 CR-035 fundraiser report
-_FR_STATUS = {"PLANNED": "Planned", "IN_PROGRESS": "In progress", "ENDED": "Ended", "ARCHIVED": "Archived"}
+_FR_STATUS = {"CANCELLED": "Cancelled", "PLANNED": "Planned", "IN_PROGRESS": "In progress", "ENDED": "Ended", "ARCHIVED": "Archived"}
 
 
 def _fundraiser_section(db: Session, ctx, settings, doc: _AuditDoc, fr: Fundraiser, users: dict[int, str],
@@ -671,7 +671,10 @@ def _fundraiser_section(db: Session, ctx, settings, doc: _AuditDoc, fr: Fundrais
     fy_name = {y["id"]: y["display_name"] for y in d["fiscal_years"]}
     event = d["start_date"] if d["start_date"] == d["end_date"] else f"{d['start_date']} to {d['end_date']}"
     f: list = [_Mark(doc, f"Fundraiser: {fr.name}"), PM(f"Fundraiser — {escape(fr.name)}", "h1")]
-    meta = [("Event", event), ("Status", _FR_STATUS.get(d["status"], d["status"])),
+    if d["cancelled"]:  # v1.6.4 CR-037
+        f += [PM("<font color='#b3261e'><b>CANCELLED</b></font> — this fundraiser did not take place as planned.", "body"),
+              P(f"Reason: {d['cancel_reason']} (marked {d['cancelled_at'][:10]})", "body"), Spacer(1, 4)]
+    meta = [("Event", event + (" (cancelled)" if d["cancelled"] else "")), ("Status", _FR_STATUS.get(d["status"], d["status"])),
             ("Fiscal Years", " – ".join(fy_name.values()) or "—")]
     if d["description"]:
         meta.append(("Description", d["description"]))
@@ -916,3 +919,81 @@ def entity_activity_csv(report: dict) -> str:
 
 
 __all__ = ["build_audit_report", "entity_activity", "entity_activity_csv", "KeepTogether", "Entity"]
+
+
+# --------------------------------------------------------------------------- v1.6.4 CR-038 cash count sheet
+_BILLS = ["$100", "$50", "$20", "$10", "$5", "$2", "$1"]
+_COINS = ["$1 coin", "50¢", "25¢", "10¢", "5¢", "1¢"]
+_CHECK_LINES = 16
+
+
+def build_count_sheet(db: Session, ctx, fr: Fundraiser, signers: list[tuple[str, str | None]]) -> tuple[str, str]:
+    """One printable page, filled in by hand: bills and coins grid, checks list, totals (usable on their own when the
+    individual counts are not written down), notes and signature lines (chosen signers or three blank lines)."""
+    ws = db.get(Workspace, ctx.workspace_id)
+    title = f"Cash count sheet — {fr.name} — {ws.name}"
+    buf = io.BytesIO()
+    doc = _AuditDoc(buf, title="Cash count sheet", author=ws.name)
+    event = fr.start_date.isoformat() if fr.start_date == fr.end_date else f"{fr.start_date} to {fr.end_date}"
+    blank = ""
+    f: list = [_Mark(doc, "Cash count sheet"), PM("Cash count sheet", "h1"),
+               _kv([("Organization", ws.name), ("Fundraiser", fr.name), ("Event date", event)], w1=1.2 * inch, style="body"),
+               Spacer(1, 6),
+               PM("Date of count: ______________________ &nbsp;&nbsp;&nbsp; Time: ______________", "body"), Spacer(1, 8)]
+    cash = [[PM("<b>Bills and coins</b>", "cell"), PM("<b>Count</b>", "cell"), PM("<b>Amount</b>", "cell")]]
+    cash += [[P(x, "body"), blank, blank] for x in _BILLS + _COINS]
+    cash += [[blank, blank, blank]] * (_CHECK_LINES - len(_BILLS) - len(_COINS))
+    checks = [[PM("<b>#</b>", "cell"), PM("<b>Check no.</b>", "cell"), PM("<b>From</b>", "cell"), PM("<b>Amount</b>", "cell")]]
+    checks += [[P(str(i + 1), "cell"), blank, blank, blank] for i in range(_CHECK_LINES)]
+    row_h = [0.2 * inch] + [0.235 * inch] * _CHECK_LINES
+    left_w = [1.05 * inch, 0.7 * inch, 1.0 * inch]
+    right_w = [0.3 * inch, 0.8 * inch, 1.75 * inch, 1.0 * inch]
+
+    def grid(data, widths):
+        t = Table(data, colWidths=widths, rowHeights=row_h)
+        t.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#6b7480")),
+                               ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e8ecf1")),
+                               ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                               ("TOPPADDING", (0, 0), (-1, -1), 1), ("BOTTOMPADDING", (0, 0), (-1, -1), 1)]))
+        return t
+
+    pair = Table([[grid(cash, left_w), grid(checks, right_w)]], colWidths=[sum(left_w) + 0.3 * inch, sum(right_w)])
+    pair.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                              ("RIGHTPADDING", (0, 0), (-1, -1), 0)]))
+    totals = Table([[PM("<b>Cash total</b>", "body"), "$", PM("<b>Check total</b>", "body"), "$",
+                     PM("<b>Total counted</b>", "body"), "$"]],
+                   colWidths=[0.95 * inch, 1.3 * inch, 1.0 * inch, 1.3 * inch, 1.15 * inch, FRAME_W - 12 - 5.7 * inch],
+                   rowHeights=[0.34 * inch])
+    totals.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), 1, colors.black), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                                ("LINEAFTER", (1, 0), (1, 0), 0.5, colors.HexColor("#6b7480")),
+                                ("LINEAFTER", (3, 0), (3, 0), 0.5, colors.HexColor("#6b7480")),
+                                ("FONTNAME", (0, 0), (-1, -1), _FONT), ("FONTSIZE", (0, 0), (-1, -1), 10)]))
+    f += [pair, Spacer(1, 8), totals,
+          P("The totals may be entered on their own when the individual bills, coins and checks are not listed above.", "small"),
+          Spacer(1, 8), PM("Notes: ______________________________________________________________________________________", "body"),
+          Spacer(1, 9), PM("____________________________________________________________________________________________", "body"),
+          Spacer(1, 10),
+          P(f"We, the undersigned, counted the cash and checks received for {fr.name} and agree with the amounts "
+            "recorded on this sheet.", "body"), Spacer(1, 4)]
+    caps = [f"{name}, {t}" if t else name for name, t in signers] or ["Name and title"] * 3
+    if len(caps) <= 3:
+        lines = [[_SignLine(3.2 * inch, c), _SignLine(1.6 * inch, "Date")] for c in caps]
+        widths = [3.6 * inch, 2.0 * inch]
+    else:  # four or five signers: two per row so the sheet stays on one page
+        cells = [[_SignLine(2.35 * inch, c), _SignLine(0.95 * inch, "Date")] for c in caps]
+        cells += [["", ""]] * (len(cells) % 2)
+        lines = [cells[i] + cells[i + 1] for i in range(0, len(cells), 2)]
+        widths = [2.5 * inch, 1.15 * inch, 2.5 * inch, FRAME_W - 12 - 6.15 * inch]
+    sig_t = Table(lines, colWidths=widths, rowHeights=[0.6 * inch] * len(lines))
+    sig_t.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "BOTTOM"), ("LEFTPADDING", (0, 0), (-1, -1), 0)]))
+    f.append(sig_t)
+    doc.build(f)
+    fd, path = tempfile.mkstemp(prefix="fmpoc-count-", suffix=".pdf")
+    os.close(fd)
+    try:
+        _stamp_and_write(buf.getvalue(), doc, path, title)
+    except Exception:
+        os.unlink(path)
+        raise
+    safe = "".join(c if c.isalnum() or c in "-_" else "-" for c in fr.name).strip("-")[:60] or "fundraiser"
+    return path, f"fundraiser-{safe}-cash-count-sheet.pdf"
