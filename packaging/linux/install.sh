@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Freedger one-command install / upgrade for Linux servers (v1.5.0 CR-027).
+# Fundwarden one-command install / upgrade for Linux servers (v1.5.0 CR-027; renamed from Freedger in 1.6.6).
 #
-#   curl -fsSL https://github.com/kretherford0983/Freeger/releases/latest/download/install.sh | sudo bash
-#   curl -fsSL https://github.com/kretherford0983/Freeger/releases/download/<tag>/install.sh | sudo bash -s -- --version <tag>
+#   curl -fsSL https://github.com/kretherford0983/Fundwarden/releases/latest/download/install.sh | sudo bash
+#   curl -fsSL https://github.com/kretherford0983/Fundwarden/releases/download/<tag>/install.sh | sudo bash -s -- --version <tag>
 #
 # Options:
 #   --channel auto|production|test   which releases to pick from (default: auto)
@@ -11,7 +11,7 @@
 #                                      production = newest production release only
 #                                      test       = newest test pre-release
 #   --version <tag>                  install exactly this release (e.g. v1.5.0 or v1.5.0-test.42)
-#   --port <n>                       port of the app (default: the port in an existing /var/lib/fmpoc/config.toml,
+#   --port <n>                       port of the app (default: the port in an existing /var/lib/fundwarden/config.toml,
 #                                    else 8765). A new installation writes it to config.toml; an upgrade only uses
 #                                    it for the health check - an existing config.toml is never changed.
 #   --yes                            do not wait 5 seconds before installing
@@ -25,11 +25,12 @@
 set -euo pipefail
 
 main() {
-  local REPO="${FREEDGER_REPO:-kretherford0983/Freeger}"
-  local API="${FREEDGER_API:-https://api.github.com/repos/$REPO}"
-  local DL="${FREEDGER_DOWNLOAD:-https://github.com/$REPO/releases/download}"
+  local REPO="${FUNDWARDEN_REPO:-kretherford0983/Fundwarden}"
+  local API="${FUNDWARDEN_API:-https://api.github.com/repos/$REPO}"
+  local DL="${FUNDWARDEN_DOWNLOAD:-https://github.com/$REPO/releases/download}"
   local MIN_PRODUCTION="1.5.0"   # first production version that ships this installer
-  local PKG="FinancialManagementPOC-linux-x64-portable.tar.gz"
+  local PKG="Fundwarden-linux-x64-portable.tar.gz"
+  local OLD_PKG="FinancialManagementPOC-linux-x64-portable.tar.gz"   # package name before 1.6.6
   local CHANNEL=auto TAG="" PORT="" YES=0
 
   while [ $# -gt 0 ]; do
@@ -46,8 +47,8 @@ main() {
   if [ -n "$PORT" ]; then [[ "$PORT" =~ ^[0-9]+$ ]] && [ "$PORT" -ge 1 ] && [ "$PORT" -le 65535 ] || die "invalid --port"; fi
   if [ -n "$TAG" ]; then [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-test\.[0-9]+)?$ ]] || die "invalid --version (expected vX.Y.Z or vX.Y.Z-test.N)"; fi
 
-  # (FREEDGER_TEST_NONROOT=1 is used only by the automated tests, which replace install-server.sh)
-  [ "$(id -u)" = 0 ] || [ "${FREEDGER_TEST_NONROOT:-}" = 1 ] || die "run as root, e.g.  curl -fsSL <url>/install.sh | sudo bash"
+  # (FUNDWARDEN_TEST_NONROOT=1 is used only by the automated tests, which replace install-server.sh)
+  [ "$(id -u)" = 0 ] || [ "${FUNDWARDEN_TEST_NONROOT:-}" = 1 ] || die "run as root, e.g.  curl -fsSL <url>/install.sh | sudo bash"
   for c in curl tar gzip sha256sum sort; do command -v "$c" >/dev/null || die "'$c' is required"; done
 
   if [ -z "$TAG" ]; then
@@ -58,20 +59,24 @@ main() {
         TAG="$(latest_production || true)"
         if [ -z "$TAG" ] || ! version_ge "$(plain "$TAG")" "$MIN_PRODUCTION"; then
           TAG="$(latest_test)" || die "no release found"
-          note "No production release with the one-command installer yet (Freedger is in beta)."
+          note "No production release with the one-command installer yet."
           note "Installing the newest TEST pre-release $TAG. Use --channel production to refuse this."
         fi ;;
     esac
   fi
-  local CFG="${FREEDGER_CONFIG:-/var/lib/fmpoc/config.toml}"
+  local CFG="${FUNDWARDEN_CONFIG:-/var/lib/fundwarden/config.toml}"
+  [ -f "$CFG" ] || [ -n "${FUNDWARDEN_CONFIG:-}" ] || CFG=/var/lib/fmpoc/config.toml   # installation from before 1.6.6
   if [ -z "$PORT" ] && [ -f "$CFG" ]; then  # upgrade: health-check the port the installation already uses
     PORT="$(sed -n 's/^[[:space:]]*port[[:space:]]*=[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$CFG" | head -1)"
   fi
-  echo "==> Freedger $TAG from github.com/$REPO"
+  echo "==> Fundwarden $TAG from github.com/$REPO"
   if [ "$YES" = 0 ]; then echo "    installing in 5 seconds (Ctrl+C to cancel)"; sleep 5; fi
 
   WORK="$(mktemp -d)"; trap 'rm -rf "${WORK:-}"' EXIT
   fetch "$DL/$TAG/SHA256SUMS.txt" "$WORK/SHA256SUMS.txt"
+  if ! grep -qE "^[0-9a-f]{64}  \*?$PKG\$" "$WORK/SHA256SUMS.txt" && grep -qE "^[0-9a-f]{64}  \*?$OLD_PKG\$" "$WORK/SHA256SUMS.txt"; then
+    PKG="$OLD_PKG"; note "$TAG is from before the rename to Fundwarden (1.6.6): it installs under the old name (service fmpoc)."
+  fi
   fetch "$DL/$TAG/$PKG" "$WORK/$PKG"
   fetch "$DL/$TAG/install-server.sh" "$WORK/install-server.sh"
   echo "==> verifying checksums"
@@ -84,7 +89,7 @@ main() {
   echo "==> running install-server.sh from $TAG"
   if [ -n "$PORT" ]; then bash "$WORK/install-server.sh" "$WORK/$PKG" --port "$PORT"
   else bash "$WORK/install-server.sh" "$WORK/$PKG"; fi
-  echo "==> Freedger $TAG installed"
+  echo "==> Fundwarden $TAG installed"
 }
 
 die() { echo "install.sh: $*" >&2; exit 1; }
@@ -93,7 +98,7 @@ plain() { local v="${1#v}"; echo "${v%%-*}"; }
 version_ge() { [ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -1)" = "$2" ]; }
 
 api() {  # GET a GitHub API path, print the body; non-2xx -> failure
-  curl -fsSL --retry 3 -H "Accept: application/vnd.github+json" -H "User-Agent: freedger-install" "$API/$1"
+  curl -fsSL --retry 3 -H "Accept: application/vnd.github+json" -H "User-Agent: fundwarden-install" "$API/$1"
 }
 
 latest_production() {  # releases/latest never returns pre-releases or drafts

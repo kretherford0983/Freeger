@@ -1,15 +1,16 @@
-# Upgrading a Linux server install (current release: 1.6.5)
+# Upgrading a Linux server install (current release: 1.6.6)
 
 The upgrade replaces only the application binaries. It does **not** modify:
 
-- `/var/lib/fmpoc/config.toml` (only written when it does not exist)
-- `/var/lib/fmpoc/secrets/` (portable encryption key), `database/`, `attachments/`, `logs/`
+- `/var/lib/fundwarden/config.toml` (only written when it does not exist)
+- `/var/lib/fundwarden/secrets/` (portable encryption key), `database/`, `attachments/`, `logs/`
 
 Before switching versions the installer stops the service and copies the whole data directory to
-`/var/backups/fmpoc/<timestamp>/`. The previous release stays in `/opt/fmpoc/releases/` for rollback.
+`/var/backups/fundwarden/<timestamp>/`. The previous release stays in `/opt/fundwarden/releases/` for rollback.
 
 | Upgrade | Database change | Rollback |
 |---|---|---|
+| 1.6.5 → 1.6.6 | none — the application is renamed to Fundwarden (see *1.6.6: the rename* below) | switch back to the old `fmpoc` service (left in place) |
 | 1.6.4 → 1.6.5 | none | switch binaries only |
 | 1.6.3 → 1.6.4 | migration `0013` — **adds** columns `fundraiser.cancelled_at`, `cancelled_by_user_id`, `cancel_reason` | switch binaries **and** restore the pre-upgrade data backup |
 | 1.6.2 → 1.6.3 | migration `0012` — **adds** table `reminder` | switch binaries **and** restore the pre-upgrade data backup |
@@ -57,11 +58,11 @@ documentation review worked on the pre-existing data.
 
 **One command on the server** (does steps 1–4 below; the data snapshot and rollback copy are the same):
 ```bash
-curl -fsSL https://github.com/kretherford0983/Freeger/releases/latest/download/install.sh | sudo bash
+curl -fsSL https://github.com/kretherford0983/Fundwarden/releases/latest/download/install.sh | sudo bash
 ```
 This installs the newest production release. A specific release (for example a test pre-release on a test server):
-`curl -fsSL https://github.com/kretherford0983/Freeger/releases/download/<tag>/install.sh | sudo bash -s -- --version <tag>`
-(`<tag>` e.g. `v1.6.5` or `v1.6.5-test.27`).
+`curl -fsSL https://github.com/kretherford0983/Fundwarden/releases/download/<tag>/install.sh | sudo bash -s -- --version <tag>`
+(`<tag>` e.g. `v1.6.6` or `v1.6.6-test.30`). A release from before 1.6.6 installs under the old name (service `fmpoc`).
 
 **From a test pre-release to the production release:** a server installed from any `v1.x.y-test.N` build upgrades
 to the production release with the same command; the table above applies unchanged (a test build and the release of
@@ -70,19 +71,18 @@ The port of the existing installation is read from `config.toml`. Then continue 
 
 **Manual:**
 
-1. Copy the new package and installer to the server (from the Freedger folder on your PC):
+1. Copy the new package and installer to the server (from the Fundwarden folder on your PC):
    ```powershell
-   scp dist\FinancialManagementPOC-linux-x64-portable.tar.gz packaging\linux\install-server.sh you@yourserver:~/
+   scp dist\Fundwarden-linux-x64-portable.tar.gz packaging\linux\install-server.sh you@yourserver:~/
    ```
 2. (Optional) note the current version: `curl -s http://127.0.0.1:8765/api/system/status`
 3. Run the installer — the same command as the first install:
    ```bash
-   sudo bash install-server.sh FinancialManagementPOC-linux-x64-portable.tar.gz
+   sudo bash install-server.sh Fundwarden-linux-x64-portable.tar.gz
    ```
-   If you installed on a non-default port, pass the same `--port N` (it only affects the health check; your
-   `config.toml` keeps its own port).
+   The port for the health check is read from your `config.toml` (which is never changed).
 4. Expected output ends with `"version":"<new version>"` and `Installed.` and names the backup folder
-   (`snapshotting data to /var/backups/fmpoc/<timestamp>`). The Cloudflare tunnel needs no change.
+   (`snapshotting data to /var/backups/fundwarden/<timestamp>`). The Cloudflare tunnel needs no change.
 5. Verify: sign in, check the version under System/About (or My Account), open a Fiscal Year page and a register.
 6. **Only when upgrading from a version before 1.3.0:** open each Fiscal Year that is not closed yet. Documents uploaded earlier are listed
    under *Other documents*; use the drop-down to mark the signoff as **Audit Signoff** and the budget approval as
@@ -94,12 +94,12 @@ Rolling back across a database change (see the table above) requires restoring t
 cannot open a database migrated by a newer one. **Anything entered after the upgrade is lost**, so export anything you need first.
 
 ```bash
-sudo systemctl stop fmpoc
-ls /opt/fmpoc/releases/ /var/backups/fmpoc/        # previous release + the snapshot taken at upgrade time
-sudo ln -sfn /opt/fmpoc/releases/<previous> /opt/fmpoc/current
-sudo mv /var/lib/fmpoc /var/lib/fmpoc.failed-upgrade      # keep it until you are sure
-sudo cp -a /var/backups/fmpoc/<timestamp> /var/lib/fmpoc
-sudo systemctl start fmpoc
+sudo systemctl stop fundwarden
+ls /opt/fundwarden/releases/ /var/backups/fundwarden/        # previous release + the snapshot taken at upgrade time
+sudo ln -sfn /opt/fundwarden/releases/<previous> /opt/fundwarden/current
+sudo mv /var/lib/fundwarden /var/lib/fundwarden.failed-upgrade      # keep it until you are sure
+sudo cp -a /var/backups/fundwarden/<timestamp> /var/lib/fundwarden
+sudo systemctl start fundwarden
 ```
 (Verified during release testing: the previous release starts normally on the restored snapshot. Switching only the
 symlink is not enough after a schema change — the older release refuses to start with "Can't locate revision".)
@@ -107,20 +107,109 @@ For 1.1.1 → 1.1.0 (no schema change) switching the symlink alone is enough.
 
 ## Notes
 
-- The installer rewrites `/etc/systemd/system/fmpoc.service` on every run. Put any service customisations in a
-  drop-in (`sudo systemctl edit fmpoc`), which is preserved.
-- Old backups in `/var/backups/fmpoc/` are not pruned automatically; remove ones you no longer need.
+- The installer rewrites `/etc/systemd/system/fundwarden.service` on every run. Put any service customisations in a
+  drop-in (`sudo systemctl edit fundwarden`), which is preserved.
+- Old backups in `/var/backups/fundwarden/` are not pruned automatically; remove ones you no longer need.
 
 ## Windows (local install)
 
-Data lives in `%LOCALAPPDATA%\FinancialManagementPOC` and is separate from the program folder.
+Data lives in `%LOCALAPPDATA%\Fundwarden` and is separate from the program folder.
 
 1. Close the running console window (Ctrl+C) so the app is stopped.
-2. Copy `%LOCALAPPDATA%\FinancialManagementPOC` somewhere safe (backup).
-3. Unzip the new `FinancialManagementPOC-windows-x64.zip` into a **new** folder (keep the old one for rollback).
-4. Run `FinancialManagementPOC.cmd` from the new folder. The database is migrated automatically on start.
+2. Copy `%LOCALAPPDATA%\Fundwarden` somewhere safe (backup).
+3. Unzip the new `Fundwarden-windows-x64.zip` into a **new** folder (keep the old one for rollback).
+4. Run `Fundwarden.cmd` from the new folder. The database is migrated automatically on start.
 
 To roll back: stop the app, restore the backed-up data folder, and run the old program folder.
+
+## 1.6.6: the rename to Fundwarden (server installs)
+
+Up to 1.6.5 the application was called *Financial Management POC* / *Freedger* and a server install used the service
+`fmpoc`, `/opt/fmpoc`, `/var/lib/fmpoc` and `/var/backups/fmpoc`. From 1.6.6 everything is called `fundwarden`.
+You do not prepare anything: run the normal upgrade command. When the installer finds an old installation and no
+Fundwarden data yet, it migrates it:
+
+1. checks that there is room for a second copy of the data (otherwise it stops before changing anything);
+2. stops the `fmpoc` service and **copies** `/var/lib/fmpoc` to `/var/lib/fundwarden` (compared file by file before
+   it is used), owned by the new system user `fundwarden` — `config.toml`, the key, the database and attachments
+   arrive unchanged, so the port and your tunnel / reverse proxy stay as they are;
+3. installs the program under `/opt/fundwarden`, creates and starts the service `fundwarden`, and disables `fmpoc`.
+
+**Nothing of the old installation is changed or removed.** If Fundwarden does not come up healthy, the installer
+switches back to `fmpoc` by itself and says so.
+
+| Before 1.6.6 | From 1.6.6 |
+|---|---|
+| service and system user `fmpoc` | `fundwarden` |
+| `/opt/fmpoc/current/FinancialManagementPOC` | `/opt/fundwarden/current/fundwarden` |
+| `/var/lib/fmpoc` (data, `config.toml`) | `/var/lib/fundwarden` |
+| `/var/backups/fmpoc/<timestamp>` (snapshots) | `/var/backups/fundwarden/<timestamp>` |
+| `FinancialManagementPOC-linux-x64-portable.tar.gz`, `FinancialManagementPOC-windows-x64.zip`, `Freedger-<version>-windows-x64.exe` | `Fundwarden-linux-x64-portable.tar.gz`, `Fundwarden-windows-x64.zip`, `Fundwarden-<version>-windows-x64.exe` |
+| `%LOCALAPPDATA%\FinancialManagementPOC` (Windows, local) | `%LOCALAPPDATA%\Fundwarden` |
+| backups `freedger-backup-….fmbak` | `fundwarden-backup-….fmbak` (older backup files restore as before) |
+
+Not renamed (internal, invisible in normal use): the database file `database/fmpoc.sqlite3`, the log file
+`logs/fmpoc.log`, the `FM_*` environment variables and the `.fmbak` extension.
+
+**Going back to 1.6.5** (no database change between 1.6.5 and 1.6.6): the old installation is still complete.
+```bash
+sudo systemctl disable --now fundwarden && sudo systemctl enable --now fmpoc
+```
+It continues with the data as it was at the moment of the migration; anything entered in Fundwarden since then
+stays in `/var/lib/fundwarden`. To migrate again later, move `/var/lib/fundwarden` away first and run the installer.
+
+Verified for 1.6.6 (simulated systemd): a 1.6.5 `fmpoc` server with data was upgraded with `install.sh`: every table
+row, every attachment, the key and a hand-edited `config.toml` identical in `/var/lib/fundwarden`; `/var/lib/fmpoc`
+byte-for-byte untouched; 1.6.6 answered on the same port. The switch back started 1.6.5 on its data; a package that
+does not start made the installer return to `fmpoc` automatically; after the cleanup below 1.6.6 kept running on
+identical data and a further upgrade took its snapshot in `/var/backups/fundwarden`.
+
+### Cleanup after the rename
+
+Do this on each migrated server (dev, test, later any other) **once you are sure you will not go back** — for
+example after a few days of normal use and one fresh backup (System/About → Backup / Restore) stored off the server.
+Until then the leftovers only cost disk space. The installer reminds you with a `NOTE:` line as long as they exist.
+
+```bash
+# 0. Fundwarden is the one that is running, and the old service is not
+systemctl is-active fundwarden            # must print: active
+systemctl is-active fmpoc                 # must print: inactive
+curl -s http://127.0.0.1:<port>/api/system/status      # "version":"1.6.6" (or later) and your organization's name
+
+# 1. optional: one last archive of the old data, kept somewhere safe (it contains the encryption key)
+sudo tar -C /var/lib -czf /root/fmpoc-final-data.tar.gz fmpoc
+
+# 2. remove the old service
+sudo systemctl disable --now fmpoc
+sudo rm -f /etc/systemd/system/fmpoc.service
+sudo rm -rf /etc/systemd/system/fmpoc.service.d      # only exists if you made a drop-in with "systemctl edit fmpoc"
+sudo systemctl daemon-reload
+
+# 3. remove the old program, data and snapshots
+sudo rm -rf /opt/fmpoc /var/lib/fmpoc /var/backups/fmpoc
+
+# 4. remove the old system user
+sudo userdel fmpoc
+
+# 5. check
+systemctl is-active fundwarden            # still: active
+ls -d /opt/fmpoc /var/lib/fmpoc /var/backups/fmpoc 2>&1    # "No such file or directory" three times
+```
+
+Also check, because the installer cannot know about them:
+- a **drop-in** you created for the old service (`/etc/systemd/system/fmpoc.service.d/`): recreate what you still
+  need with `sudo systemctl edit fundwarden` before deleting it;
+- your own **backup jobs, cron entries or monitoring** that mention `fmpoc`, `/var/lib/fmpoc` or
+  `/var/backups/fmpoc`: point them at the new names;
+- **downloaded installers** in home directories (`install-server.sh`, `FinancialManagementPOC-*.tar.gz`) and
+  `/var/lib/fundwarden.failed-migration-*` (only present if a migration attempt failed): delete them;
+- the Cloudflare tunnel / reverse proxy needs **no** change (same address and port).
+
+On a **Windows** PC nothing needs cleaning up: at its first start 1.6.6 renames the data folder
+`%LOCALAPPDATA%\FinancialManagementPOC` to `%LOCALAPPDATA%\Fundwarden` (a rename in place — nothing is copied; a
+data folder you chose yourself with `--data-dir` or `FM_DATA_DIR` is never touched). Delete the old
+`Freedger-…exe` / `FinancialManagementPOC-windows-x64` folder when you no longer want it. To go back to 1.6.5 on
+Windows, rename the folder back first.
 
 ## 1.4.1: two-step verification after the upgrade (server installs)
 
@@ -132,8 +221,8 @@ If a user loses both the phone and the recovery codes: Users → *Reset two-step
 If the only Administrator is locked out, on the server:
 
 ```
-sudo -u fmpoc /opt/fmpoc/current/FinancialManagementPOC reset-mfa --user <username> --data-dir /var/lib/fmpoc
+sudo -u fundwarden /opt/fundwarden/current/fundwarden reset-mfa --user <username> --data-dir /var/lib/fundwarden
 ```
 
-(run it as the `fmpoc` service account so file ownership in the data directory does not change). The reset is
+(run it as the `fundwarden` service account so file ownership in the data directory does not change). The reset is
 recorded in the audit log; the user sets up two-step verification again at the next sign-in.

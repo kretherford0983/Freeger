@@ -2,6 +2,31 @@
 
 Versions are `Breaking.Major.Minor` from 1.6.0 (docs/branching.md).
 
+## 1.6.6 — 2026-10-02
+**First production release, under a new name: Fundwarden.** The application leaves its proof-of-concept names
+(*Financial Management POC*, *Freedger*, `fmpoc`) behind. No database change; nothing about how you work changes.
+Everything from 1.1 to 1.6.5 (sections below, kept as written) was published on the test channel only.
+- **New name everywhere you see it:** browser tab, sign-in page, top bar, PDF properties, authenticator entry for
+  new two-step set-ups (existing entries keep working and keep their old label), backup file names
+  (`fundwarden-backup-….fmbak`; older backups restore as before) and the recovery-codes file.
+- **App icon:** a gold coin with a keyhole — browser tab (favicon), phone home-screen icon and the Windows `.exe`.
+- **Downloads renamed:** `Fundwarden-<version>-windows-x64.exe`, `Fundwarden-windows-x64.zip` (start
+  `Fundwarden.cmd`), `Fundwarden-linux-x64-portable.tar.gz` (program `fundwarden`).
+- **Linux servers:** service, system user and folders are now `fundwarden` (`/opt/fundwarden`,
+  `/var/lib/fundwarden`, `/var/backups/fundwarden`). The normal upgrade command migrates an existing `fmpoc`
+  installation: the data is *copied* (and compared) to the new place, the old service is stopped and disabled and
+  **left in place**, so going back is one command; if Fundwarden does not start, the installer switches back by
+  itself. Removing the old installation afterwards is a short manual checklist: docs/upgrade.md,
+  *Cleanup after the rename*.
+- **Windows:** the data folder `%LOCALAPPDATA%\FinancialManagementPOC` is renamed to `%LOCALAPPDATA%\Fundwarden`
+  at the first start (in place; nothing is copied).
+- **Installer:** `install-server.sh` reads the health-check port from the existing `config.toml` and takes its data
+  snapshot before every upgrade even when the service was stopped; `install.sh` can still install a release from
+  before the rename (`--version <tag>`).
+- The source code moved to `github.com/kretherford0983/Fundwarden` (the old address redirects).
+- Unchanged on purpose (internal): Python package `fmpoc`, `database/fmpoc.sqlite3`, `logs/fmpoc.log`, `FM_*`
+  settings, the `.fmbak` format.
+
 ## 1.6.5 — 2026-10-02
 Polish and documentation. Beta: test channel only. No database change.
 - **Documentation** prepared for the first production release (planned: 1.6.6): README, deployment, upgrade, backup
