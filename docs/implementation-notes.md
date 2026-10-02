@@ -61,6 +61,21 @@ passkeys deferred).
 | UI | Menu item *Fundraisers* (when on); list with FY selector + Upcoming; detail page with notices, budgets, tiles, per-FY table, charts (lazy `FundraiserCharts`, shares the dashboard palette/helpers), transactions (link `/register?account=&search=`), attachments; create/edit dialog with budget options per eligible FY, warnings, filter warning and live preview. Admin: *Optional modules* on System/About. |
 | Delete | Allowed unless a Closed FY is involved (archive instead); CR-034 adds the "nothing classified/excluded/bucketed/attached" condition. |
 
+**v1.6.3 CR-036 Reminders and notifications.** Table `reminder` (migration `0012`): scope PERSONAL/ORGANIZATION,
+owner, title, details, `due_date`, `notify_days_before` (0–365), optional link (FISCAL_YEAR/BUDGET/BANK_ACCOUNT + id),
+resolution (at, by, note). Show date = due date − days before, compared with the **server's local date**. States:
+UPCOMING → DUE (stays until resolved) → RESOLVED (can be reopened). Permissions: `reminder.view` (Budget Manager,
+Budget User, Register User, Auditor), `reminder.personal` (Budget Manager, Register User), `reminder.org_manage`
+(Budget Manager: create/edit/delete), `reminder.org_resolve` (Budget Manager, Register User). Visibility
+(`services/reminders.can_see`): personal = owner only (others get 404); organization = Budget Managers always,
+Register Users once due (incl. resolved), Budget Users/Auditors only while due and unresolved. Edit/delete only
+before the show date (`REMINDER_DUE` afterwards); resolve only when due. API `/api/reminders` (`view=due|upcoming|
+resolved`), `/count`, `POST`, `PUT /{id}`, `DELETE /{id}`, `POST /{id}/resolve {note}`, `POST /{id}/reopen`. Audited
+`REMINDER_CREATED/UPDATED/DELETED/RESOLVED/REOPENED` (personal ones too - product owner). UI: bell with count in the
+top bar (refreshed on navigation, every 5 minutes and after changes), `/notifications` page, dashboard section
+`notifications` (new first entry of the default layout; saved layouts get it appended; renders nothing when no
+reminder is due). No e-mail, no repeats (deferred).
+
 **v1.6.2 CR-035 Fundraiser report (decisions 2026-10-01).** `services/reports._fundraiser_section` builds one
 fundraiser from `fundraisers.detail` (so the PDF always matches the page): metadata, warnings, summary (income,
 expenses, net, ROI; cash float and excluded amounts), per-FY table, buckets + Unassigned, counted lines (date, FY,

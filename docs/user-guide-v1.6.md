@@ -1,7 +1,7 @@
 # What's new in 1.6 — quick guide
 
 *1.6.0: the optional Fundraiser module (core). 1.6.1: buckets, cash float, exclusions and fundraiser documents.
-1.6.2: the fundraiser report. A later 1.6 release adds reminders.*
+1.6.2: the fundraiser report. 1.6.3: reminders and notifications.*
 
 ## Turning the module on (Administrator)
 System/About → **Optional modules** → tick **Fundraiser module**. Budget Managers, Budget Users, Register Users and
@@ -47,6 +47,17 @@ Register) and the transactions' attachments. Notices remind you, for example, to
 - Reports → **End of Year Audit** and **Fiscal Year Close**: *Include fundraisers* (ticked by default) adds the same
   section for every fundraiser of that Fiscal Year (not archived), after the transactions and before the signature
   page. A fundraiser that spans two Fiscal Years appears complete in both years' reports.
+
+## Reminders and notifications (1.6.3)
+- The **bell** at the top right shows how many reminders are due; click it for the **Notifications** page (Due,
+  Upcoming, Resolved). Due reminders are also shown at the top of the dashboard.
+- **New reminder** (Budget Managers and Register Users): what to remember, the due date, optionally *show days
+  before*, details and a link to a Fiscal Year, budget or bank account. Budget Managers choose whether it is for
+  themselves or for the **whole organization**.
+- A reminder stays in the notifications until someone clicks **Resolve** (a note is optional). Organization reminders
+  can be resolved by Budget Managers and Register Users; Budget Users and Auditors just see them. A resolved reminder
+  can be **reopened**.
+- A reminder can be edited or deleted only before it is shown.
 
 ## Archive or delete
 **Archive** hides a finished fundraiser from the list (tick *Show archived* to see it). **Delete** removes a

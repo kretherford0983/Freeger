@@ -38,6 +38,12 @@ PERMISSIONS: dict[str, set[str]] = {
     "fundraiser.manage": {BUDGET_MANAGER},
     # v1.6.1 CR-034: buckets, special classifications, exclusions and fundraiser documents
     "fundraiser.lines": {BUDGET_MANAGER, REGISTER_USER},
+    # v1.6.3 CR-036: reminders. Personal reminders are private to their owner; organization reminders are created
+    # by Budget Managers, resolved by Budget Managers and Register Users, and seen (once due) by all viewers.
+    "reminder.view": {BUDGET_MANAGER, BUDGET_USER, REGISTER_USER, AUDITOR},
+    "reminder.personal": {BUDGET_MANAGER, REGISTER_USER},
+    "reminder.org_manage": {BUDGET_MANAGER},
+    "reminder.org_resolve": {BUDGET_MANAGER, REGISTER_USER},
 }
 
 
