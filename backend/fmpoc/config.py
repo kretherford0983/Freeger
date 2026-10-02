@@ -12,8 +12,9 @@ import tomllib
 from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 
-APP_NAME = "FinancialManagementPOC"
-VERSION = "1.6.5"
+APP_NAME = "Fundwarden"
+LEGACY_APP_NAME = "FinancialManagementPOC"  # name of the default data folder before 1.6.6
+VERSION = "1.6.6"
 
 
 BUILD_INFO_FILE = Path(__file__).with_name("build_info.json")
@@ -32,15 +33,39 @@ def build_info() -> dict | None:
     return {k: str(data[k])[:64] for k in keep if data.get(k) not in (None, "")}
 
 
-def default_data_dir() -> Path:
-    """OS-appropriate default application-data directory (separate from binaries, BR-086)."""
+def _default_data_dir(name: str, unix_name: str) -> Path:
     if sys.platform.startswith("win"):
         base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
-        return Path(base) / APP_NAME
+        return Path(base) / name
     if sys.platform == "darwin":
-        return Path.home() / "Library" / "Application Support" / APP_NAME
+        return Path.home() / "Library" / "Application Support" / name
     base = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
-    return Path(base) / "financial-management-poc"
+    return Path(base) / unix_name
+
+
+def default_data_dir() -> Path:
+    """OS-appropriate default application-data directory (separate from binaries, BR-086)."""
+    return _default_data_dir(APP_NAME, "fundwarden")
+
+
+def legacy_default_data_dir() -> Path:
+    """Default data directory used before the 1.6.6 rename (Financial Management POC / Freedger)."""
+    return _default_data_dir(LEGACY_APP_NAME, "financial-management-poc")
+
+
+def adopt_legacy_data_dir(new: Path, old: Path) -> Path:
+    """1.6.6 rename: a local installation that still has its data in the old default folder keeps it - the folder
+    is renamed once (same parent folder, nothing is copied or rewritten). If that is not possible (e.g. the folder is
+    in use), the old folder is used where it is. Never called when the data directory was chosen explicitly."""
+    if new.exists() or not old.is_dir():
+        return new
+    try:
+        old.rename(new)
+    except OSError as e:
+        print(f"NOTE: using the existing data folder {old} (it could not be renamed to {new}: {e})", file=sys.stderr)
+        return old
+    print(f"Data folder renamed: {old} -> {new}", file=sys.stderr)
+    return new
 
 
 @dataclass(frozen=True)
@@ -116,7 +141,8 @@ def load_settings(overrides: dict | None = None) -> Settings:
     """Build settings from defaults, config file and environment (then explicit overrides e.g. CLI)."""
     s = Settings()
     env_data_dir = os.environ.get(_ENV_PREFIX + "DATA_DIR")
-    data_dir = Path((overrides or {}).get("data_dir") or env_data_dir or s.data_dir)
+    explicit = (overrides or {}).get("data_dir") or env_data_dir
+    data_dir = Path(explicit) if explicit else adopt_legacy_data_dir(s.data_dir, legacy_default_data_dir())
     s = replace(s, data_dir=data_dir)
     values: dict = {}
     cfg = data_dir / "config.toml"

@@ -2,6 +2,7 @@
 # Usage (from repo root, after `npm --prefix frontend run build`):
 #   pyinstaller --noconfirm --distpath dist --workpath build/pyinstaller packaging/pyinstaller/fmpoc.spec
 import os
+import sys
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 ROOT = os.path.abspath(os.path.join(SPECPATH, "..", ".."))
@@ -21,6 +22,8 @@ hidden = (collect_submodules("fmpoc") + collect_submodules("uvicorn") + collect_
 a = Analysis([os.path.join(SPECPATH, "entry.py")], pathex=[os.path.join(ROOT, "backend")], datas=datas,
              hiddenimports=hidden, excludes=["tkinter", "pytest", "PIL.ImageTk", "IPython"], noarchive=False)
 pyz = PYZ(a.pure)
-exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name="FinancialManagementPOC", console=True, debug=False,
+NAME = "Fundwarden" if sys.platform.startswith("win") else "fundwarden"  # dist/<NAME>/<NAME>[.exe]
+exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name=NAME, console=True, debug=False,
+          icon=os.path.join(ROOT, "packaging", "windows", "fundwarden.ico"),
           strip=False, upx=False)
-coll = COLLECT(exe, a.binaries, a.datas, name="FinancialManagementPOC", strip=False, upx=False)
+coll = COLLECT(exe, a.binaries, a.datas, name=NAME, strip=False, upx=False)

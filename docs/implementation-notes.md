@@ -44,6 +44,20 @@ could not otherwise be corrected. Scope and safeguards:
 - Audited as `TRANSACTION_VOID_DATE_CORRECTED` with before/after snapshots and the reason.
 - Tests: `backend/tests/test_cr001_void_date.py` (5 tests) and E2E "CR-001".
 
+**1.6.6 Rename to Fundwarden, first production release (product owner, 2026-10-02).** Plan: project doc
+`claude/freedger-plan-1.6.6.md`.
+
+| Topic | Implementation |
+|---|---|
+| Name | Product owner chose **Fundwarden** (dropped: Kitty — collides with the `kitty` terminal; Coffer — other finance apps of that name). Short name for service, user, folders and command: `fundwarden`. One name everywhere, also on reports (PDF `/Producer`). |
+| What was renamed | Everything an operator or user sees: display name, package and launcher names, systemd service/user, `/opt`, `/var/lib`, `/var/backups` paths, default local data folder, backup and recovery-code file names, TOTP issuer (new enrolments only), Docker image/volume, repository URL (`legal.SOURCE_URL`), `FUNDWARDEN_*` test/override variables of `install.sh`. |
+| What was not | Python package `fmpoc`, `database/fmpoc.sqlite3`, `logs/fmpoc.log`, `FM_*` settings, AAD strings of the encryption (`fmpoc:…` — changing them would make existing ciphertexts unreadable), the `.fmbak` magic/format, spec file names under `packaging/pyinstaller/`. |
+| Server migration | `install-server.sh`: an `fmpoc` installation without Fundwarden data is migrated by **copy** (`cp -a` to `<data>.migrating`, `diff -rq`, `chown`, atomic `mv`), free-space check first; old service stopped + disabled, nothing of it removed (product owner: "installer migrates"; cleanup is a documented manual checklist). Failure before the switch restarts the old service; an unhealthy start after it switches back automatically and parks the copy as `<data>.failed-migration-<stamp>`. Refuses to run when Fundwarden data exists and the old service is running. |
+| Local data folder | `config.adopt_legacy_data_dir`: only when the data directory is the default one, the new folder is missing and the old one exists — renamed in place (`Path.rename`), else used where it is. Never for `--data-dir` / `FM_DATA_DIR`. |
+| install.sh | Default repository `kretherford0983/Fundwarden`; reads the port from `/var/lib/fundwarden/config.toml`, else the old location; a release whose `SHA256SUMS.txt` lists only the old package name is installed with that name (rollback / deliberate old install). |
+| Icon | `frontend/public/favicon.svg` (gold coin with a keyhole, no text; a shield was dropped as too close to another product's mark), PNG 32 px and 180 px, `packaging/windows/fundwarden.ico` (16–256 px) for the `.exe`. Served from the static root; CSP unchanged (`img-src 'self'`). |
+| Tests | `backend/tests/test_v166_rename.py` (6), E2E "1.6.6", upgrade simulation recorded in docs/upgrade.md. |
+
 **v1.6.0 CR-033 Fundraiser module, core (product owner, 2026-10-01).** Plan with every decision: project doc
 `claude/freedger-plan-1.6.md` (1.6.0 = CR-033; 1.6.1 CR-034 manage, 1.6.2 CR-035 report, 1.6.3 CR-036 reminders;
 passkeys deferred).
