@@ -78,7 +78,7 @@ class ChangePasswordIn(In):
 
 
 class DashboardSectionIn(In):
-    key: Literal["fiscal_year", "budget", "review", "bank", "attention", "charts"]
+    key: Literal["notifications", "fiscal_year", "budget", "review", "bank", "attention", "charts"]
     visible: bool
 
 
@@ -89,7 +89,7 @@ class PreferencesIn(In):
     dashboard_charts: list[Literal["income_pie", "monthly", "expense_vs_budget", "balances", "expense_pie",
                                    "cumulative_net"]] | None = Field(None, max_length=6)
     # v1.5.0 CR-031: dashboard sections in display order with visibility; reset_dashboard_layout -> default
-    dashboard_layout: list[DashboardSectionIn] | None = Field(None, max_length=6)
+    dashboard_layout: list[DashboardSectionIn] | None = Field(None, max_length=7)
     reset_dashboard_layout: bool | None = None
 
 
@@ -451,3 +451,18 @@ class FundraiserLineIn(In):
     exclusion_reason: OptStr(500) = None
     classification: FundraiserClassificationIn | None = None
     buckets: list[FundraiserBucketAmountIn] = Field(default_factory=list, max_length=30)
+
+
+# ------------------------------------------------------------------ v1.6.3 CR-036 reminders
+class ReminderIn(In):
+    scope: Literal["PERSONAL", "ORGANIZATION"] = "PERSONAL"
+    title: Str(200)
+    details: OptStr(2000) = None
+    due_date: Date
+    notify_days_before: int = Field(0, ge=0, le=365)
+    link_type: Literal["FISCAL_YEAR", "BUDGET", "BANK_ACCOUNT"] | None = None
+    link_id: int | None = None
+
+
+class ReminderResolveIn(In):
+    note: OptStr(500) = None

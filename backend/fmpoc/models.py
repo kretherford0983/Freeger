@@ -526,3 +526,26 @@ class FundraiserBucketLine(Base):
     allocation_id: Mapped[int] = mapped_column(ForeignKey("transaction_allocation.id"))
     amount_cents: Mapped[int] = mapped_column(BigInteger)
     __table_args__ = (UniqueConstraint("bucket_id", "allocation_id", name="uq_fundraiser_bucket_line"),)
+
+
+# ---------------------------------------------------------------- v1.6.3 CR-036 reminders
+class Reminder(Base):
+    """A one-time reminder: PERSONAL (visible to its owner only) or ORGANIZATION (all financial users + Auditors).
+    It becomes a notification on (due_date - notify_days_before) and stays until resolved."""
+    __tablename__ = "reminder"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspace.id"), index=True)
+    scope: Mapped[str] = mapped_column(String(12))
+    owner_user_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"), index=True)
+    title: Mapped[str] = mapped_column(String(200))
+    details: Mapped[str | None] = mapped_column(Text, nullable=True)
+    due_date: Mapped[dt.date] = mapped_column(Date, index=True)
+    notify_days_before: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    link_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    link_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    resolved_at: Mapped[dt.datetime | None] = mapped_column(DateTime, nullable=True)
+    resolved_by_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    resolution_note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+    updated_by_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)

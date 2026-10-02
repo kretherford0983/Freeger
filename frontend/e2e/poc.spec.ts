@@ -811,9 +811,9 @@ test("CR-028 / CR-030 / CR-029 / CR-032: account groups, chart columns, signatur
 // ---------------------------------------------------------------- v1.5.0 CR-031: dashboard layout
 test("CR-031: dashboard sections can be hidden, reordered and reset; saved per user", async ({ page }) => {
   await login(page, "ru1", "Brand-New-Pass-99");
-  const order = () => page.locator(".dash-section").evaluateAll((els) => els.map((e) => e.getAttribute("data-section")));
+  const order = () => page.locator(".dash-section").evaluateAll((els) => els.map((e) => e.getAttribute("data-section")).filter((k) => k !== "notifications")); // v1.6.3: Notifications is first
   // wait until the dashboard data has loaded (the sections render after /api/dashboard answers)
-  await expect(page.locator(".dash-section")).toHaveCount(5);
+  await expect(page.locator(".dash-section")).toHaveCount(6);
   expect(await order()).toEqual(["fiscal_year", "budget", "bank", "attention", "charts"]);
   await page.getByRole("button", { name: "Customize dashboard" }).click();
   await expect(page.getByTestId("layout-review")).toHaveCount(0); // Auditors only
@@ -824,16 +824,16 @@ test("CR-031: dashboard sections can be hidden, reordered and reset; saved per u
   expect(await order()).toEqual(["bank", "fiscal_year", "budget", "charts"]);
   await page.getByRole("button", { name: "Done" }).click();
   await page.reload();
-  await expect(page.locator(".dash-section").first()).toHaveAttribute("data-section", "bank");
+  await expect(page.locator(".dash-section").nth(1)).toHaveAttribute("data-section", "bank");
   expect(await order()).toEqual(["bank", "fiscal_year", "budget", "charts"]);
   await page.screenshot({ path: "e2e-screenshots/light-dashboard-customized.png", fullPage: true });
   await logout(page);
   // another user keeps the default
   await login(page, "bm1");
-  await expect(page.locator(".dash-section").first()).toHaveAttribute("data-section", "fiscal_year");
+  await expect(page.locator(".dash-section").nth(1)).toHaveAttribute("data-section", "fiscal_year");
   await logout(page);
   await login(page, "ru1", "Brand-New-Pass-99");
-  await expect(page.locator(".dash-section").first()).toHaveAttribute("data-section", "bank");
+  await expect(page.locator(".dash-section").nth(1)).toHaveAttribute("data-section", "bank");
   await page.getByRole("button", { name: "Customize dashboard" }).click();
   await page.getByRole("button", { name: "Reset to default" }).click();
   await expect(page.getByRole("status").filter({ hasText: "Dashboard layout saved" })).toBeVisible();
@@ -989,6 +989,58 @@ test("CR-035: fundraiser report PDF; Audit and Close reports can include fundrai
   expect(without).not.toContain("include_fundraisers");
   const plain = await page.request.get(without!);
   expect((await withFr.body()).length).toBeGreaterThan((await plain.body()).length);
+  await logout(page);
+});
+
+// ---------------------------------------------------------------- v1.6.3 CR-036: reminders and notifications
+test("CR-036: organization and personal reminders - bell, dashboard, resolve with a note, read-only viewers", async ({ page }) => {
+  const now = new Date(); // the server uses its local date
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  await login(page, "bm1");
+  await page.getByRole("link", { name: "Notifications" }).click();
+  await expect(page.getByText("Nothing needs your attention.")).toBeVisible();
+  // organization reminder due today
+  await page.getByRole("button", { name: "New reminder" }).click();
+  let dlg = page.getByRole("dialog", { name: "New reminder" });
+  await dlg.getByRole("combobox").first().selectOption("ORGANIZATION");
+  await dlg.getByLabel("Reminder", { exact: true }).fill("File the annual return");
+  await dlg.getByLabel("Due date").fill(today);
+  await dlg.getByLabel("Link to (optional)").selectOption("FISCAL_YEAR");
+  await dlg.getByLabel("Item").selectOption({ index: 1 });
+  await dlg.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByTestId("reminder")).toContainText("File the annual return");
+  await expect(page.getByTestId("bell-count")).toHaveText("1");
+  // personal reminder next year: upcoming, editable, not a notification yet
+  await page.getByRole("button", { name: "New reminder" }).click();
+  dlg = page.getByRole("dialog", { name: "New reminder" });
+  await dlg.getByLabel("Reminder", { exact: true }).fill("Renew my token");
+  await dlg.getByLabel("Due date").fill(`${Number(today.slice(0, 4)) + 1}-01-15`);
+  await dlg.getByRole("button", { name: "Save" }).click();
+  await page.getByRole("tab", { name: "Upcoming" }).click();
+  await expect(page.getByTestId("reminder")).toContainText("Renew my token");
+  await expect(page.getByRole("button", { name: "Edit Renew my token" })).toBeVisible();
+  await expect(page.getByTestId("bell-count")).toHaveText("1");
+  // dashboard section
+  await page.getByRole("link", { name: "Dashboard" }).click();
+  await expect(page.locator("[data-section=notifications]")).toContainText("File the annual return");
+  await page.screenshot({ path: "e2e-screenshots/light-dashboard-notifications.png" });
+  await logout(page);
+
+  // Register User: sees and resolves the organization reminder with a note; not the other user's personal one
+  await login(page, "ru1", "Brand-New-Pass-99");
+  await expect(page.getByTestId("bell-count")).toHaveText("1");
+  await page.getByRole("link", { name: /Notifications/ }).click();
+  await expect(page.getByTestId("reminder")).toHaveCount(1);
+  await page.getByRole("button", { name: "Resolve File the annual return" }).click();
+  dlg = page.getByRole("dialog", { name: "Resolve reminder" });
+  await dlg.getByLabel("Note (optional)").fill("Filed online");
+  await dlg.getByRole("button", { name: "Mark as resolved" }).click();
+  await expect(page.getByText("Nothing needs your attention.")).toBeVisible();
+  await expect(page.getByTestId("bell-count")).toHaveCount(0);
+  await page.getByRole("tab", { name: "Resolved" }).click();
+  await expect(page.getByTestId("reminder")).toContainText("Filed online");
+  await page.getByRole("button", { name: "Reopen File the annual return" }).click();
+  await expect(page.getByTestId("bell-count")).toHaveText("1");
   await logout(page);
 });
 

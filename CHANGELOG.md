@@ -2,7 +2,21 @@
 
 Versions are `Breaking.Major.Minor` from 1.6.0 (docs/branching.md).
 
-## 1.6.2 — unreleased (in development)
+## 1.6.3 — unreleased (in development)
+Reminders and notifications. Beta: test channel only.
+- **CR-036 Reminders.** A bell in the top bar shows how many reminders are due; **Notifications** lists them (Due,
+  Upcoming, Resolved), and the dashboard shows due reminders in a new *Notifications* section (at the top by default;
+  it can be hidden or moved with *Customize dashboard*).
+  - **Personal reminders** — Budget Managers and Register Users set them for themselves; nobody else sees them.
+  - **Organization reminders** — set by Budget Managers; shown to every financial user and to Auditors once due.
+    Budget Managers and Register Users resolve them; Budget Users and Auditors see them read-only until they are
+    cleared.
+  - A reminder has a due date, optionally *show N days before*, details and a link to a Fiscal Year, budget or bank
+    account. Once shown it stays until it is **resolved** (optional note); a resolved reminder can be reopened.
+    It can be edited or deleted only before it is shown. One-time reminders only; no e-mail.
+  - Everything is recorded in the audit log. Database migration `0012` (additive).
+
+## 1.6.2 — 2026-10-01
 Fundraiser module, part 3: the fundraiser report. Beta: test channel only. No database change.
 - **CR-035 Fundraiser report.** **Report (PDF)** on a fundraiser's page (everyone who can see the fundraiser):
   event, budgets and filter; income, expenses, net and return; cash float and excluded amounts; breakdown per Fiscal
