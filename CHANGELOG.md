@@ -3,10 +3,10 @@
 Versions are `Breaking.Major.Minor` from 1.6.0 (docs/branching.md).
 
 ## 1.6.5 — 2026-10-02
-**First production release.** Everything from 1.1 to 1.6.4 (sections below) was published on the test channel only;
-1.6.5 is the first version published as a GitHub release on `main`, so the `releases/latest` install command works
-from now on. Servers running a 1.6.x test build upgrade with the same command — no database change from 1.6.4.
-- **Documentation** brought up to date for production: README, deployment, upgrade, backup and branching guides.
+Polish and documentation. Beta: test channel only. No database change.
+- **Documentation** prepared for the first production release (planned: 1.6.6): README, deployment, upgrade, backup
+  and branching guides. Until that release exists, the `releases/latest` install command does not work yet — use a
+  pre-release's own address (shown in its release notes).
 - **Dashboard bank account balances** (GitHub issue #15): *Checking & Savings* and *Investments and Other* are now
   separate tables with their own heading and subtotal and space between them, and the total of all accounts stands
   on its own below — matching the Bank Accounts page.

@@ -59,10 +59,10 @@ pipeline are unchanged):
 The first feature of a new release bumps the version on its feature branch (e.g. 1.5.0 → 1.6.0) and adds the
 CHANGELOG section; later features of the same release add to that section.
 
-**Production releases started with 1.6.5.** Before that (beta) every version existed only as a test pre-release and
-fixes simply went into the next version. From 1.6.5 on, `main` is what people run:
+**Production releases start with 1.6.6 (planned).** Before that (beta) every version existed only as a test pre-release and
+fixes simply went into the next version. From then on, `main` is what people run:
 
-**Hotfix** (urgent production fix): branch `hotfix/short-name` from `main`, bump the Minor number (e.g. 1.6.5 → 1.6.6),
+**Hotfix** (urgent production fix): branch `hotfix/short-name` from `main`, bump the Minor number (e.g. 1.6.6 → 1.6.7),
 pull request into `main`; afterwards pull request `main → test` and `main → develop` so the fix is not lost.
 
 ## One-time GitHub settings (Settings tab of the repository)

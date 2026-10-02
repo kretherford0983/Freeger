@@ -35,7 +35,7 @@ verifies the checksums and runs that release's `install-server.sh` (systemd serv
 data in `/var/lib/fmpoc`, a data snapshot before every upgrade, health check). The same command installs and
 upgrades; `config.toml`, the key, the database and attachments are never replaced.
 
-- **Which release:** by default the newest production release (1.6.5 was the first). `--channel test` installs the
+- **Which release:** by default the newest production release (the first is planned as 1.6.6; until it exists use `--version <tag>` as below). `--channel test` installs the
   newest **test** pre-release instead (for a test server only); `--version <tag>` installs exactly that release:
   `curl -fsSL https://github.com/kretherford0983/Freeger/releases/download/<tag>/install.sh | sudo bash -s -- --version <tag>`
 - **Port:** a new installation uses 8765 (`--port N` to change); an upgrade reads the port from the existing

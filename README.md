@@ -2,7 +2,7 @@
 
 **Free financial ledger for small organizations** — clubs, associations, booster groups and similar bodies that
 keep a checkbook, a budget and an annual audit. Freedger runs on your own Windows PC or Linux server; your data
-stays in one folder you control. Current release: **1.6.5** (the first production release) —
+stays in one folder you control. Current version: **1.6.5** (test channel; the first production release is planned as 1.6.6) —
 [download](https://github.com/kretherford0983/Freeger/releases/latest) · [changelog](CHANGELOG.md).
 
 ## What it does
