@@ -773,3 +773,14 @@ def set_line(db: Session, ctx, f: Fundraiser, allocation_id: int, body) -> None:
     if after != before:
         audit.record(db, ctx, "FUNDRAISER_LINE_UPDATED", "fundraiser", f.id,
                      {"allocation_id": allocation_id, **before}, {"allocation_id": allocation_id, **after})
+
+
+# ------------------------------------------------------------------ v1.6.2 CR-035: report selection
+def for_fiscal_year_report(db: Session, ws_id: int, fy: FiscalYear) -> list[Fundraiser]:
+    """Fundraisers shown in a Fiscal Year's Audit / Close report: not archived, with a budget in that year."""
+    if not module_enabled(db, ws_id):
+        return []
+    out = [f for f in db.scalars(select(Fundraiser).where(Fundraiser.workspace_id == ws_id, Fundraiser.archived_at.is_(None))
+                                 .order_by(Fundraiser.start_date, Fundraiser.name, Fundraiser.id))
+           if any(fb.fiscal_year_id == fy.id for fb in f.budgets)]
+    return out

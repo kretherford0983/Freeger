@@ -3,9 +3,14 @@ from __future__ import annotations
 
 import datetime as dt
 
-from fastapi import APIRouter, Depends, Query
+import os
+
+from fastapi import APIRouter, Depends, Query, Request
+from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
 from sqlalchemy.orm import Session
 
+from .. import audit
 from ..deps import Ctx, get_db, require
 from ..schemas import FundraiserBucketIn, FundraiserIn, FundraiserLineIn, FundraiserPreviewIn, ModulesIn
 from ..services import fundraisers as svc
@@ -130,3 +135,18 @@ def set_line(fid: int, allocation_id: int, body: FundraiserLineIn, db: Session =
     svc.set_line(db, ctx, f, allocation_id, body)
     db.commit()
     return svc.detail(db, ctx, f)
+
+
+# ------------------------------------------------------------------ v1.6.2 CR-035: fundraiser report (PDF)
+@router.get("/fundraisers/{fid}/report")
+def report(fid: int, request: Request, download: bool = False, db: Session = Depends(get_db), ctx: Ctx = Depends(viewer)):
+    from ..services import reports as report_svc
+    f = svc.get(db, ctx, fid)
+    path, fname, summary = report_svc.build_fundraiser_report(db, ctx, request.app.state.settings, f)
+    audit.record(db, ctx, "REPORT_GENERATED", "fundraiser", f.id, None, {"report": "FUNDRAISER", **summary})
+    db.commit()
+    headers = {"Content-Disposition": f'{"attachment" if download else "inline"}; filename="{fname}"',
+               "Cache-Control": "private, no-store", "X-Frame-Options": "SAMEORIGIN",
+               "Content-Security-Policy": "default-src 'none'; frame-ancestors 'self'"}
+    return FileResponse(path, media_type="application/pdf", headers=headers,
+                        background=BackgroundTask(lambda: os.path.exists(path) and os.unlink(path)))

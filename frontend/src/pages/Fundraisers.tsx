@@ -108,6 +108,7 @@ export function FundraiserDetail({ id }: { id: number }) {
       <p><Link to="/fundraisers">← Fundraisers</Link></p>
       <div className="page-head">
         <h1>{f.name} <FundraiserStatus status={f.status} /></h1>
+        <a className="button" href={`/api/fundraisers/${id}/report`} target="_blank" rel="noopener">Report (PDF)</a>
         {manage ? (
           <div className="row">
             {!f.read_only ? <button onClick={() => setEditing(true)}>Edit</button> : null}

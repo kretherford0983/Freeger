@@ -2,6 +2,7 @@
 import { Fragment, useEffect, useState } from "react";
 import { api, money, qs } from "../api";
 import { EntityPicker, ErrorBox, Field, Loading } from "../components";
+import { useMe } from "../App";
 import { SIG_EMPTY, SignatureOptions, signatureProblem, type SigState } from "./SignatureOptions";
 
 export default function Reports() {
@@ -38,7 +39,9 @@ function CloseReport({ fys }: { fys: any[] }) {
   const today = new Date().toISOString().slice(0, 10);
   const cur = fys.find((f) => f.start_date <= today && f.end_date >= today) || fys[fys.length - 1];
   const [fy, setFy] = useState(cur ? String(cur.id) : "");
-  const url = (download: boolean) => `/api/reports/fy-close${qs({ fiscal_year_id: fy, download: download || null })}`;
+  const frOn = !!useMe().me.modules?.fundraisers; // v1.6.2 CR-035
+  const [fr, setFr] = useState(true);
+  const url = (download: boolean) => `/api/reports/fy-close${qs({ fiscal_year_id: fy, download: download || null, include_fundraisers: frOn && !fr ? false : null })}`;
   return (
     <section className="card">
       <h2>Fiscal Year Close report</h2>
@@ -49,6 +52,7 @@ function CloseReport({ fys }: { fys: any[] }) {
             {fys.map((y) => <option key={y.id} value={y.id}>{y.label}</option>)}
           </select>
         </Field>
+        {frOn ? <label className="check"><input type="checkbox" checked={fr} onChange={(e) => setFr(e.target.checked)} /> Include fundraisers</label> : null}
       </div>
       <div className="actions left">
         <a className="button primary" href={url(false)} target="_blank" rel="noopener">Open Close report PDF</a>
@@ -63,9 +67,11 @@ function AuditReport({ fys, accounts }: { fys: any[]; accounts: any[] }) {
   const cur = fys.find((f) => f.start_date <= today && f.end_date >= today) || fys[fys.length - 1];
   const [f, setF] = useState({ fiscal_year_id: cur ? String(cur.id) : "", bank_account_id: "", include_void: true });
   const [sig, setSig] = useState<SigState>(SIG_EMPTY);
+  const frOn = !!useMe().me.modules?.fundraisers; // v1.6.2 CR-035
+  const [fr, setFr] = useState(true);
   const sigErr = sig.on ? signatureProblem(sig) : null;
   const url = (download: boolean) => {
-    const p = new URLSearchParams(qs({ fiscal_year_id: f.fiscal_year_id, bank_account_id: f.bank_account_id, include_void: f.include_void, download: download || null }).slice(1));
+    const p = new URLSearchParams(qs({ fiscal_year_id: f.fiscal_year_id, bank_account_id: f.bank_account_id, include_void: f.include_void, download: download || null, include_fundraisers: frOn && fr ? true : null }).slice(1));
     if (sig.on) {
       p.set("signature_page", "true");
       if (sig.choice === "custom") p.set("signature_text", sig.custom);
@@ -99,6 +105,7 @@ function AuditReport({ fys, accounts }: { fys: any[]; accounts: any[] }) {
           </select>
         </Field>
         <label className="check"><input type="checkbox" checked={f.include_void} onChange={(e) => setF({ ...f, include_void: e.target.checked })} /> Include VOID transactions</label>
+        {frOn ? <label className="check" title="The Fiscal Year's fundraisers (not archived), after the transactions and before the signature page"><input type="checkbox" checked={fr} onChange={(e) => setFr(e.target.checked)} /> Include fundraisers</label> : null}
       </div>
       <SignatureOptions sig={sig} setSig={setSig} preview={sig.on && !sigErr ? previewUrl() : null} />
       {sigErr ? <div className="alert warn" role="alert">{sigErr}</div> : null}

@@ -1,7 +1,7 @@
 # What's new in 1.6 — quick guide
 
 *1.6.0: the optional Fundraiser module (core). 1.6.1: buckets, cash float, exclusions and fundraiser documents.
-Later 1.6 releases add the fundraiser report and reminders.*
+1.6.2: the fundraiser report. A later 1.6 release adds reminders.*
 
 ## Turning the module on (Administrator)
 System/About → **Optional modules** → tick **Fundraiser module**. Budget Managers, Budget Users, Register Users and
@@ -40,6 +40,13 @@ Register) and the transactions' attachments. Notices remind you, for example, to
   is unchanged in the Register.
 - **Fundraiser documents:** add flyers, permits or tally sheets under *Fundraiser documents*.
 - Lines in a closed Fiscal Year can no longer be changed.
+
+## Fundraiser report (1.6.2)
+- **Report (PDF)** on a fundraiser's page prints the whole fundraiser: figures, buckets, every transaction line,
+  excluded lines, and the documents and attachments themselves.
+- Reports → **End of Year Audit** and **Fiscal Year Close**: *Include fundraisers* (ticked by default) adds the same
+  section for every fundraiser of that Fiscal Year (not archived), after the transactions and before the signature
+  page. A fundraiser that spans two Fiscal Years appears complete in both years' reports.
 
 ## Archive or delete
 **Archive** hides a finished fundraiser from the list (tick *Show archived* to see it). **Delete** removes a
