@@ -37,11 +37,12 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from ..errors import validation
-from ..models import (Attachment, BankAccount, Budget, Entity, FiscalYear, FiscalYearReview, RegisterTransaction,
-                      TransactionAllocation, User, Workspace, utcnow)
+from ..models import (Attachment, BankAccount, Budget, Entity, FiscalYear, FiscalYearReview, Fundraiser,
+                      RegisterTransaction, TransactionAllocation, User, Workspace, utcnow)
 from ..money import fmt
 from . import bank_accounts as bank
 from . import budgets as bsvc
+from . import fundraisers as fsvc
 from .attachments import path_for
 from .common import budget_label
 from .documentation import review as documentation_review
@@ -430,7 +431,8 @@ FY_DOC_LABELS = {"APPROVAL": "Approval document", "AUDIT_SIGNOFF": "Audit Signof
 
 
 def build_audit_report(db: Session, ctx, settings, fy: FiscalYear, account_id: int | None = None,
-                       include_void: bool = True, layout: str = "audit", signature=None) -> tuple[str, str, dict]:
+                       include_void: bool = True, layout: str = "audit", signature=None,
+                       fundraisers: bool = False) -> tuple[str, str, dict]:
     """Returns (temp file path, download filename, summary). Caller deletes the file.
 
     Layout "audit" (v1.2.1 CR-002; v1.3 Q5): page 1 title page; page 2 Fiscal Year Review introduction; pages 3-n
@@ -439,6 +441,8 @@ def build_audit_report(db: Session, ctx, settings, fy: FiscalYear, account_id: i
     Layout "close" (v1.3 CR-008, Fiscal Year Close report): identical, with the Fiscal Year documents (Approval,
     Audit Signoff, other) inserted after the Fiscal Year Review and before the budgets and transactions.
     signature (v1.4.1 CR-016, audit layout): a resolved signatures.SignaturePage appended as the last page.
+    fundraisers (v1.6.2 CR-035): the Fiscal Year's fundraisers (module on, not archived, a budget in this year) after
+    the transactions and before the signature page - each complete, even when it spans a second Fiscal Year.
     """
     close_layout = layout == "close"
     report_name = "Fiscal Year Close Report" if close_layout else "End of Year Audit Report"
@@ -628,6 +632,13 @@ def build_audit_report(db: Session, ctx, settings, fy: FiscalYear, account_id: i
                 f"{x.original_filename} (removed {x.removed_at:%Y-%m-%d})" for x in removed), "small")]
         f.append(PageBreak())
 
+    frs = fsvc.for_fiscal_year_report(db, ctx.workspace_id, fy) if fundraisers else []
+    for fr in frs:  # v1.6.2 CR-035
+        if f and not isinstance(f[-1], PageBreak):
+            f.append(PageBreak())
+        f += _fundraiser_section(db, ctx, settings, doc, fr, users, this_fy=fy)
+        f.append(PageBreak())
+
     if signature is not None:
         if f and not isinstance(f[-1], PageBreak):
             f.append(PageBreak())
@@ -643,7 +654,147 @@ def build_audit_report(db: Session, ctx, settings, fy: FiscalYear, account_id: i
         os.unlink(path)
         raise
     fname = f"{fy.display_name}-{'fiscal-year-close' if close_layout else 'end-of-year-audit'}-report.pdf"
-    return path, fname, {"transactions": len(txns), "pages": pages}
+    return path, fname, {"transactions": len(txns), "pages": pages, **({"fundraisers": len(frs)} if fundraisers else {})}
+
+
+# --------------------------------------------------------------------------- v1.6.2 CR-035 fundraiser report
+_FR_STATUS = {"PLANNED": "Planned", "IN_PROGRESS": "In progress", "ENDED": "Ended", "ARCHIVED": "Archived"}
+
+
+def _fundraiser_section(db: Session, ctx, settings, doc: _AuditDoc, fr: Fundraiser, users: dict[int, str],
+                        this_fy: FiscalYear | None = None) -> list:
+    """One fundraiser: summary, buckets, transaction list, excluded lines, then the fundraiser documents and the
+    transactions' attachments rendered. The same section is used standalone and inside the Audit / Close reports
+    (this_fy = the report's Fiscal Year, marked in the per-year breakdown)."""
+    d = fsvc.detail(db, ctx, fr)
+    t = d["totals"]
+    fy_name = {y["id"]: y["display_name"] for y in d["fiscal_years"]}
+    event = d["start_date"] if d["start_date"] == d["end_date"] else f"{d['start_date']} to {d['end_date']}"
+    f: list = [_Mark(doc, f"Fundraiser: {fr.name}"), PM(f"Fundraiser — {escape(fr.name)}", "h1")]
+    meta = [("Event", event), ("Status", _FR_STATUS.get(d["status"], d["status"])),
+            ("Fiscal Years", " – ".join(fy_name.values()) or "—")]
+    if d["description"]:
+        meta.append(("Description", d["description"]))
+    for b in d["budgets"]:
+        meta.append((f"{'Income' if b['kind'] == 'INCOME' else 'Expense'} budget", f"{b['fiscal_year']['display_name']} / {b['label']}"))
+    if d["filter_text"]:
+        meta.append(("Description filter", f"{d['filter_text']} ({'regular expression' if d['filter_regex'] else 'contains, any case'})"
+                                            + (f" — {d['filtered_out_lines']} line(s) in these budgets did not match" if d["filtered_out_lines"] else "")))
+    f.append(_kv(meta, w1=1.5 * inch, style="body"))
+    warn = [n["message"] for n in d["notices"] if n["code"] in ("OTHER_BUDGET", "PARENT_BUDGET", "FILTER", "SHARED_BUDGET")]
+    for w in warn:
+        f.append(P("Note: " + w, "small"))
+    if this_fy is not None and len(d["fiscal_years"]) > 1:
+        f.append(P(f"This fundraiser spans two Fiscal Years and is shown complete; this report covers {this_fy.display_name}.", "small"))
+
+    # ---- summary
+    roi = "—" if t["roi"] is None else f"{float(t['roi']) * 100:.1f}%"
+    rows = [[PM("<b>Income</b>", "cell"), PM("<b>Expenses</b>", "cell"), PM("<b>Net</b>", "cell"),
+             PM("<b>Return on expenses (net ÷ expenses)</b>", "cell")],
+            [P(money(t["income"]), "cell"), P(money(t["expense"]), "cell"), P(money(t["net"]), "cell"), P(roi, "cell")]]
+    f += [Spacer(1, 8), PM("Summary", "h2"), _grid(rows, [1.6 * inch, 1.6 * inch, 1.6 * inch, FRAME_W - 12 - 4.8 * inch], zebra=False)]
+    notes = []
+    if t["cash_float_out"] != "0.00":
+        notes.append(f"cash float taken out {money(t['cash_float_out'])}")
+    if t["cash_float_returned"] != "0.00":
+        notes.append(f"cash float returned {money(t['cash_float_returned'])}")
+    if t["excluded_lines"]:
+        notes.append(f"{t['excluded_lines']} excluded line(s): income {money(t['excluded_income'])}, expenses {money(t['excluded_expense'])}")
+    if notes:
+        f.append(P("Not counted in the figures above: " + "; ".join(notes) + ".", "small"))
+    if len(d["per_fiscal_year"]) > 1:
+        rows = [[PM(f"<b>{h}</b>", "cell") for h in ("Fiscal Year", "Income", "Expenses", "Net")]]
+        for p in d["per_fiscal_year"]:
+            name = p["fiscal_year"]["display_name"] + (" (this report)" if this_fy is not None and p["fiscal_year"]["id"] == this_fy.id else "")
+            rows.append([P(name, "cell"), P(money(p["income"]), "cellr"), P(money(p["expense"]), "cellr"), P(money(p["net"]), "cellr")])
+        rows.append([PM("<b>Total</b>", "cell"), P(money(t["income"]), "cellr"), P(money(t["expense"]), "cellr"), P(money(t["net"]), "cellr")])
+        f += [Spacer(1, 6), PM("By Fiscal Year", "h2"), _grid(rows, [2.4 * inch, 1.4 * inch, 1.4 * inch, 1.4 * inch])]
+
+    # ---- buckets
+    names = {b["id"]: b["name"] for b in d["buckets"]["items"]}
+    if d["buckets"]["items"]:
+        rows = [[PM(f"<b>{h}</b>", "cell") for h in ("Bucket", "Income", "Expenses", "Net")]]
+        for b in d["buckets"]["items"]:
+            rows.append([P(b["name"] + (f" — {b['description']}" if b["description"] else ""), "cell"),
+                         P(money(b["income"]), "cellr"), P(money(b["expense"]), "cellr"), P(money(b["net"]), "cellr")])
+        u = d["buckets"]["unassigned"]
+        rows.append([PM("<b>Unassigned</b>", "cell"), P(money(u["income"]), "cellr"), P(money(u["expense"]), "cellr"), P(money(u["net"]), "cellr")])
+        f += [Spacer(1, 6), PM("Buckets", "h2"), _grid(rows, [2.4 * inch, 1.4 * inch, 1.4 * inch, 1.4 * inch])]
+
+    # ---- transactions
+    included = [x for x in d["lines"] if not x["excluded"]]
+    excluded = [x for x in d["lines"] if x["excluded"]]
+    f += [Spacer(1, 6), PM("Transactions", "h2")]
+    if included:
+        rows = [[PM(f"<b>{h}</b>", "cell") for h in ("Date", "FY", "#", "Type", "Entity / description", "Budget", "Amount",
+                                                     "Counted", "Buckets")]]
+        for x in included:
+            desc = " — ".join(v for v in (x["entity"], x["description"]) if v) or "—"
+            if x["classification"]:
+                c = x["classification"]
+                desc += f"\n{c['label']} {money(c['amount'])}" + (f" ({c['note']})" if c["note"] else "")
+            bk = "; ".join(f"{names.get(b['bucket_id'], '?')} {money(b['amount'])}" for b in x["buckets"])
+            rows.append([P(x["transaction_date"], "cell"), P(fy_name.get(x["fiscal_year_id"], ""), "cell"),
+                         P(str(x["transaction_id"]), "cell"), P("Income" if x["kind"] == "INCOME" else "Expense", "cell"),
+                         P(desc, "cell"), P(x["budget"], "cell"), P(money(x["amount"]), "cellr"),
+                         P(money(x["counted"]), "cellr"), P(bk, "cell")])
+        rows.append([PM("<b>Income (counted)</b>", "cell"), "", "", "", "", "", "", P(money(t["income"]), "cellr"), ""])
+        rows.append([PM("<b>Expenses (counted)</b>", "cell"), "", "", "", "", "", "", P(money(t["expense"]), "cellr"), ""])
+        n = len(rows)
+        f.append(_grid(rows, [0.72 * inch, 0.5 * inch, 0.32 * inch, 0.6 * inch, 1.7 * inch, 1.1 * inch, 0.72 * inch,
+                              0.72 * inch, FRAME_W - 12 - 6.38 * inch],
+                       extra=[("SPAN", (0, n - 2), (6, n - 2)), ("SPAN", (0, n - 1), (6, n - 1))]))
+    else:
+        f.append(P("No transactions.", "body"))
+    if excluded:
+        rows = [[PM(f"<b>{h}</b>", "cell") for h in ("Date", "#", "Type", "Entity / description", "Amount", "Reason for excluding")]]
+        for x in excluded:
+            rows.append([P(x["transaction_date"], "cell"), P(str(x["transaction_id"]), "cell"),
+                         P("Income" if x["kind"] == "INCOME" else "Expense", "cell"),
+                         P(" — ".join(v for v in (x["entity"], x["description"]) if v) or "—", "cell"),
+                         P(money(x["amount"]), "cellr"), P(x["exclusion_reason"], "cell")])
+        grid = _grid(rows, [0.72 * inch, 0.32 * inch, 0.6 * inch, 2.3 * inch, 0.8 * inch, FRAME_W - 12 - 4.74 * inch])
+        f += [Spacer(1, 6), KeepTogether([PM("Excluded lines", "h2"), grid]) if len(rows) <= 12 else PM("Excluded lines", "h2")]
+        if len(rows) > 12:
+            f.append(grid)
+
+    # ---- attachments: fundraiser documents, then the transactions' attachments
+    docs = list(db.scalars(select(Attachment).where(Attachment.fundraiser_id == fr.id, Attachment.active.is_(True))
+                           .order_by(Attachment.id)))
+    for i, a in enumerate(docs):
+        f += _attachment_flowables(doc, settings, a, f"Fundraiser document {i + 1} of {len(docs)}", users)
+    seen: set[int] = set()
+    for x in included:
+        for a in x["attachments"]:
+            if a["id"] in seen:
+                continue
+            seen.add(a["id"])
+            att = db.get(Attachment, a["id"])
+            f += _attachment_flowables(doc, settings, att, f"Transaction #{x['transaction_id']} ({x['transaction_date']}) attachment", users)
+    if not docs and not seen:
+        f += [Spacer(1, 6), P("No fundraiser documents or transaction attachments.", "small")]
+    return f
+
+
+def build_fundraiser_report(db: Session, ctx, settings, fr: Fundraiser) -> tuple[str, str, dict]:
+    """Standalone fundraiser report (the same section the Audit / Close reports include)."""
+    ws = db.get(Workspace, ctx.workspace_id)
+    users = {u.id: u.username for u in db.scalars(select(User).where(User.workspace_id == ctx.workspace_id))}
+    title = f"Fundraiser Report — {fr.name} — {ws.name}"
+    buf = io.BytesIO()
+    doc = _AuditDoc(buf, title="Fundraiser Report", author=ws.name)
+    f = _fundraiser_section(db, ctx, settings, doc, fr, users)
+    f += [Spacer(1, 10), P(f"Generated {utcnow():%Y-%m-%d %H:%M} UTC by {ctx.user.username} — {ws.name}", "small")]
+    doc.build(f)
+    fd, path = tempfile.mkstemp(prefix="fmpoc-fundraiser-", suffix=".pdf")
+    os.close(fd)
+    try:
+        pages = _stamp_and_write(buf.getvalue(), doc, path, title)
+    except Exception:
+        os.unlink(path)
+        raise
+    safe = "".join(c if c.isalnum() or c in "-_" else "-" for c in fr.name).strip("-")[:60] or "fundraiser"
+    return path, f"fundraiser-{safe}-report.pdf", {"pages": pages}
 
 
 def build_signature_page(db: Session, ctx, fy: FiscalYear, signature) -> tuple[str, str]:
