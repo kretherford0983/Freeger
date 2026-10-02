@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from .. import audit
 from ..deps import Ctx, get_db, require
-from ..schemas import FundraiserBucketIn, FundraiserIn, FundraiserLineIn, FundraiserPreviewIn, ModulesIn
+from ..schemas import ReasonIn, FundraiserBucketIn, FundraiserIn, FundraiserLineIn, FundraiserPreviewIn, ModulesIn
 from ..services import fundraisers as svc
 
 router = APIRouter(prefix="/api", tags=["fundraisers"])
@@ -144,6 +144,39 @@ def report(fid: int, request: Request, download: bool = False, db: Session = Dep
     f = svc.get(db, ctx, fid)
     path, fname, summary = report_svc.build_fundraiser_report(db, ctx, request.app.state.settings, f)
     audit.record(db, ctx, "REPORT_GENERATED", "fundraiser", f.id, None, {"report": "FUNDRAISER", **summary})
+    db.commit()
+    headers = {"Content-Disposition": f'{"attachment" if download else "inline"}; filename="{fname}"',
+               "Cache-Control": "private, no-store", "X-Frame-Options": "SAMEORIGIN",
+               "Content-Security-Policy": "default-src 'none'; frame-ancestors 'self'"}
+    return FileResponse(path, media_type="application/pdf", headers=headers,
+                        background=BackgroundTask(lambda: os.path.exists(path) and os.unlink(path)))
+
+
+# ------------------------------------------------------------------ v1.6.4 CR-037 cancel / CR-038 cash count sheet
+@router.post("/fundraisers/{fid}/cancel")
+def cancel(fid: int, body: ReasonIn, db: Session = Depends(get_db), ctx: Ctx = Depends(manager)):
+    f = svc.set_cancelled(db, ctx, svc.get(db, ctx, fid), True, body.reason)
+    db.commit()
+    return svc.detail(db, ctx, f)
+
+
+@router.post("/fundraisers/{fid}/reinstate")
+def reinstate(fid: int, db: Session = Depends(get_db), ctx: Ctx = Depends(manager)):
+    f = svc.set_cancelled(db, ctx, svc.get(db, ctx, fid), False)
+    db.commit()
+    return svc.detail(db, ctx, f)
+
+
+@router.get("/fundraisers/{fid}/count-sheet")
+def count_sheet(fid: int, signer_id: list[int] = Query([]), signer_title: list[str] = Query([]), download: bool = False,
+                db: Session = Depends(get_db), ctx: Ctx = Depends(viewer)):
+    """A blank cash count sheet (PDF) to print, fill in by hand, sign and upload under Fundraiser documents."""
+    from ..services import reports as report_svc
+    from ..services import signatures as sig
+    f = svc.get(db, ctx, fid)
+    signers = sig.resolve_signers(db, ctx, signer_id, signer_title)
+    path, fname = report_svc.build_count_sheet(db, ctx, f, signers)
+    audit.record(db, ctx, "REPORT_GENERATED", "fundraiser", f.id, None, {"report": "CASH_COUNT_SHEET", "signers": len(signers)})
     db.commit()
     headers = {"Content-Disposition": f'{"attachment" if download else "inline"}; filename="{fname}"',
                "Cache-Control": "private, no-store", "X-Frame-Options": "SAMEORIGIN",

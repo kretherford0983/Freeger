@@ -2,7 +2,20 @@
 
 Versions are `Breaking.Major.Minor` from 1.6.0 (docs/branching.md).
 
-## 1.6.3 — unreleased (in development)
+## 1.6.4 — unreleased (in development)
+Two fundraiser additions. Beta: test channel only.
+- **CR-037 Cancelled fundraisers.** A Budget Manager can **mark a fundraiser as cancelled** (a reason is required)
+  when it did not take place as planned, and **reinstate** it later. The fundraiser shows the status *Cancelled* and
+  the reason on its page, in the lists, in its report and therefore in the End of Year Audit and Fiscal Year Close
+  reports. Expenses and deposits already made stay listed and counted; buckets, documents and everything else keep
+  working. Recorded in the audit log. Database migration `0013` (three new columns).
+- **CR-038 Cash count sheet.** *Cash count sheet…* on a fundraiser's page opens a one-page PDF to print and fill in
+  by hand: date and time of the count, a grid for bills and coins, a list for checks, **Cash total / Check total /
+  Total counted** (the totals can be used on their own), notes, and signature lines with dates — for up to five
+  chosen individuals (with optional titles) or three blank lines — under a statement that the signers agree with the
+  amounts. Scan the signed sheet and add it under *Fundraiser documents*.
+
+## 1.6.3 — 2026-10-02
 Reminders and notifications. Beta: test channel only.
 - **CR-036 Reminders.** A bell in the top bar shows how many reminders are due; **Notifications** lists them (Due,
   Upcoming, Resolved), and the dashboard shows due reminders in a new *Notifications* section (at the top by default;
