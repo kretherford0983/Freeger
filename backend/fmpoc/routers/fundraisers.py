@@ -170,16 +170,20 @@ def reinstate(fid: int, db: Session = Depends(get_db), ctx: Ctx = Depends(manage
 
 @router.get("/fundraisers/{fid}/count-sheet")
 def count_sheet(fid: int, signer_id: list[int] = Query([]), signer_title: list[str] = Query([]),
-                blank_lines: int = Query(0, ge=0, le=5), download: bool = False,
+                blank_lines: int = Query(0, ge=0, le=3), extra_checks: bool = True, download: bool = False,
                 db: Session = Depends(get_db), ctx: Ctx = Depends(viewer)):
     """A blank cash count sheet (PDF) to print, fill in by hand, sign and upload under Fundraiser documents."""
     from ..services import reports as report_svc
     from ..services import signatures as sig
     f = svc.get(db, ctx, fid)
     signers = sig.resolve_signers(db, ctx, signer_id, signer_title)
+    limit = report_svc.COUNT_SHEET_MAX_BLANK_WITH_NAMED if signers else report_svc.COUNT_SHEET_MAX_BLANK
+    if blank_lines > limit:
+        raise validation(f"At most {limit} blank signature rows can be printed"
+                         f"{' next to chosen signers' if signers else ''}.", "blank_lines")
     if len(signers) + blank_lines > report_svc.COUNT_SHEET_MAX_SIGNATURES:
-        raise validation(f"At most {report_svc.COUNT_SHEET_MAX_SIGNATURES} signature blocks fit on the sheet.", "blank_lines")
-    path, fname = report_svc.build_count_sheet(db, ctx, f, signers, blank_lines)
+        raise validation(f"At most {report_svc.COUNT_SHEET_MAX_SIGNATURES} signature rows fit on the sheet.", "blank_lines")
+    path, fname = report_svc.build_count_sheet(db, ctx, f, signers, blank_lines, extra_checks)
     audit.record(db, ctx, "REPORT_GENERATED", "fundraiser", f.id, None,
                  {"report": "CASH_COUNT_SHEET", "signers": len(signers), "blank_lines": blank_lines})
     db.commit()
