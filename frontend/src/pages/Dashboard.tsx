@@ -1,8 +1,10 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import { api, money } from "../api";
-import { ErrorBox, FyStatus, Loading } from "../components";
+import { ErrorBox, FyStatus, Loading, Remaining } from "../components";
 import { Link } from "../router";
 import { useMe } from "../App";
+import { DashboardNotifications } from "./Notifications";
+const DashboardCharts = lazy(() => import("./Charts")); // v1.4.1 CR-020: chart library loaded on demand
 
 export default function Dashboard() {
   const { me } = useMe();
@@ -28,9 +30,10 @@ export default function Dashboard() {
       </div>
     );
   const fy = d.current_fiscal_year;
-  return (
-    <div>
-      <h1>{me.security_domain === "AUDITOR" ? "Auditor dashboard" : "Dashboard"}</h1>
+  // v1.5.0 CR-031: every section is a block that can be hidden and moved; the order is saved per user.
+  const sections: Record<string, ReactNode> = {
+    notifications: <DashboardNotifications />, // v1.6.3 CR-036: due reminders (nothing when there are none)
+    fiscal_year: (
       <section className="card">
         <h2>Current Fiscal Year</h2>
         {fy ? (
@@ -42,40 +45,57 @@ export default function Dashboard() {
           <p className="muted">All Fiscal Years: {d.fiscal_years.map((f: any) => f.label).join(" · ")}</p>
         ) : null}
       </section>
-      {d.budget_summary ? (
-        <div className="tiles">
-          {(["income", "expense"] as const).map((k) => (
-            <div className="tile" key={k}>
-              <div className="tile-label">{k === "income" ? "Income" : "Expense"} budget</div>
-              <div className="tile-value">{money(d.budget_summary[k].amount)}</div>
-              <div className="muted">Actual {money(d.budget_summary[k].actual)} · Remaining <span className={Number(d.budget_summary[k].remaining) < 0 ? "neg" : ""}>{money(d.budget_summary[k].remaining)}</span></div>
-            </div>
-          ))}
-        </div>
-      ) : null}
-      {d.review_summary ? (
-        <section className="card">
-          <h2>Review summary</h2>
-          <div className="tiles">
-            <Tile label="Transactions" v={d.review_summary.transaction_count} />
-            <Tile label="Voided transactions" v={d.review_summary.voided_transaction_count} />
-            <Tile label="Cross-FY allocations" v={d.review_summary.cross_fiscal_year_allocation_count} />
-            <Tile label="Pending FY reviews" v={d.review_summary.pending_fiscal_year_reviews} />
-            <Tile label="Rejected budgets with activity" v={d.review_summary.rejected_budgets_with_activity} />
+    ),
+    budget: d.budget_summary ? (
+      <div className="tiles">
+        {(["income", "expense"] as const).map((k) => (
+          <div className="tile" key={k}>
+            <div className="tile-label">{k === "income" ? "Income" : "Expense"} budget</div>
+            <div className="tile-value">{money(d.budget_summary[k].amount)}</div>
+            <div className="muted">Actual {money(d.budget_summary[k].actual)} · Remaining <Remaining x={d.budget_summary[k]} /></div>
           </div>
-        </section>
-      ) : null}
+        ))}
+      </div>
+    ) : null,
+    review: d.review_summary ? (
+      <section className="card">
+        <h2>Review summary</h2>
+        <div className="tiles">
+          <Tile label="Transactions" v={d.review_summary.transaction_count} />
+          <Tile label="Voided transactions" v={d.review_summary.voided_transaction_count} />
+          <Tile label="Cross-FY allocations" v={d.review_summary.cross_fiscal_year_allocation_count} />
+          <Tile label="Pending FY reviews" v={d.review_summary.pending_fiscal_year_reviews} />
+          <Tile label="Rejected budgets with activity" v={d.review_summary.rejected_budgets_with_activity} />
+        </div>
+      </section>
+    ) : null,
+    bank: (
       <section className="card">
         <h2>Bank account balances</h2>
-        <table className="table">
-          <thead><tr><th>Account</th><th className="num">Current balance</th></tr></thead>
-          <tbody>
-            {d.bank_accounts.map((a: any) => (
-              <tr key={a.id}><td>{a.label} {a.is_primary ? <span className="pill">Primary</span> : null}</td><td className="num">{money(a.current_balance)}</td></tr>
-            ))}
-          </tbody>
-        </table>
+        {/* v1.5.0 CR-028: same two groups as the Bank Accounts page. v1.6.5 (issue #15): one table per group with a
+            heading and space between them, then the grand total on its own - like the Bank Accounts page. */}
+        {(d.bank_account_groups || []).filter((g: any) => g.account_ids.length).map((g: any) => (
+          <div key={g.key} className="dash-bank-group" data-testid={`bank-group-${g.key}`}>
+            <h3 id={`dash-bank-${g.key}`}>{g.label}</h3>
+            <table className="table" aria-labelledby={`dash-bank-${g.key}`}>
+              <thead><tr><th>Account</th><th className="num">Current balance</th></tr></thead>
+              <tbody>
+                {d.bank_accounts.filter((a: any) => g.account_ids.includes(a.id)).map((a: any) => (
+                  <tr key={a.id}><td>{a.label} {a.is_primary ? <span className="pill">Primary</span> : null}</td><td className="num">{money(a.current_balance)}</td></tr>
+                ))}
+              </tbody>
+              <tfoot><tr className="total-row"><th scope="row">Subtotal {g.label}</th><th className={`num ${Number(g.total) < 0 ? "neg" : ""}`}>{money(g.total)}</th></tr></tfoot>
+            </table>
+          </div>
+        ))}
+        {d.bank_accounts.length ? (
+          <table className="table dash-bank-total">
+            <tbody><tr className="total-row" data-testid="bank-total"><th scope="row">Total (all accounts)</th><th className={`num ${Number(d.bank_accounts_total) < 0 ? "neg" : ""}`}>{money(d.bank_accounts_total)}</th></tr></tbody>
+          </table>
+        ) : <p className="muted">No bank accounts.</p>}
       </section>
+    ),
+    attention: (
       <section className="card">
         <h2>Attention</h2>
         <ul>
@@ -84,6 +104,100 @@ export default function Dashboard() {
           {fy ? <li>Documentation review warnings ({fy.display_name}): <b>{d.attention.documentation_warnings}</b> {d.attention.documentation_warnings ? <Link to={`/fiscal-years/${fy.id}`}>Review</Link> : null}</li> : null}
         </ul>
       </section>
+    ),
+    charts: (
+      <Suspense fallback={<section className="card"><h2>Charts</h2><p className="hint">Loading charts…</p></section>}>
+        <DashboardCharts fys={d.fiscal_years || []} currentFyId={fy ? fy.id : null} />
+      </Suspense>
+    ),
+  };
+  // Sections this user can have: the Review summary exists for Auditors only.
+  const available = SECTIONS.filter((s) => s.key !== "review" || d.review_summary).map((s) => s.key);
+  return <FinancialDashboard title={me.security_domain === "AUDITOR" ? "Auditor dashboard" : "Dashboard"} sections={sections} available={available} />;
+}
+
+const SECTIONS = [
+  { key: "notifications", title: "Notifications (due reminders)" },
+  { key: "fiscal_year", title: "Current Fiscal Year" },
+  { key: "budget", title: "Budget (income and expense)" },
+  { key: "review", title: "Review summary" },
+  { key: "bank", title: "Bank account balances" },
+  { key: "attention", title: "Attention" },
+  { key: "charts", title: "Charts" },
+];
+const titleOf = (k: string) => SECTIONS.find((s) => s.key === k)?.title ?? k;
+type Item = { key: string; visible: boolean };
+
+function FinancialDashboard({ title, sections, available }: { title: string; sections: Record<string, ReactNode>; available: string[] }) {
+  const { me, patchMe } = useMe();
+  const [layout, setLayout] = useState<Item[]>(me.dashboard_layout ?? SECTIONS.map((s) => ({ key: s.key, visible: true })));
+  const [customized, setCustomized] = useState(!!me.dashboard_layout_customized);
+  const [edit, setEdit] = useState(false);
+  const [err, setErr] = useState<unknown>(null);
+  // Saves run one after another (never in parallel), so the last change always wins on the server (as CR-020).
+  const queue = useRef<Promise<unknown>>(Promise.resolve());
+  const pending = useRef(0);
+  const [saveState, setSaveState] = useState<"saving" | "saved" | null>(null);
+  const save = (body: object, next: Item[], isCustom: boolean) => {
+    setLayout(next);
+    setCustomized(isCustom);
+    patchMe({ dashboard_layout: next, dashboard_layout_customized: isCustom });
+    pending.current += 1;
+    setSaveState("saving");
+    queue.current = queue.current
+      .then(() => api.put("/api/me/preferences", body))
+      .catch((e) => setErr(e))
+      .finally(() => {
+        pending.current -= 1;
+        if (pending.current === 0) setSaveState("saved");
+      });
+  };
+  const change = (next: Item[]) => save({ dashboard_layout: next }, next, true);
+  const items = layout.filter((i) => available.includes(i.key));
+  // Moving swaps with the neighbouring section this user can see in the list (hidden-for-role sections are skipped).
+  const move = (key: string, dir: -1 | 1) => {
+    const pos = items.findIndex((i) => i.key === key);
+    const other = items[pos + dir];
+    if (!other) return;
+    const a = layout.findIndex((i) => i.key === key);
+    const b = layout.findIndex((i) => i.key === other.key);
+    const next = [...layout];
+    [next[a], next[b]] = [next[b], next[a]];
+    change(next);
+  };
+  const toggle = (key: string, visible: boolean) => change(layout.map((i) => (i.key === key ? { ...i, visible } : i)));
+  const reset = () => save({ reset_dashboard_layout: true }, SECTIONS.map((s) => ({ key: s.key, visible: true })), false);
+  const shown = items.filter((i) => i.visible);
+
+  return (
+    <div>
+      <div className="page-head">
+        <h1>{title}</h1>
+        <div className="row">
+          {saveState ? <span className="hint" role="status">{saveState === "saving" ? "Saving your dashboard layout…" : "Dashboard layout saved"}</span> : null}
+          <button type="button" className="small" aria-expanded={edit} aria-controls="dash-customize" onClick={() => setEdit(!edit)}>{edit ? "Done" : "Customize dashboard"}</button>
+        </div>
+      </div>
+      {edit ? (
+        <fieldset className="dash-customize" id="dash-customize">
+          <legend>Sections shown and their order (saved for your account)</legend>
+          <ol>
+            {items.map((i, n) => (
+              <li key={i.key} data-testid={`layout-${i.key}`}>
+                <label className="check"><input type="checkbox" checked={i.visible} onChange={(e) => toggle(i.key, e.target.checked)} /> {titleOf(i.key)}</label>
+                <span className="move">
+                  <button type="button" className="small" aria-label={`Move ${titleOf(i.key)} up`} disabled={n === 0} onClick={() => move(i.key, -1)}>↑</button>
+                  <button type="button" className="small" aria-label={`Move ${titleOf(i.key)} down`} disabled={n === items.length - 1} onClick={() => move(i.key, 1)}>↓</button>
+                </span>
+              </li>
+            ))}
+          </ol>
+          <div className="actions left"><button type="button" className="small" disabled={!customized} onClick={reset}>Reset to default</button></div>
+        </fieldset>
+      ) : null}
+      <ErrorBox error={err} />
+      {!shown.length ? <p className="muted">All sections are hidden. Use <b>Customize dashboard</b> to show some.</p> : null}
+      {shown.map((i) => <div key={i.key} className="dash-section" data-section={i.key}>{sections[i.key]}</div>)}
     </div>
   );
 }

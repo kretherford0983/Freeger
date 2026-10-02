@@ -1,0 +1,196 @@
+#!/usr/bin/env python3
+"""Generates THIRD-PARTY-NOTICES.txt (v1.5.0): every third-party component shipped in the Fundwarden packages with its
+license text.
+
+  Python: the closure of backend/requirements.txt as installed in the running interpreter (+ colorama, which only the
+          Windows package adds), license files from each package's metadata.
+  Web UI: npm production dependencies (`npm ls --omit=dev --all`) bundled into the page, LICENSE file of each.
+  Runtime: the CPython license (bundled interpreter), plus a pointer for the runtime's own components.
+
+Usage (repo root, with backend/requirements.txt installed and `npm --prefix frontend ci` done):
+  python scripts/third_party_notices.py            # rewrite THIRD-PARTY-NOTICES.txt
+  python scripts/third_party_notices.py --check    # CI: fail when the inventory differs from the committed file
+"""
+from __future__ import annotations
+
+import importlib.metadata as md
+import json
+import re
+import subprocess
+import sys
+import sysconfig
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+OUT = ROOT / "THIRD-PARTY-NOTICES.txt"
+EXTRA_PY = {"colorama": ("0.4.6", "BSD-3-Clause", "https://github.com/tartley/colorama",
+                         "Windows package only. Copyright (c) 2010 Jonathan Hartley. All rights reserved. "
+                         "Redistribution and use in source and binary forms, with or without modification, are "
+                         "permitted under the BSD 3-Clause License (https://opensource.org/license/bsd-3-clause).")}
+LICENSE_NAMES = re.compile(r"(^|/)(licen[cs]e|copying|notice|authors)[^/]*$", re.I)
+SEP = "=" * 100
+
+
+def _norm(name: str) -> str:
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def python_components() -> list[dict]:
+    pins = {}
+    for line in (ROOT / "backend" / "requirements.txt").read_text().splitlines():
+        m = re.match(r"^([A-Za-z0-9_.-]+)==", line.strip())
+        if m:
+            pins[_norm(m.group(1))] = True
+    todo, seen = list(pins), {}
+    while todo:
+        name = todo.pop()
+        if name in seen:
+            continue
+        try:
+            dist = md.distribution(name)
+        except md.PackageNotFoundError:
+            raise SystemExit(f"{name} is not installed - install backend/requirements.txt first")
+        seen[name] = dist
+        for req in dist.requires or []:
+            if "extra ==" in req:
+                continue
+            marker = req.split(";", 1)[1] if ";" in req else ""
+            if "sys_platform" in marker or "platform_system" in marker or "os_name" in marker:
+                continue  # platform-only extras (colorama is listed separately)
+            if "python_version" in marker and not _marker_ok(marker):
+                continue
+            todo.append(_norm(re.split(r"[ ;<>=!~\[(]", req, maxsplit=1)[0]))
+    out = []
+    for name, dist in sorted(seen.items()):
+        meta = dist.metadata
+        lic = meta.get("License-Expression") or _classifier_license(meta) or (meta.get("License") or "").split("\n")[0]
+        texts = []
+        for f in dist.files or []:
+            if LICENSE_NAMES.search(str(f)) and ".dist-info/" in str(f) or str(f).endswith("bitstream-vera-license.txt"):
+                p = Path(dist.locate_file(f))
+                if p.is_file():
+                    texts.append((str(f).split("/")[-1], p.read_text(errors="replace").strip()))
+        out.append({"name": meta["Name"], "version": dist.version, "license": lic.strip() or "see text",
+                    "url": _home(meta), "texts": texts})
+    for name, (ver, lic, url, text) in EXTRA_PY.items():
+        out.append({"name": name, "version": ver, "license": lic, "url": url, "texts": [("LICENSE", text)]})
+    return sorted(out, key=lambda c: c["name"].lower())
+
+
+def _marker_ok(marker: str) -> bool:
+    try:
+        from packaging.markers import Marker
+        return Marker(marker).evaluate({"python_version": "3.12", "python_full_version": "3.12.12"})
+    except Exception:
+        return True
+
+
+def _classifier_license(meta) -> str:
+    c = [x.split("::")[-1].strip() for x in meta.get_all("Classifier") or [] if x.startswith("License ::")]
+    return ", ".join(c)
+
+
+def _home(meta) -> str:
+    for u in meta.get_all("Project-URL") or []:
+        label, _, url = u.partition(",")
+        if label.strip().lower() in ("homepage", "home", "source", "source code", "repository", "github"):
+            return url.strip()
+    return meta.get("Home-page") or ""
+
+
+def npm_components() -> list[dict]:
+    fe = ROOT / "frontend"
+    raw = subprocess.run(["npm", "ls", "--omit=dev", "--all", "--json", "--long"], cwd=fe, capture_output=True,
+                         text=True, check=False).stdout
+    tree = json.loads(raw)
+    found: dict[str, dict] = {}
+
+    def walk(deps):
+        for name, d in (deps or {}).items():
+            key = f"{name}@{d.get('version')}"
+            if key not in found and d.get("path"):
+                p = Path(d["path"])
+                pj = json.loads((p / "package.json").read_text())
+                lic = pj.get("license") or (pj.get("licenses") or [{}])[0].get("type", "")
+                texts = [(f.name, f.read_text(errors="replace").strip()) for f in sorted(p.iterdir())
+                         if f.is_file() and LICENSE_NAMES.search(f.name)]
+                repo = pj.get("repository")
+                url = pj.get("homepage") or (repo.get("url") if isinstance(repo, dict) else repo) or ""
+                found[key] = {"name": name, "version": d.get("version"), "license": lic, "url": url, "texts": texts}
+            walk(d.get("dependencies"))
+
+    walk(tree.get("dependencies"))
+    return sorted(found.values(), key=lambda c: (c["name"].lower(), c["version"]))
+
+
+def runtime_component() -> dict:
+    lic = Path(sysconfig.get_paths()["stdlib"]) / "LICENSE.txt"
+    text = lic.read_text(errors="replace").strip() if lic.is_file() else \
+        "PSF License Agreement for Python - https://docs.python.org/3/license.html"
+    return {"name": "CPython (Python runtime)", "version": "3.12", "license": "PSF-2.0",
+            "url": "https://www.python.org/", "texts": [("LICENSE.txt", text)]}
+
+
+def inventory(groups) -> list[str]:
+    lines = []
+    for title, comps in groups:
+        lines.append(f"{title}:")
+        lines += [f"  {c['name']} {c['version']} - {c['license']}" for c in comps]
+    return lines
+
+
+def render(groups) -> str:
+    out = [
+        "Fundwarden - third-party notices",
+        "",
+        "Fundwarden is licensed under the GNU Affero General Public License v3.0 (see LICENSE).",
+        "The packages also contain the third-party components listed below, each under its own license.",
+        "Generated by scripts/third_party_notices.py - do not edit by hand.",
+        "",
+        "The Linux/Windows packages bundle a relocatable Python build from python-build-standalone",
+        "(https://github.com/astral-sh/python-build-standalone). Besides CPython it contains components such as",
+        "OpenSSL (Apache-2.0), SQLite (public domain), libffi (MIT), zlib (zlib), bzip2, xz/liblzma, mpdecimal",
+        "and Tcl/Tk; their licenses are documented at",
+        "https://gregoryszorc.com/docs/python-build-standalone/main/running.html#licensing",
+        "The google-re2 package contains the RE2 library (BSD-3-Clause, below) built with Abseil",
+        "(https://github.com/abseil/abseil-cpp, Apache-2.0).",
+        "",
+        "INVENTORY",
+    ] + inventory(groups) + [""]
+    for title, comps in groups:
+        out += [SEP, title.upper(), SEP, ""]
+        for c in comps:
+            out += [f"{c['name']} {c['version']}", f"License: {c['license']}"]
+            if c["url"]:
+                out.append(f"Source: {c['url']}")
+            out.append("")
+            if not c["texts"]:
+                out += ["(no license file in the distribution; see the license named above)", ""]
+            for fname, text in c["texts"]:
+                out += [f"--- {fname} ---", text, ""]
+            out.append("-" * 100)
+            out.append("")
+    return "\n".join(out).rstrip() + "\n"
+
+
+def main() -> int:
+    groups = [("Python runtime", [runtime_component()]), ("Python packages (server)", python_components()),
+              ("JavaScript packages (web interface)", npm_components())]
+    if "--check" in sys.argv:
+        committed = OUT.read_text() if OUT.exists() else ""
+        want = inventory(groups)
+        have = committed.split("INVENTORY\n", 1)[1].split("\n\n", 1)[0].splitlines() if "INVENTORY\n" in committed else []
+        if have != want:
+            print("THIRD-PARTY-NOTICES.txt is out of date - run: python scripts/third_party_notices.py", file=sys.stderr)
+            for line in sorted(set(want) ^ set(have)):
+                print(("  missing: " if line in want else "  stale:   ") + line, file=sys.stderr)
+            return 1
+        print(f"THIRD-PARTY-NOTICES.txt up to date ({sum(len(c) for _, c in groups)} components)")
+        return 0
+    OUT.write_text(render(groups))
+    print(f"wrote {OUT.relative_to(ROOT)} ({sum(len(c) for _, c in groups)} components)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

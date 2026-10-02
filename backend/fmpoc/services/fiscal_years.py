@@ -21,7 +21,9 @@ def snapshot(fy: FiscalYear) -> dict:
             "start_date": fy.start_date, "end_date": fy.end_date, "status": fy.status,
             "approved_at": fy.approved_at, "approved_by_user_id": fy.approved_by_user_id,
             "closed_at": fy.closed_at, "closed_by_user_id": fy.closed_by_user_id,
-            "exception_confirmed": fy.exception_confirmed}
+            "exception_confirmed": fy.exception_confirmed,
+            "approval_no_attachment": bool(fy.approval_no_attachment),
+            "approval_no_attachment_reason": fy.approval_no_attachment_reason}
 
 
 def out(fy: FiscalYear) -> dict:
@@ -155,13 +157,48 @@ def update(db: Session, ctx, fy: FiscalYear, data) -> FiscalYear:
     return fy
 
 
+def fy_document_counts(db: Session, fy: FiscalYear) -> dict[str, int]:
+    rows = db.execute(select(Attachment.document_type, func.count(Attachment.id))
+                      .where(Attachment.fiscal_year_id == fy.id, Attachment.active.is_(True))
+                      .group_by(Attachment.document_type)).all()
+    return {k or "UNSPECIFIED": n for k, n in rows}
+
+
+def set_approval_no_attachment(db: Session, ctx, fy: FiscalYear, flag: bool, reason: str | None) -> FiscalYear:
+    """v1.3 CR-007: record that the organization produces no budget-approval document."""
+    if fy.status == "CLOSED":
+        raise conflict("FISCAL_YEAR_CLOSED", "Closed Fiscal Year documentation cannot be changed.")
+    if flag and fy_document_counts(db, fy).get("APPROVAL"):
+        raise conflict("APPROVAL_DOCUMENT_PRESENT", "An approval document is already attached.")
+    before = snapshot(fy)
+    fy.approval_no_attachment = bool(flag)
+    fy.approval_no_attachment_reason = reason if flag else None
+    fy.approval_no_attachment_set_at = utcnow() if flag else None
+    fy.approval_no_attachment_set_by_user_id = ctx.user.id if flag else None
+    db.flush()
+    audit.record(db, ctx, "FY_APPROVAL_NO_ATTACHMENT_SET" if flag else "FY_APPROVAL_NO_ATTACHMENT_CLEARED",
+                 "fiscal_year", fy.id, before, snapshot(fy))
+    return fy
+
+
 def approve(db: Session, ctx, fy: FiscalYear, confirm: bool) -> FiscalYear:
-    """BR-011: irreversible; validates structures and locks all active budgets."""
+    """BR-011: irreversible; validates structures and locks all active budgets.
+    v1.3 CR-007: requires an Approval document, or the "no approval document" mark."""
     if fy.status != "DRAFT":
         raise conflict("INVALID_STATE", f"{fy.display_name} is already {fy.status.lower()}.")
+    has_doc = bool(fy_document_counts(db, fy).get("APPROVAL"))
+    if not has_doc and not fy.approval_no_attachment:
+        raise conflict("APPROVAL_DOCUMENT_REQUIRED",
+                       "Attach the budget approval document (e.g. signed approval or meeting minutes), or mark that "
+                       "the organization produces no approval document, before approving the Fiscal Year.")
     if not confirm:
+        warnings = [{"code": "IRREVERSIBLE", "message": "Approval cannot be reversed.", "details": {}}]
+        if not has_doc:
+            warnings.append({"code": "APPROVAL_NO_ATTACHMENT", "details": {},
+                             "message": "No approval document is attached: the Fiscal Year is marked as having no "
+                                        "approval document. This will be listed as a warning in the Fiscal Year review."})
         raise AppError(409, "CONFIRMATION_REQUIRED", "Approval is irreversible and requires confirmation.",
-                       warnings=[{"code": "IRREVERSIBLE", "message": "Approval cannot be reversed.", "details": {}}])
+                       warnings=warnings)
     before = snapshot(fy)
     locked_ids = []
     for p in db.scalars(select(Budget).where(Budget.fiscal_year_id == fy.id, Budget.parent_budget_id.is_(None))):
@@ -237,18 +274,29 @@ def closure_check(db: Session, fy: FiscalYear) -> dict:
     if invalid:
         blockers.append({"code": "INVALID_ALLOCATIONS", "message": f"{len(invalid)} invalid/incomplete allocation(s).",
                          "ids": invalid})
-    n_att = db.scalar(select(func.count(Attachment.id)).where(Attachment.fiscal_year_id == fy.id,
-                                                              Attachment.active.is_(True))) or 0
-    if n_att < 1:
-        blockers.append({"code": "NO_ATTACHMENT", "message": "At least one Fiscal Year supporting attachment is required."})
+    docs = fy_document_counts(db, fy)  # v1.3 CR-007
+    if not docs.get("AUDIT_SIGNOFF"):
+        blockers.append({"code": "NO_AUDIT_SIGNOFF",
+                         "message": "An Audit Signoff document is required to close the Fiscal Year."})
+    approval_warning = None
+    if not docs.get("APPROVAL"):
+        if fy.approval_no_attachment:
+            approval_warning = {"code": "APPROVAL_NO_ATTACHMENT", "message": "No budget approval document: the Fiscal "
+                                "Year is marked as having no approval document" + (f" ({fy.approval_no_attachment_reason})."
+                                                                                   if fy.approval_no_attachment_reason else ".")}
+        else:
+            blockers.append({"code": "APPROVAL_DOCUMENT_MISSING",
+                             "message": "The budget approval document is missing. Attach it (or mark that the "
+                                        "organization produces none) before closing."})
     # ---- warnings (non-blocking)
     totals = active_allocation_totals(db, [b.id for b in budgets])
     rejected_activity = [b.id for b in budgets if b.status == "REJECTED" and totals.get(b.id, 0)]
     if rejected_activity:
         warnings.append({"code": "REJECTED_BUDGET_ACTIVITY", "message": f"{len(rejected_activity)} rejected budget(s) have activity.",
                          "budget_ids": rejected_activity})
+    # v1.4 CR-019: only expense budgets can be "over budget"; income above budget is not a warning.
     over = [b.id for b in budgets if not b.is_budget_zero and b.parent_budget_id is not None
-            and totals.get(b.id, 0) > b.amount_cents]
+            and b.budget_type != "INCOME" and totals.get(b.id, 0) > b.amount_cents]
     if over:
         warnings.append({"code": "OVER_BUDGET", "message": f"{len(over)} budget(s) are over budget.", "budget_ids": over})
     reviewed = db.scalar(
@@ -266,6 +314,12 @@ def closure_check(db: Session, fy: FiscalYear) -> dict:
     if voided_ids:
         warnings.append({"code": "VOIDED_TRANSACTIONS", "message": f"{len(voided_ids)} voided transaction(s).",
                          "transaction_ids": voided_ids})
+    if approval_warning:
+        warnings.append(approval_warning)
+    from .checks import closure_warning as check_warning  # v1.3 CR-012: warning only
+    cw = check_warning(db, fy)
+    if cw:
+        warnings.append(cw)
     # v1.2 documentation review: warnings only, never blockers (CR-005)
     from .documentation import closure_warnings as doc_warnings
     warnings.extend(doc_warnings(db, fy))

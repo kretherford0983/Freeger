@@ -13,8 +13,10 @@ from starlette.background import BackgroundTask
 
 from .. import audit
 from ..deps import Ctx, get_db, require
-from ..models import FiscalYear
+from ..models import FiscalYear, Workspace
+from ..schemas import SignatureTemplateIn
 from ..services import reports as svc
+from ..services import signatures as sig
 from ..services.common import get_scoped
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
@@ -25,15 +27,82 @@ def _disposition(kind: str, name: str) -> str:
     return f"{kind}; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(name)}"
 
 
+@router.get("/signature-templates")
+def signature_templates(db: Session = Depends(get_db), ctx: Ctx = Depends(require("financial.view"))):
+    """v1.4.1 CR-016: built-in default wording + the organization's saved wordings (max 4)."""
+    return sig.list_templates(db, ctx.workspace_id)
+
+
+@router.post("/signature-templates", status_code=201)
+def save_signature_template(body: SignatureTemplateIn, db: Session = Depends(get_db),
+                            ctx: Ctx = Depends(require("financial.view"))):
+    return sig.save_template(db, ctx, body.text)
+
+
+@router.delete("/signature-templates/{template_id}")
+def delete_signature_template(template_id: int, db: Session = Depends(get_db),
+                              ctx: Ctx = Depends(require("financial.view"))):
+    sig.delete_template(db, ctx, template_id)
+    return {"ok": True}
+
+
+@router.get("/audit/signature-page")
+def signature_page_preview(request: Request, fiscal_year_id: int = Query(...),
+                           signature_template_id: str | None = Query(None, max_length=20),
+                           signature_text: str | None = Query(None, max_length=sig.MAX_TEXT + 500),
+                           signer_id: list[int] = Query([]), signer_title: list[str] = Query([]),
+                           db: Session = Depends(get_db), ctx: Ctx = Depends(require("financial.view"))):
+    """v1.5.0 CR-029: preview/print the signature page without generating the whole audit report."""
+    fy = get_scoped(db, FiscalYear, fiscal_year_id, ctx, "Fiscal Year")
+    signature = sig.resolve(db, ctx, fy, db.get(Workspace, ctx.workspace_id), signature_template_id, signature_text,
+                            signer_id, signer_title)
+    path, fname = svc.build_signature_page(db, ctx, fy, signature)
+    audit.record(db, ctx, "REPORT_GENERATED", "fiscal_year", fy.id, None,
+                 {"report": "SIGNATURE_PAGE", "wording": signature.source, "signers": len(signature.signers)})
+    db.commit()
+    headers = {"Content-Disposition": _disposition("inline", fname), "Cache-Control": "private, no-store",
+               "X-Frame-Options": "SAMEORIGIN", "Content-Security-Policy": "default-src 'none'; frame-ancestors 'self'"}
+    return FileResponse(path, media_type="application/pdf", headers=headers,
+                        background=BackgroundTask(lambda: os.path.exists(path) and os.unlink(path)))
+
+
 @router.get("/audit")
 def audit_report(request: Request, fiscal_year_id: int = Query(...), bank_account_id: int | None = None,
                  include_void: bool = True, download: bool = False,
+                 signature_page: bool = False, signature_template_id: str | None = Query(None, max_length=20),
+                 signature_text: str | None = Query(None, max_length=sig.MAX_TEXT + 500),
+                 signer_id: list[int] = Query([]), signer_title: list[str] = Query([]),
+                 include_fundraisers: bool = False,
                  db: Session = Depends(get_db), ctx: Ctx = Depends(require("financial.view"))):
     fy = get_scoped(db, FiscalYear, fiscal_year_id, ctx, "Fiscal Year")
-    path, fname, summary = svc.build_audit_report(db, ctx, request.app.state.settings, fy, bank_account_id, include_void)
+    signature = None
+    if signature_page:  # v1.4.1 CR-016
+        signature = sig.resolve(db, ctx, fy, db.get(Workspace, ctx.workspace_id), signature_template_id,
+                                signature_text, signer_id, signer_title)
+    path, fname, summary = svc.build_audit_report(db, ctx, request.app.state.settings, fy, bank_account_id, include_void,
+                                                  signature=signature, fundraisers=include_fundraisers)
+    extra = ({"signature_page": {"wording": signature.source, "signers": len(signature.signers)}}
+             if signature else {})
     audit.record(db, ctx, "REPORT_GENERATED", "fiscal_year", fy.id, None,
                  {"report": "END_OF_YEAR_AUDIT", "bank_account_id": bank_account_id, "include_void": include_void,
-                  **summary})
+                  **summary, **extra})
+    db.commit()
+    headers = {"Content-Disposition": _disposition("attachment" if download else "inline", fname),
+               "Cache-Control": "private, no-store", "X-Frame-Options": "SAMEORIGIN",
+               "Content-Security-Policy": "default-src 'none'; frame-ancestors 'self'"}
+    return FileResponse(path, media_type="application/pdf", headers=headers,
+                        background=BackgroundTask(lambda: os.path.exists(path) and os.unlink(path)))
+
+
+@router.get("/fy-close")
+def close_report(request: Request, fiscal_year_id: int = Query(...), download: bool = False,
+                 include_fundraisers: bool = True,
+                 db: Session = Depends(get_db), ctx: Ctx = Depends(require("financial.view"))):
+    """v1.3 CR-008: Fiscal Year Close report (all accounts, VOID included, Fiscal Year documents up front)."""
+    fy = get_scoped(db, FiscalYear, fiscal_year_id, ctx, "Fiscal Year")
+    path, fname, summary = svc.build_audit_report(db, ctx, request.app.state.settings, fy, None, True, layout="close",
+                                                  fundraisers=include_fundraisers)
+    audit.record(db, ctx, "REPORT_GENERATED", "fiscal_year", fy.id, None, {"report": "FISCAL_YEAR_CLOSE", **summary})
     db.commit()
     headers = {"Content-Disposition": _disposition("attachment" if download else "inline", fname),
                "Cache-Control": "private, no-store", "X-Frame-Options": "SAMEORIGIN",

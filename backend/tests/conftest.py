@@ -148,6 +148,20 @@ class Env:
         assert r.status_code == expect, r.text
         return r.json()
 
+    def fy_doc(self, fy_id, document_type="UNSPECIFIED", name="doc.pdf"):
+        """v1.3 CR-007: upload a typed Fiscal Year document as the Budget Manager."""
+        r = self.bm.c.post(f"/api/attachments?owner_type=fiscal_year&owner_id={fy_id}&document_type={document_type}",
+                           files={"file": (name, PDF_BYTES, "application/pdf")}, headers={"X-CSRF-Token": self.bm.csrf})
+        assert r.status_code == 201, r.text
+        return r.json()
+
+    def approve(self, fy_id):
+        """v1.3 CR-007: approval requires an Approval document."""
+        self.fy_doc(fy_id, "APPROVAL", "approval.pdf")
+        r = self.bm.post(f"/api/fiscal-years/{fy_id}/approve", {"confirm_irreversible": True})
+        assert r.status_code == 200, r.text
+        return r.json()
+
     def selectable(self, fy_id, ttype):
         return self.ru.get(f"/api/budgets/selectable?fiscal_year_id={fy_id}&transaction_type={ttype}").json()
 

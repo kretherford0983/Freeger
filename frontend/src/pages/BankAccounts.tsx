@@ -1,10 +1,11 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, money, todayIso } from "../api";
-import { ErrorBox, Field, Loading, Modal } from "../components";
+import { ErrorBox, Field, Loading, Modal, GuardedForm } from "../components";
 import { useMe } from "../App";
 import { EntityForm } from "./Entities";
 
 const TYPES = ["CHECKING", "SAVINGS", "MONEY_MARKET", "CERTIFICATE_OF_DEPOSIT", "INVESTMENT", "CASH", "OTHER"];
+const GROUPS: [string, string][] = [["CHECKING_SAVINGS", "Checking & Savings"], ["INVESTMENTS_OTHER", "Investments and Other"]];
 const REG_DEFAULT: Record<string, boolean> = { CHECKING: true, SAVINGS: true, INVESTMENT: false };
 
 export default function BankAccounts() {
@@ -24,19 +25,7 @@ export default function BankAccounts() {
     } catch (e) { setErr(e); }
   };
   const primary = async (a: any) => { try { await api.post(`/api/bank-accounts/${a.id}/set-primary`); load(); } catch (e) { setErr(e); } };
-  if (!list) return <><ErrorBox error={err} /><Loading /></>;
-  return (
-    <div>
-      <div className="page-head">
-        <h1>Bank Accounts</h1>
-        {manage ? <button className="primary" onClick={() => setModal({ kind: "edit", account: null })}>New bank account</button> : null}
-      </div>
-      <ErrorBox error={err} />
-      <table className="table">
-        <thead><tr><th>Account</th><th>Account #</th><th>Financial Institution</th><th>Type</th><th>Register</th><th>Primary</th><th className="num">Current balance</th><th>Status</th>{manage ? <th /> : null}</tr></thead>
-        <tbody>
-          {list.length === 0 ? <tr><td colSpan={9} className="muted">No bank accounts.</td></tr> : null}
-          {list.map((a) => (
+  const renderRow = (a: any) => (
             <tr key={a.id} className={a.status === "CLOSED" ? "inactive" : ""}>
               <td>{a.account_name}</td>
               <td><code>{revealed[a.id] || a.account_number_masked}</code>{can("bank_account.reveal") ? <button className="small" onClick={() => reveal(a)}>{revealed[a.id] ? "Hide" : "Reveal"}</button> : null}</td>
@@ -56,9 +45,36 @@ export default function BankAccounts() {
                 </td>
               ) : null}
             </tr>
-          ))}
-        </tbody>
-      </table>
+  );
+  if (!list) return <><ErrorBox error={err} /><Loading /></>;
+  return (
+    <div>
+      <div className="page-head">
+        <h1>Bank Accounts</h1>
+        {manage ? <button className="primary" onClick={() => setModal({ kind: "edit", account: null })}>New bank account</button> : null}
+      </div>
+      <ErrorBox error={err} />
+      {/* v1.5.0 CR-028: one table per group, each with a total of its active accounts */}
+      {GROUPS.map(([key, label]) => {
+        const rows = list.filter((a) => a.group === key);
+        const total = rows.filter((a) => a.status === "ACTIVE").reduce((t, a) => t + Math.round(Number(a.current_balance) * 100), 0);
+        return (
+          <section key={key} className="account-group" aria-labelledby={`grp-${key}`}>
+            <h2 id={`grp-${key}`}>{label}</h2>
+            <table className="table" data-testid={`accounts-${key}`}>
+              <thead><tr><th>Account</th><th>Account #</th><th>Financial Institution</th><th>Type</th><th>Register</th><th>Primary</th><th className="num">Current balance</th><th>Status</th>{manage ? <th /> : null}</tr></thead>
+              <tbody>
+                {rows.length === 0 ? <tr><td colSpan={manage ? 9 : 8} className="muted">No accounts in this group.</td></tr> : null}
+                {rows.map(renderRow)}
+              </tbody>
+              {rows.length ? (
+                <tfoot><tr className="total-row"><th colSpan={6} scope="row">Total {label}{rows.some((a) => a.status !== "ACTIVE") ? " (active accounts)" : ""}</th>
+                  <th className={`num ${total < 0 ? "neg" : ""}`}>{money((total / 100).toFixed(2))}</th><th colSpan={manage ? 2 : 1} /></tr></tfoot>
+              ) : null}
+            </table>
+          </section>
+        );
+      })}
       {modal?.kind === "edit" ? <AccountForm account={modal.account} onClose={() => setModal(null)} onSaved={() => { setModal(null); load(); }} /> : null}
       {modal?.kind === "balance" ? <BalanceForm account={modal.account} onClose={() => setModal(null)} onSaved={() => { setModal(null); load(); }} /> : null}
       {modal?.kind === "close" ? <CloseForm account={modal.account} onClose={() => setModal(null)} onSaved={() => { setModal(null); load(); }} /> : null}
@@ -101,7 +117,7 @@ function AccountForm({ account, onClose, onSaved }: any) {
   };
   return (
     <Modal title={isNew ? "New bank account" : `Edit ${account.account_name}`} onClose={onClose} wide>
-      <form onSubmit={submit}>
+      <GuardedForm onSubmit={submit}>
         <ErrorBox error={err} />
         <Field label="Account name"><input required value={f.account_name} onChange={set("account_name")} /></Field>
         <Field label="Financial Institution" hint="Only Entities flagged as Financial Institutions are listed.">
@@ -131,7 +147,7 @@ function AccountForm({ account, onClose, onSaved }: any) {
         ) : isNew ? <Field label="Current balance (manually maintained)"><input value={f.current_balance} onChange={set("current_balance")} /></Field> : null}
         <Field label="Notes"><textarea value={f.notes} onChange={set("notes")} /></Field>
         <div className="actions"><button type="button" onClick={onClose}>Cancel</button><button className="primary" type="submit">Save</button></div>
-      </form>
+      </GuardedForm>
       {newFi ? <EntityForm entity={{ entity_type: "ORGANIZATION" }} forceFi onClose={() => setNewFi(false)} onSaved={(e) => { setNewFi(false); loadFis().then(() => setF({ ...f, financial_institution_entity_id: e.id })); }} /> : null}
     </Modal>
   );
@@ -147,13 +163,13 @@ function BalanceForm({ account, onClose, onSaved }: any) {
   };
   return (
     <Modal title={`Update balance: ${account.account_name}`} onClose={onClose}>
-      <form onSubmit={submit}>
+      <GuardedForm onSubmit={submit}>
         <ErrorBox error={err} />
         <Field label="Current balance"><input required value={v} onChange={(e) => setV(e.target.value)} /></Field>
         <Field label="Reason"><input value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
         <p className="hint">Manual balance updates are audited.</p>
         <div className="actions"><button type="button" onClick={onClose}>Cancel</button><button className="primary" type="submit">Save</button></div>
-      </form>
+      </GuardedForm>
     </Modal>
   );
 }
@@ -167,13 +183,13 @@ function CloseForm({ account, onClose, onSaved }: any) {
   };
   return (
     <Modal title={`Close ${account.account_name}`} onClose={onClose}>
-      <form onSubmit={submit}>
+      <GuardedForm onSubmit={submit}>
         <ErrorBox error={err} />
         <p>Current balance: <b>{money(account.current_balance)}</b> · Uncleared transactions: <b>{account.uncleared_count}</b></p>
         <p className="hint">An account can be closed only with no uncleared transactions and a balance of exactly $0.00{account.register_enabled ? ", reached through register activity" : ", set through an audited balance update"}.</p>
         <Field label="Reason (required)"><input required value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
         <div className="actions"><button type="button" onClick={onClose}>Cancel</button><button className="primary danger" type="submit">Close account</button></div>
-      </form>
+      </GuardedForm>
     </Modal>
   );
 }

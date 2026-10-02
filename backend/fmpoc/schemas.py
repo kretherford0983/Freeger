@@ -77,8 +77,20 @@ class ChangePasswordIn(In):
     new_password_confirmation: Annotated[str, StringConstraints(max_length=256)]
 
 
+class DashboardSectionIn(In):
+    key: Literal["notifications", "fiscal_year", "budget", "review", "bank", "attention", "charts"]
+    visible: bool
+
+
 class PreferencesIn(In):
-    theme: Literal["light", "dark"]
+    theme: Literal["light", "dark"] | None = None
+    nav_collapsed: bool | None = None  # v1.3 CR-014
+    # v1.4.1 CR-020: which dashboard charts to show, in order (empty list = none)
+    dashboard_charts: list[Literal["income_pie", "monthly", "expense_vs_budget", "balances", "expense_pie",
+                                   "cumulative_net"]] | None = Field(None, max_length=6)
+    # v1.5.0 CR-031: dashboard sections in display order with visibility; reset_dashboard_layout -> default
+    dashboard_layout: list[DashboardSectionIn] | None = Field(None, max_length=7)
+    reset_dashboard_layout: bool | None = None
 
 
 Domain = Literal["ADMINISTRATOR", "FINANCIAL", "AUDITOR"]
@@ -142,6 +154,17 @@ class FiscalYearUpdateIn(In):
 
 class FiscalYearApproveIn(In):
     confirm_irreversible: bool
+
+
+class AttachmentTypeIn(In):
+    """v1.3 CR-007: Fiscal Year document type."""
+    document_type: Literal["APPROVAL", "AUDIT_SIGNOFF", "UNSPECIFIED"]
+
+
+class ApprovalNoAttachmentIn(In):
+    """v1.3 CR-007: the organization produces no approval document (strong warning in the UI)."""
+    no_attachment: bool
+    reason: OptStr(500) = None
 
 
 class FiscalYearCloseIn(In):
@@ -260,6 +283,10 @@ class AllocationIn(In):
     no_attachment_reason: OptStr(500) = None
 
 
+RequestKeyStr = Annotated[str | None, StringConstraints(pattern=r"^[A-Za-z0-9-]{16,64}$")]
+CheckNumberStr = Annotated[str | None, StringConstraints(strip_whitespace=True, max_length=20, pattern=r"^[A-Za-z0-9-]*$")]
+
+
 class TransactionCreateIn(In):
     bank_account_id: int
     transaction_type: Literal["DEPOSIT", "WITHDRAWAL"]
@@ -275,6 +302,7 @@ class TransactionCreateIn(In):
     fiscal_year_id: int | None = None  # only for zero-dollar VOID accountability records
     no_attachment: bool = False
     no_attachment_reason: OptStr(500) = None
+    request_key: RequestKeyStr = None  # v1.3 CR-011: one-time key per opened form (repeat submit = same result)
     confirmations: Confirmations = []
 
 
@@ -302,6 +330,7 @@ class TransferIn(In):
     entity_id: int | None = None  # v1.2.1: recorded on both legs; used in the generated description
     notes: OptStr(4000) = None
     fiscal_year_id: int | None = None
+    request_key: RequestKeyStr = None
 
 
 class VoidIn(In):
@@ -316,9 +345,124 @@ class VoidDateIn(In):
     reason: OptStr(500) = None
 
 
+class VoidCheckNumberIn(In):
+    """v1.3 CR-011: correct (clear or change) the check number of a VOID record; the reason is required."""
+    check_number: CheckNumberStr = None
+    reason: Str(500)
+
+
+class CheckAckIn(In):
+    """v1.3 CR-012: confirm that check number(s) are not missing."""
+    bank_account_id: int
+    first_number: Annotated[int, Field(ge=0, le=10**12)]
+    last_number: Annotated[int, Field(ge=0, le=10**12)]
+    note: Str(1000)
+
+
 class NoteIn(In):
     note: Str(4000)
 
 
 class ReviewResolveIn(In):
     note: OptStr(1000) = None
+
+
+class SignatureTemplateIn(In):
+    """v1.4.1 CR-016: wording saved for the audit review signature page."""
+    text: str = Field(min_length=1, max_length=4000)
+
+
+class MfaCodeIn(In):
+    """v1.4.1 CR-018: a 6-digit TOTP code or a recovery code (XXXX-XXXX-XXXX)."""
+    code: str = Field(min_length=1, max_length=40)
+
+
+class MfaVerifyIn(MfaCodeIn):
+    trust_browser: bool = False
+
+
+class MfaEnrollStartIn(In):
+    current_code: str | None = Field(None, max_length=40)  # required when changing an existing authenticator
+
+
+class MfaResetIn(In):
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class BackupCreateIn(In):
+    """v1.4.1 CR-023."""
+    password: str = Field(min_length=1, max_length=200)
+    passphrase: str = Field(min_length=1, max_length=500)
+    passphrase_confirmation: str = Field(min_length=1, max_length=500)
+
+
+class RestoreUploadIn(In):
+    """v1.4.1 CR-024/025: announces the size of the backup file to be uploaded in parts."""
+    size: int = Field(gt=0, le=1024 ** 4)
+    filename: str = Field("backup.fmbak", max_length=255)
+
+
+class RestoreStartIn(In):
+    passphrase: str = Field(min_length=1, max_length=500)
+    password: str | None = Field(None, max_length=200)  # required once the application is initialized
+    confirm: str | None = Field(None, max_length=20)  # "RESTORE" once the application is initialized
+
+
+# ------------------------------------------------------------------ v1.6.0 CR-033 fundraisers
+class FundraiserIn(In):
+    name: Str(120)
+    description: OptStr(2000) = None
+    start_date: Date
+    end_date: OptDate = None  # defaults to the start date (one-day event)
+    budget_ids: list[int] = Field(default_factory=list, max_length=4)
+    filter_text: OptStr(200) = None
+    filter_regex: bool = False
+
+
+class FundraiserPreviewIn(In):
+    budget_ids: list[int] = Field(default_factory=list, max_length=4)
+    filter_text: OptStr(200) = None
+    filter_regex: bool = False
+
+
+class ModulesIn(In):
+    fundraisers: bool
+
+
+# ------------------------------------------------------------------ v1.6.1 CR-034 fundraiser management
+class FundraiserBucketIn(In):
+    name: Str(80)
+    description: OptStr(500) = None
+
+
+class FundraiserClassificationIn(In):
+    kind: Literal["CASH_FLOAT_OUT", "CASH_FLOAT_RETURNED"]
+    amount: Amount
+    note: OptStr(500) = None
+
+
+class FundraiserBucketAmountIn(In):
+    bucket_id: int
+    amount: Amount
+
+
+class FundraiserLineIn(In):
+    excluded: bool = False
+    exclusion_reason: OptStr(500) = None
+    classification: FundraiserClassificationIn | None = None
+    buckets: list[FundraiserBucketAmountIn] = Field(default_factory=list, max_length=30)
+
+
+# ------------------------------------------------------------------ v1.6.3 CR-036 reminders
+class ReminderIn(In):
+    scope: Literal["PERSONAL", "ORGANIZATION"] = "PERSONAL"
+    title: Str(200)
+    details: OptStr(2000) = None
+    due_date: Date
+    notify_days_before: int = Field(0, ge=0, le=365)
+    link_type: Literal["FISCAL_YEAR", "BUDGET", "BANK_ACCOUNT"] | None = None
+    link_id: int | None = None
+
+
+class ReminderResolveIn(In):
+    note: OptStr(500) = None

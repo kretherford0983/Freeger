@@ -1,6 +1,6 @@
 import { Fragment } from "react";
 import { money } from "../api";
-import { BudgetState } from "../components";
+import { BudgetState, Remaining } from "../components";
 
 export interface BudgetActions {
   onEdit?: (row: any) => void;
@@ -44,7 +44,7 @@ export function BudgetSection({ title, rows, summary, fyStatus, actions, showOut
               {summary.quarters.map((q: string, i: number) => <th key={i} className="num">{money(q)}</th>)}
               {showOutside ? <th /> : null}
               <th className="num">{money(summary.actual)}</th>
-              <th className={`num ${Number(summary.remaining) < 0 ? "neg" : ""}`}>{money(summary.remaining)}</th>{editable ? <th /> : null}
+              <th className="num"><Remaining x={summary} /></th>{editable ? <th /> : null}
             </tr>
           </tfoot>
         </table>
@@ -69,7 +69,7 @@ function Row({ r, level, editable, actions, parent, showOutside }: { r: any; lev
       {r.quarters.map((q: string, i: number) => <td key={i} className="num">{money(q)}</td>)}
       {showOutside ? <td className="num">{Number(r.outside_fiscal_year) ? money(r.outside_fiscal_year) : ""}</td> : null}
       <td className="num">{money(r.actual)}</td>
-      <td className={`num ${Number(r.remaining) < 0 ? "neg" : ""}`}>{money(r.remaining)}{r.over_budget ? <span className="sr"> (over budget)</span> : null}</td>
+      <td className="num"><Remaining x={r} />{r.over_budget ? <span className="sr"> (over budget)</span> : null}</td>
       {editable ? (
         <td className="actions-cell">
           {canEdit && actions?.onEdit ? <button className="small" aria-label={`Edit ${r.display_code}`} title="Edit" onClick={() => actions.onEdit!(r)}>✎ Edit</button> : null}

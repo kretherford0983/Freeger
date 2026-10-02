@@ -1,13 +1,18 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { api } from "../api";
-import { ErrorBox, Field } from "../components";
+import { BuildDetails, ErrorBox, Field, GuardedForm } from "../components";
 import { useMe } from "../App";
+import { SecuritySection } from "./Mfa";
 
 export default function Account() {
   const { me, setTheme } = useMe();
   const [f, setF] = useState({ current_password: "", new_password: "", new_password_confirmation: "" });
   const [err, setErr] = useState<unknown>(null);
   const [ok, setOk] = useState(false);
+  const [ver, setVer] = useState<any>(null);
+  useEffect(() => {
+    api.get("/api/system/version").then(setVer).catch(() => setVer(null));
+  }, []);
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setErr(null);
@@ -36,7 +41,7 @@ export default function Account() {
         </div>
         <p className="hint">Your preference is saved to your account and applies on every sign-in.</p>
       </section>
-      <form className="card" onSubmit={submit}>
+      <GuardedForm className="card" onSubmit={submit}>
         <h2>Change password</h2>
         <ErrorBox error={err} />
         {ok ? <div className="alert ok" role="status">Password changed. Your other sessions were signed out.</div> : null}
@@ -44,7 +49,12 @@ export default function Account() {
         <Field label="New password" hint="At least 12 characters including a letter and a digit."><input type="password" required autoComplete="new-password" value={f.new_password} onChange={(e) => setF({ ...f, new_password: e.target.value })} /></Field>
         <Field label="Confirm new password"><input type="password" required autoComplete="new-password" value={f.new_password_confirmation} onChange={(e) => setF({ ...f, new_password_confirmation: e.target.value })} /></Field>
         <button className="primary" type="submit">Change password</button>
-      </form>
+      </GuardedForm>
+      <SecuritySection />
+      <section className="card" aria-labelledby="about-h">
+        <h2 id="about-h">About</h2>
+        {ver ? <BuildDetails info={ver} /> : <p className="hint">Loading…</p>}
+      </section>
     </div>
   );
 }

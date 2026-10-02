@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, qs } from "../api";
-import { ErrorBox, Field, Loading, Modal, useConfirmable } from "../components";
+import { ErrorBox, Field, Loading, Modal, useConfirmable, GuardedForm } from "../components";
 import { useMe } from "../App";
 
 const EMPTY = { entity_type: "ORGANIZATION", organization_name: "", primary_contact: "", address_line1: "", address_line2: "", city: "",
@@ -83,7 +83,7 @@ export function EntityForm({ entity, onClose, onSaved, forceFi }: { entity: any;
   };
   return (
     <Modal title={isNew ? "New entity" : `Edit ${entity.entity_number}`} onClose={onClose} wide>
-      <form onSubmit={submit}>
+      <GuardedForm onSubmit={submit}>
         <ErrorBox error={err} />
         <Field label="Type">
           <select value={f.entity_type} onChange={set("entity_type")}><option value="ORGANIZATION">Organization</option><option value="INDIVIDUAL">Individual</option></select>
@@ -108,7 +108,7 @@ export function EntityForm({ entity, onClose, onSaved, forceFi }: { entity: any;
         <label className="check"><input type="checkbox" disabled={forceFi} checked={!!f.is_financial_institution} onChange={set("is_financial_institution")} /> Financial Institution</label>
         {f.is_financial_institution ? <p className="hint">Once saved, only a Budget Manager may edit or inactivate a Financial Institution.</p> : null}
         <div className="actions"><button type="button" onClick={onClose}>Cancel</button><button className="primary" type="submit">Save</button></div>
-      </form>
+      </GuardedForm>
       {dialog}
     </Modal>
   );

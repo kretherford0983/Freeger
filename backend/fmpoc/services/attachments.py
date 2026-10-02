@@ -21,14 +21,16 @@ from sqlalchemy.orm import Session
 
 from .. import audit
 from ..errors import AppError, conflict, forbidden, not_found, validation
-from ..models import Attachment, FiscalYear, RegisterTransaction, TransactionAllocation, utcnow
+from ..models import Attachment, FiscalYear, Fundraiser, RegisterTransaction, TransactionAllocation, utcnow
 from .common import get_scoped
 from .register import is_closed_protected
 
 MAX_BYTES = 5 * 1024 * 1024
 CHUNK = 64 * 1024
 EXT_TYPES = {".pdf": "application/pdf", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png"}
-OWNER_TYPES = ("fiscal_year", "transaction", "allocation")
+OWNER_TYPES = ("fiscal_year", "transaction", "allocation", "fundraiser")
+OWNER_COLUMN = {"fiscal_year": "fiscal_year_id", "transaction": "transaction_id", "allocation": "allocation_id",
+                "fundraiser": "fundraiser_id"}
 
 
 def sanitize_filename(name: str | None) -> str:
@@ -87,16 +89,68 @@ def _resolve_owner(db: Session, ctx, owner_type: str, owner_id: int):
         if a is None or a.transaction.workspace_id != ctx.workspace_id or a.removed_at is not None:
             raise not_found("Allocation")
         return a, a.transaction, None
+    if owner_type == "fundraiser":  # v1.6.1 CR-034: fundraiser documents (module must be on)
+        from . import fundraisers as fsvc
+        fsvc.require_module(db, ctx)
+        ctx.require("fundraiser.view")
+        return get_scoped(db, Fundraiser, owner_id, ctx, "Fundraiser"), None, None
     raise validation("Unsupported owner type.", "owner_type")
 
 
 def check_manage(ctx, owner_type: str) -> None:
-    ctx.require("fiscal_year.manage" if owner_type == "fiscal_year" else "transaction.manage")
+    ctx.require({"fiscal_year": "fiscal_year.manage", "fundraiser": "fundraiser.lines"}.get(owner_type, "transaction.manage"))
 
 
-def store(db: Session, ctx, settings, owner_type: str, owner_id: int, filename: str | None, data: bytes) -> Attachment:
+def _fundraiser_open(db: Session, ctx, f: Fundraiser) -> None:
+    from . import fundraisers as fsvc
+    fsvc._require_open(db, ctx, f)
+
+
+FY_DOCUMENT_TYPES = ("APPROVAL", "AUDIT_SIGNOFF", "UNSPECIFIED")  # v1.3 CR-007 (user-selectable)
+CLOSE_REPORT = "CLOSE_REPORT"  # v1.3 CR-008: system-generated at closing
+
+
+def _write_file(settings, data: bytes) -> tuple[str, Path]:
+    key = uuid.uuid4().hex
+    base = settings.attachments_dir.resolve()
+    shard = base / key[:2]
+    shard.mkdir(parents=True, exist_ok=True)
+    path = (shard / (key + ".bin")).resolve()
+    if base not in path.parents:  # defence in depth; key is generated hex
+        raise AppError(500, "INTEGRITY", "Invalid storage path.")
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
+    with os.fdopen(fd, "wb") as fh:
+        fh.write(data)
+    return key, path
+
+
+def store_system_fy_document(db: Session, ctx, settings, fy: FiscalYear, filename: str, data: bytes,
+                             document_type: str) -> tuple[Attachment, Path]:
+    """Stores an application-generated PDF (e.g. the Close report) as a permanent Fiscal Year attachment. Runs inside
+    the caller's database transaction; the caller commits (or deletes the returned path on failure)."""
+    key, path = _write_file(settings, data)
+    att = Attachment(workspace_id=ctx.workspace_id, original_filename=sanitize_filename(filename), storage_key=key,
+                     mime_type="application/pdf", size_bytes=len(data), sha256=hashlib.sha256(data).hexdigest(),
+                     uploaded_by_user_id=ctx.user.id, active=True, fiscal_year_id=fy.id, document_type=document_type,
+                     system_generated=True)
+    db.add(att)
+    db.flush()
+    audit.record(db, ctx, "ATTACHMENT_ADDED", "attachment", att.id, None, snapshot(att))
+    return att, path
+
+
+def store(db: Session, ctx, settings, owner_type: str, owner_id: int, filename: str | None, data: bytes,
+          document_type: str | None = None) -> Attachment:
     check_manage(ctx, owner_type)
     owner, _txn, _fy = _resolve_owner(db, ctx, owner_type, owner_id)
+    if owner_type == "fundraiser":
+        _fundraiser_open(db, ctx, owner)
+    if owner_type == "fiscal_year":
+        document_type = document_type or "UNSPECIFIED"
+        if document_type not in FY_DOCUMENT_TYPES:
+            raise validation("Unknown Fiscal Year document type.", "document_type")
+    elif document_type is not None:
+        raise validation("document_type applies to Fiscal Year attachments only.", "document_type")
     if len(data) == 0:
         raise validation("The file is empty.", "file")
     if len(data) > MAX_BYTES:
@@ -109,22 +163,12 @@ def store(db: Session, ctx, settings, owner_type: str, owner_id: int, filename: 
     if detected is None or detected != EXT_TYPES[ext]:
         raise AppError(415, "UNSUPPORTED_TYPE",
                        "The file content is not a valid PDF, JPEG or PNG matching its extension.")
-    key = uuid.uuid4().hex
-    base = settings.attachments_dir.resolve()
-    shard = base / key[:2]
-    shard.mkdir(parents=True, exist_ok=True)
-    path = (shard / (key + ".bin")).resolve()
-    if base not in path.parents:  # defence in depth; key is generated hex
-        raise AppError(500, "INTEGRITY", "Invalid storage path.")
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
-    with os.fdopen(fd, "wb") as fh:
-        fh.write(data)
+    key, path = _write_file(settings, data)
     try:
         att = Attachment(workspace_id=ctx.workspace_id, original_filename=clean, storage_key=key, mime_type=detected,
                          size_bytes=len(data), sha256=hashlib.sha256(data).hexdigest(),
-                         uploaded_by_user_id=ctx.user.id, active=True)
-        setattr(att, {"fiscal_year": "fiscal_year_id", "transaction": "transaction_id",
-                      "allocation": "allocation_id"}[owner_type], owner.id)
+                         uploaded_by_user_id=ctx.user.id, active=True, document_type=document_type)
+        setattr(att, OWNER_COLUMN[owner_type], owner.id)
         db.add(att)
         db.flush()
         audit.record(db, ctx, "ATTACHMENT_ADDED", "attachment", att.id, None, snapshot(att))
@@ -134,6 +178,12 @@ def store(db: Session, ctx, settings, owner_type: str, owner_id: int, filename: 
             owner.no_attachment_set_at = owner.no_attachment_set_by_user_id = None
             audit.record(db, ctx, "ALLOCATION_NO_ATTACHMENT_CLEARED", "transaction_allocation", owner.id,
                          {"no_attachment": True}, {"no_attachment": False, "attachment_id": att.id})
+        # v1.3 CR-007: an approval document replaces the "no approval document" mark
+        if owner_type == "fiscal_year" and document_type == "APPROVAL" and owner.approval_no_attachment:
+            owner.approval_no_attachment, owner.approval_no_attachment_reason = False, None
+            owner.approval_no_attachment_set_at = owner.approval_no_attachment_set_by_user_id = None
+            audit.record(db, ctx, "FY_APPROVAL_NO_ATTACHMENT_CLEARED", "fiscal_year", owner.id,
+                         {"approval_no_attachment": True}, {"approval_no_attachment": False, "attachment_id": att.id})
         txn = _txn if owner_type == "transaction" else None
         if txn is not None and txn.no_attachment:
             txn.no_attachment, txn.no_attachment_reason = False, None
@@ -154,7 +204,9 @@ def store(db: Session, ctx, settings, owner_type: str, owner_id: int, filename: 
 def snapshot(a: Attachment) -> dict:
     return {"id": a.id, "original_filename": a.original_filename, "mime_type": a.mime_type, "size_bytes": a.size_bytes,
             "sha256": a.sha256, "fiscal_year_id": a.fiscal_year_id, "transaction_id": a.transaction_id,
-            "allocation_id": a.allocation_id, "active": a.active}
+            "allocation_id": a.allocation_id, "fundraiser_id": a.fundraiser_id, "active": a.active,
+            "document_type": a.document_type,
+            "system_generated": bool(a.system_generated)}
 
 
 def out(a: Attachment) -> dict:
@@ -165,8 +217,7 @@ def out(a: Attachment) -> dict:
 
 def list_for(db: Session, ctx, owner_type: str, owner_id: int, include_removed: bool) -> list[Attachment]:
     owner, _t, _f = _resolve_owner(db, ctx, owner_type, owner_id)
-    col = {"fiscal_year": Attachment.fiscal_year_id, "transaction": Attachment.transaction_id,
-           "allocation": Attachment.allocation_id}[owner_type]
+    col = getattr(Attachment, OWNER_COLUMN[owner_type])
     q = select(Attachment).where(col == owner.id).order_by(Attachment.id)
     if not include_removed:
         q = q.where(Attachment.active.is_(True))
@@ -174,7 +225,12 @@ def list_for(db: Session, ctx, owner_type: str, owner_id: int, include_removed: 
 
 
 def get(db: Session, ctx, att_id: int) -> Attachment:
-    return get_scoped(db, Attachment, att_id, ctx, "Attachment")
+    a = get_scoped(db, Attachment, att_id, ctx, "Attachment")
+    if a.fundraiser_id:  # v1.6.1 CR-034: fundraiser documents follow the module switch and its viewers
+        from . import fundraisers as fsvc
+        fsvc.require_module(db, ctx)
+        ctx.require("fundraiser.view")
+    return a
 
 
 def path_for(settings, a: Attachment) -> Path:
@@ -186,11 +242,16 @@ def path_for(settings, a: Attachment) -> Path:
 def remove(db: Session, ctx, a: Attachment) -> Attachment:
     if not a.active:
         raise conflict("INVALID_STATE", "Attachment already removed.")
+    if a.system_generated:
+        raise conflict("SYSTEM_GENERATED", "System-generated documents (e.g. the Close report) cannot be removed.")
     if a.fiscal_year_id:
         ctx.require("fiscal_year.manage")
         fy = db.get(FiscalYear, a.fiscal_year_id)
         if fy.status == "CLOSED":
             raise conflict("FISCAL_YEAR_CLOSED", "Closed Fiscal Year documentation cannot be removed.")
+    elif a.fundraiser_id:
+        ctx.require("fundraiser.lines")
+        _fundraiser_open(db, ctx, db.get(Fundraiser, a.fundraiser_id))
     else:
         ctx.require("transaction.manage")
         t = db.get(RegisterTransaction, a.transaction_id) if a.transaction_id else db.get(TransactionAllocation, a.allocation_id).transaction
@@ -204,6 +265,34 @@ def remove(db: Session, ctx, a: Attachment) -> Attachment:
     a.removed_by_user_id = ctx.user.id
     db.flush()
     audit.record(db, ctx, "ATTACHMENT_REMOVED", "attachment", a.id, before, snapshot(a))
+    return a
+
+
+def set_document_type(db: Session, ctx, a: Attachment, document_type: str) -> Attachment:
+    """v1.3 CR-007: re-label a Fiscal Year attachment (e.g. mark an earlier upload as the Audit Signoff)."""
+    ctx.require("fiscal_year.manage")
+    if a.fiscal_year_id is None:
+        raise validation("Only Fiscal Year attachments have a document type.", "document_type")
+    if document_type not in FY_DOCUMENT_TYPES:
+        raise validation("Unknown Fiscal Year document type.", "document_type")
+    if not a.active:
+        raise conflict("INVALID_STATE", "The attachment has been removed.")
+    if a.system_generated:
+        raise conflict("SYSTEM_GENERATED", "System-generated documents cannot be re-labelled.")
+    fy = db.get(FiscalYear, a.fiscal_year_id)
+    if fy.status == "CLOSED":
+        raise conflict("FISCAL_YEAR_CLOSED", "Closed Fiscal Year documentation cannot be changed.")
+    if a.document_type == document_type:
+        raise conflict("NO_CHANGE", "The document type is unchanged.")
+    before = snapshot(a)
+    a.document_type = document_type
+    if document_type == "APPROVAL" and fy.approval_no_attachment:
+        fy.approval_no_attachment, fy.approval_no_attachment_reason = False, None
+        fy.approval_no_attachment_set_at = fy.approval_no_attachment_set_by_user_id = None
+        audit.record(db, ctx, "FY_APPROVAL_NO_ATTACHMENT_CLEARED", "fiscal_year", fy.id,
+                     {"approval_no_attachment": True}, {"approval_no_attachment": False, "attachment_id": a.id})
+    db.flush()
+    audit.record(db, ctx, "ATTACHMENT_TYPE_CHANGED", "attachment", a.id, before, snapshot(a))
     return a
 
 

@@ -18,8 +18,8 @@ from .config import Settings, is_loopback, load_settings
 from .db import make_engine, make_session_factory, upgrade_database
 from .deps import enforce_csrf
 from .errors import install_handlers
-from .routers import (attachments, audit_log, auth, bank_accounts, budgets, dashboard, entities, fiscal_years,
-                      register, reports, system, users)
+from .routers import (attachments, audit_log, auth, backup, bank_accounts, budgets, dashboard, entities,
+                      fiscal_years, fundraisers, register, reminders, reports, system, users)
 from .security import crypto
 from .services import bootstrap
 from .services.auth import LoginRateLimiter
@@ -27,6 +27,9 @@ from .services.auth import LoginRateLimiter
 log = logging.getLogger("fmpoc")
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 MAX_BODY = 6 * 1024 * 1024  # 5 MB attachment + multipart overhead
+UPLOAD_PART_LIMIT = 21 * 1024 * 1024  # v1.4.1: one 20 MB part of a backup upload
+_RESTORE_PART = re.compile(r"^/api/system/restore/uploads/[A-Za-z0-9_-]+$")
+MAINTENANCE_OPEN = {"/api/health", "/api/system/status"}
 
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; "
        "font-src 'self'; connect-src 'self'; frame-src 'self' blob:; object-src 'none'; base-uri 'none'; "
@@ -78,8 +81,11 @@ class BodyLimitMiddleware:
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
         headers = dict(scope.get("headers") or [])
+        limit = self.limit
+        if _RESTORE_PART.match(scope.get("path", "")) and scope.get("method") == "PUT":
+            limit = UPLOAD_PART_LIMIT  # v1.4.1 CR-024/025: backup upload parts
         cl = headers.get(b"content-length")
-        if cl is not None and cl.isdigit() and int(cl) > self.limit:
+        if cl is not None and cl.isdigit() and int(cl) > limit:
             resp = JSONResponse({"error": {"code": "PAYLOAD_TOO_LARGE", "message": "Request body too large."}}, 413)
             return await resp(scope, receive, send)
         seen = 0
@@ -89,7 +95,7 @@ class BodyLimitMiddleware:
             msg = await receive()
             if msg["type"] == "http.request":
                 seen += len(msg.get("body", b""))
-                if seen > self.limit:
+                if seen > limit:
                     raise _TooLarge()
             return msg
 
@@ -104,6 +110,15 @@ class _TooLarge(Exception):
     pass
 
 
+def _frontend_build(static_dir: Path) -> str | None:
+    """Name of the hashed entry script referenced by index.html (changes with every frontend build)."""
+    try:
+        m = re.search(r'src="/assets/(index-[A-Za-z0-9_-]+\.js)"', (static_dir / "index.html").read_text("utf-8"))
+    except OSError:
+        return None
+    return m.group(1) if m else None
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or load_settings()
     settings.ensure_dirs()
@@ -112,7 +127,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     engine = make_engine(settings.database_url)
     session_factory = make_session_factory(engine)
 
-    app = FastAPI(title="Financial Management POC", version=VERSION, debug=False,
+    app = FastAPI(title="Fundwarden", version=VERSION, debug=False,
                   docs_url=None, redoc_url=None, openapi_url=None,  # no dev consoles in production (BR-107)
                   dependencies=[Depends(enforce_csrf)])
     app.state.settings = settings
@@ -135,15 +150,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         raise RuntimeError("The portable encryption key in the application data 'secrets' directory is missing or "
                            "does not match this database. Restore the key file from the same data set.")
     app.state.key = km
+    # v1.4.1 CR-023/024/025: background backup/restore jobs, restore uploads, maintenance mode during a restore
+    from .services.backup import Jobs, cleanup_work
+    app.state.jobs, app.state.uploads, app.state.maintenance = Jobs(), {}, None
+    cleanup_work(settings)
 
     install_handlers(app)
+    frontend_build = _frontend_build(settings.frontend_dir or STATIC_DIR)
 
     @app.middleware("http")
     async def security_and_logging(request, call_next):
         cid = uuid.uuid4().hex[:16]
         request.state.correlation_id = cid
         start = time.perf_counter()
-        response = await call_next(request)
+        path = request.url.path
+        if (app.state.maintenance and path.startswith("/api/") and path not in MAINTENANCE_OPEN
+                and not path.startswith("/api/system/restore/jobs/")):
+            response = JSONResponse({"error": {"code": "MAINTENANCE", "message": "A restore is in progress. Try again "
+                                                                                  "in a moment."}}, status_code=503)
+        else:
+            response = await call_next(request)
         h = response.headers
         h.setdefault("X-Content-Type-Options", "nosniff")
         h.setdefault("X-Frame-Options", "DENY")
@@ -155,6 +181,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         h["X-Correlation-Id"] = cid
         if request.url.path.startswith("/api/"):
             h.setdefault("Cache-Control", "no-store")
+            if frontend_build:  # v1.5.0: lets an open page notice that the server was upgraded (api.ts)
+                h["X-Frontend-Build"] = frontend_build
         if settings.hsts and request.url.scheme == "https":
             h["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         # Path only - never query strings, bodies, cookies or headers.
@@ -164,8 +192,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.add_middleware(BodyLimitMiddleware)
 
-    for r in (system, auth, users, audit_log, fiscal_years, budgets, entities, bank_accounts, register,
-              attachments, dashboard, reports):
+    for r in (system, backup, auth, users, audit_log, fiscal_years, budgets, entities, bank_accounts, register,
+              attachments, dashboard, reports, fundraisers, reminders):
         app.include_router(r.router)
 
     @app.api_route("/api/{rest:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"], include_in_schema=False)
@@ -184,6 +212,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             f = root_files.get(path)
             if f is not None:
                 return FileResponse(f)
-            return FileResponse(index, headers={"Cache-Control": "no-cache"})
+            return FileResponse(index, headers={"Cache-Control": "no-store"})  # v1.5.0: never serve a stale page
 
     return app

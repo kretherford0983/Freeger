@@ -2,9 +2,11 @@
 import { Fragment, useEffect, useState } from "react";
 import { api, money, qs } from "../api";
 import { EntityPicker, ErrorBox, Field, Loading } from "../components";
+import { useMe } from "../App";
+import { SIG_EMPTY, SignatureOptions, signatureProblem, type SigState } from "./SignatureOptions";
 
 export default function Reports() {
-  const [tab, setTab] = useState<"audit" | "entity">("audit");
+  const [tab, setTab] = useState<"audit" | "close" | "entity">("audit");
   const [fys, setFys] = useState<any[] | null>(null);
   const [accounts, setAccounts] = useState<any[]>([]);
   const [err, setErr] = useState<unknown>(null);
@@ -21,11 +23,42 @@ export default function Reports() {
         <h1>Reports</h1>
         <div role="tablist" className="row">
           <button role="tab" aria-selected={tab === "audit"} className={tab === "audit" ? "primary" : ""} onClick={() => setTab("audit")}>End of Year Audit</button>
+          <button role="tab" aria-selected={tab === "close"} className={tab === "close" ? "primary" : ""} onClick={() => setTab("close")}>Fiscal Year Close</button>
           <button role="tab" aria-selected={tab === "entity"} className={tab === "entity" ? "primary" : ""} onClick={() => setTab("entity")}>Entity activity</button>
         </div>
       </div>
-      {tab === "audit" ? <AuditReport fys={fys} accounts={accounts} /> : <EntityReport fys={fys} accounts={accounts} />}
+      {tab === "audit" ? <AuditReport fys={fys} accounts={accounts} /> : null}
+      {tab === "close" ? <CloseReport fys={fys} /> : null}
+      {tab === "entity" ? <EntityReport fys={fys} accounts={accounts} /> : null}
     </div>
+  );
+}
+
+// v1.3 CR-008: same as the audit report, with the Fiscal Year documents before the budgets and transactions.
+function CloseReport({ fys }: { fys: any[] }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const cur = fys.find((f) => f.start_date <= today && f.end_date >= today) || fys[fys.length - 1];
+  const [fy, setFy] = useState(cur ? String(cur.id) : "");
+  const frOn = !!useMe().me.modules?.fundraisers; // v1.6.2 CR-035
+  const [fr, setFr] = useState(true);
+  const url = (download: boolean) => `/api/reports/fy-close${qs({ fiscal_year_id: fy, download: download || null, include_fundraisers: frOn && !fr ? false : null })}`;
+  return (
+    <section className="card">
+      <h2>Fiscal Year Close report</h2>
+      <p>The End of Year Audit report for all accounts (VOID transactions included), with the <b>Fiscal Year documents</b> — approval document, audit signoff and other documents — reproduced right after the Fiscal Year review and before the budgets and transactions. A copy is generated automatically when the Fiscal Year is closed and kept with its documents.</p>
+      <div className="report-options">
+        <Field label="Fiscal Year">
+          <select aria-label="Close report Fiscal Year" value={fy} onChange={(e) => setFy(e.target.value)}>
+            {fys.map((y) => <option key={y.id} value={y.id}>{y.label}</option>)}
+          </select>
+        </Field>
+        {frOn ? <label className="check"><input type="checkbox" checked={fr} onChange={(e) => setFr(e.target.checked)} /> Include fundraisers</label> : null}
+      </div>
+      <div className="actions left">
+        <a className="button primary" href={url(false)} target="_blank" rel="noopener">Open Close report PDF</a>
+        <a className="button" href={url(true)}>Download PDF</a>
+      </div>
+    </section>
   );
 }
 
@@ -33,11 +66,32 @@ function AuditReport({ fys, accounts }: { fys: any[]; accounts: any[] }) {
   const today = new Date().toISOString().slice(0, 10);
   const cur = fys.find((f) => f.start_date <= today && f.end_date >= today) || fys[fys.length - 1];
   const [f, setF] = useState({ fiscal_year_id: cur ? String(cur.id) : "", bank_account_id: "", include_void: true });
-  const url = (download: boolean) => `/api/reports/audit${qs({ fiscal_year_id: f.fiscal_year_id, bank_account_id: f.bank_account_id, include_void: f.include_void, download: download || null })}`;
+  const [sig, setSig] = useState<SigState>(SIG_EMPTY);
+  const frOn = !!useMe().me.modules?.fundraisers; // v1.6.2 CR-035
+  const [fr, setFr] = useState(true);
+  const sigErr = sig.on ? signatureProblem(sig) : null;
+  const url = (download: boolean) => {
+    const p = new URLSearchParams(qs({ fiscal_year_id: f.fiscal_year_id, bank_account_id: f.bank_account_id, include_void: f.include_void, download: download || null, include_fundraisers: frOn && fr ? true : null }).slice(1));
+    if (sig.on) {
+      p.set("signature_page", "true");
+      if (sig.choice === "custom") p.set("signature_text", sig.custom);
+      else p.set("signature_template_id", sig.choice);
+      sig.signers.filter((x) => x.entity_id).forEach((x) => { p.append("signer_id", x.entity_id); p.append("signer_title", x.title.trim()); });
+    }
+    return `/api/reports/audit?${p.toString()}`;
+  };
+  // v1.5.0 CR-029: the signature page on its own (same wording and signers)
+  const previewUrl = () => {
+    const p = new URLSearchParams({ fiscal_year_id: f.fiscal_year_id });
+    if (sig.choice === "custom") p.set("signature_text", sig.custom);
+    else p.set("signature_template_id", sig.choice);
+    sig.signers.filter((x) => x.entity_id).forEach((x) => { p.append("signer_id", x.entity_id); p.append("signer_title", x.title.trim()); });
+    return `/api/reports/audit/signature-page?${p.toString()}`;
+  };
   return (
     <section className="card">
       <h2>End of Year Audit report</h2>
-      <p>A printable PDF containing the selected Fiscal Year's budget followed by every transaction in the register for that year with all details, descriptions and notes. Each transaction is <b>immediately followed by its attachments</b> (images and PDF pages), so the printed report keeps every transaction together with its documentation. Fiscal Year supporting documents are appended at the end.</p>
+      <p>A printable PDF containing the selected Fiscal Year's budget followed by every transaction in the register for that year with all details, descriptions and notes. Each transaction is <b>immediately followed by its attachments</b> (images and PDF pages), so the printed report keeps every transaction together with its documentation. Fiscal Year documents (approval, audit signoff) are in the Fiscal Year Close report.</p>
       <div className="report-options">
         <Field label="Fiscal Year">
           <select aria-label="Audit report Fiscal Year" value={f.fiscal_year_id} onChange={(e) => setF({ ...f, fiscal_year_id: e.target.value })}>
@@ -51,10 +105,17 @@ function AuditReport({ fys, accounts }: { fys: any[]; accounts: any[] }) {
           </select>
         </Field>
         <label className="check"><input type="checkbox" checked={f.include_void} onChange={(e) => setF({ ...f, include_void: e.target.checked })} /> Include VOID transactions</label>
+        {frOn ? <label className="check" title="The Fiscal Year's fundraisers (not archived), after the transactions and before the signature page"><input type="checkbox" checked={fr} onChange={(e) => setFr(e.target.checked)} /> Include fundraisers</label> : null}
       </div>
+      <SignatureOptions sig={sig} setSig={setSig} preview={sig.on && !sigErr ? previewUrl() : null} />
+      {sigErr ? <div className="alert warn" role="alert">{sigErr}</div> : null}
       <div className="actions left">
-        <a className="button primary" href={url(false)} target="_blank" rel="noopener">Open printable PDF</a>
-        <a className="button" href={url(true)}>Download PDF</a>
+        {sigErr ? (
+          <><button className="primary" disabled>Open printable PDF</button><button disabled>Download PDF</button></>
+        ) : (
+          <><a className="button primary" href={url(false)} target="_blank" rel="noopener">Open printable PDF</a>
+          <a className="button" href={url(true)}>Download PDF</a></>
+        )}
       </div>
       <p className="hint">Large years with many attachments can take a little while to generate. Generating a report is recorded in the audit log.</p>
     </section>

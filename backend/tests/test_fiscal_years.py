@@ -4,9 +4,9 @@ import datetime as dt
 from conftest import PDF_BYTES
 
 
-def upload_fy_doc(env, fy_id):
-    r = env.bm.c.post(f"/api/attachments?owner_type=fiscal_year&owner_id={fy_id}",
-                      files={"file": ("approval.pdf", PDF_BYTES, "application/pdf")},
+def upload_fy_doc(env, fy_id, document_type="AUDIT_SIGNOFF"):
+    r = env.bm.c.post(f"/api/attachments?owner_type=fiscal_year&owner_id={fy_id}&document_type={document_type}",
+                      files={"file": ("signoff.pdf", PDF_BYTES, "application/pdf")},
                       headers={"X-CSRF-Token": env.bm.csrf})
     assert r.status_code == 201, r.text
     return r.json()
@@ -118,6 +118,12 @@ def test_ac_fy_009_approval(env, base):
     fy = base["fy"]["id"]
     assert env.ru.post(f"/api/fiscal-years/{fy}/approve", {"confirm_irreversible": True}).status_code == 403
     assert env.bu.post(f"/api/fiscal-years/{fy}/approve", {"confirm_irreversible": True}).status_code == 403
+    # v1.3 CR-007: an Approval document (or the "no approval document" mark) is required first
+    r = env.bm.post(f"/api/fiscal-years/{fy}/approve", {"confirm_irreversible": True})
+    assert r.status_code == 409 and r.json()["error"]["code"] == "APPROVAL_DOCUMENT_REQUIRED"
+    upload_fy_doc(env, fy, "UNSPECIFIED")  # an unspecified document does not count
+    assert env.bm.post(f"/api/fiscal-years/{fy}/approve", {"confirm_irreversible": True}).status_code == 409
+    upload_fy_doc(env, fy, "APPROVAL")
     assert env.bm.post(f"/api/fiscal-years/{fy}/approve", {"confirm_irreversible": False}).status_code == 409
     r = env.bm.post(f"/api/fiscal-years/{fy}/approve", {"confirm_irreversible": True})
     assert r.status_code == 200 and r.json()["status"] == "APPROVED"
@@ -135,7 +141,7 @@ def test_ac_fy_009_approval(env, base):
 def _ready_to_close(env, base):
     t = env.txn(base["acct"]["id"], "WITHDRAWAL", [{"budget_id": base["exp_leaf"], "amount": "10.00"}],
                 clear_date="2026-08-05")
-    env.bm.post(f"/api/fiscal-years/{base['fy']['id']}/approve", {"confirm_irreversible": True})
+    env.approve(base["fy"]["id"])
     upload_fy_doc(env, base["fy"]["id"])
     return t
 
@@ -147,7 +153,7 @@ def _blockers(env, fy_id):
 def test_ac_fy_010_011_closure_blockers_each_independently(env, base):
     fy = base["fy"]["id"]
     # not approved + no attachment
-    assert {"NOT_APPROVED", "NO_ATTACHMENT"} <= _blockers(env, fy)
+    assert {"NOT_APPROVED", "NO_AUDIT_SIGNOFF", "APPROVAL_DOCUMENT_MISSING"} <= _blockers(env, fy)
     r = env.bm.post(f"/api/fiscal-years/{fy}/close", {"confirm_reviewed": True})
     assert r.status_code == 409 and r.json()["error"]["code"] == "CLOSURE_BLOCKED"
     _ready_to_close(env, base)
@@ -169,11 +175,21 @@ def test_ac_fy_010_011_closure_blockers_each_independently(env, base):
     rid = t["allocations"][0]["reviews"][0]["id"]
     assert env.bm.post(f"/api/fiscal-year-reviews/{rid}/confirm", {"note": "intentional"}).status_code == 200
     assert _blockers(env, fy) == set()
-    # missing attachment blocks
-    att = env.bm.get(f"/api/attachments?owner_type=fiscal_year&owner_id={fy}").json()[0]
-    env.bm.post(f"/api/attachments/{att['id']}/remove")
-    assert _blockers(env, fy) == {"NO_ATTACHMENT"}
+    # missing Audit Signoff blocks (v1.3 CR-007: other document types don't count)
+    atts = env.bm.get(f"/api/attachments?owner_type=fiscal_year&owner_id={fy}").json()
+    signoff = [a for a in atts if a["document_type"] == "AUDIT_SIGNOFF"][0]
+    env.bm.post(f"/api/attachments/{signoff['id']}/remove")
+    assert _blockers(env, fy) == {"NO_AUDIT_SIGNOFF"}
+    upload_fy_doc(env, fy, "UNSPECIFIED")
+    assert _blockers(env, fy) == {"NO_AUDIT_SIGNOFF"}
+    # missing Approval document blocks (unless marked "no approval document", which is a warning)
+    approval = [a for a in atts if a["document_type"] == "APPROVAL"][0]
+    env.bm.post(f"/api/attachments/{approval['id']}/remove")
     upload_fy_doc(env, fy)
+    assert _blockers(env, fy) == {"APPROVAL_DOCUMENT_MISSING"}
+    env.bm.post(f"/api/fiscal-years/{fy}/approval-no-attachment", {"no_attachment": True, "reason": "Board votes orally"})
+    chk = env.bm.get(f"/api/fiscal-years/{fy}/closure-check").json()
+    assert chk["blockers"] == [] and "APPROVAL_NO_ATTACHMENT" in {w["code"] for w in chk["warnings"]}
     # confirmation required
     assert env.bm.post(f"/api/fiscal-years/{fy}/close", {"confirm_reviewed": False}).status_code == 409
     assert env.ru.post(f"/api/fiscal-years/{fy}/close", {"confirm_reviewed": True}).status_code == 403
@@ -206,7 +222,12 @@ def test_ac_fy_012_closure_warnings_budget0_not_warning(env, base):
     # voided normal transaction + over budget -> warnings
     v = env.txn(base["acct"]["id"], "WITHDRAWAL", [{"budget_id": base["exp_leaf"], "amount": "5.00"}])
     env.ru.post(f"/api/transactions/{v['id']}/void", {"reason": "error", "confirm_irreversible": True})
-    env.txn(base["acct"]["id"], "DEPOSIT", [{"budget_id": base["inc_leaf"], "amount": "6000.00"}], clear_date="2026-08-02")
+    # v1.4 CR-019: income received above budget is NOT an over-budget warning ...
+    env.txn(base["acct"]["id"], "DEPOSIT", [{"budget_id": base["inc_leaf"], "amount": "106000.00"}], clear_date="2026-08-02")
+    w = {x["code"] for x in env.bm.get(f"/api/fiscal-years/{fy}/closure-check").json()["warnings"]}
+    assert "VOIDED_TRANSACTIONS" in w and "OVER_BUDGET" not in w
+    # ... but spending above an expense budget still is
+    env.txn(base["acct"]["id"], "WITHDRAWAL", [{"budget_id": base["exp_leaf"], "amount": "100000.00"}], clear_date="2026-08-02")
     w = {x["code"] for x in env.bm.get(f"/api/fiscal-years/{fy}/closure-check").json()["warnings"]}
     assert {"VOIDED_TRANSACTIONS", "OVER_BUDGET"} <= w
     assert _blockers(env, fy) == set()
@@ -271,7 +292,7 @@ def test_ac_fy_vis_001_to_011_draft_visibility(env):
     nat = env.ru.get("/api/fiscal-years/natural?date=2028-08-01").json()
     assert nat["default_fiscal_year_id"] == fy["id"]
     # VIS-008: approval preserves identity and route
-    env.bm.post(f"/api/fiscal-years/{fy['id']}/approve", {"confirm_irreversible": True})
+    env.approve(fy["id"])
     d = env.bu.get(f"/api/fiscal-years/{fy['id']}").json()
     assert d["id"] == fy["id"] and d["display_name"] == "FY2029" and d["label"] == "FY2029 — Approved"
     dash = env.bu.get("/api/dashboard").json()

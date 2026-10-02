@@ -105,7 +105,7 @@ def test_ac_bud_008_overage_allowed_negative_remaining(env, base):
 
 def test_ac_bud_009_unlock_requires_reason_and_audits(env, base):
     fy = base["fy"]["id"]
-    env.bm.post(f"/api/fiscal-years/{fy}/approve", {"confirm_irreversible": True})
+    env.approve(fy)
     bid = base["exp"]["id"]
     assert env.bm.post(f"/api/budgets/{bid}/unlock", {"reason": ""}).status_code == 422
     assert env.bm.post(f"/api/budgets/{bid}/unlock", {"reason": "   "}).status_code == 422
@@ -148,7 +148,7 @@ def test_ac_bud_011_status_indicators(env, base):
     states = {r["display_code"]: r["state"] for r in _tree(env, fy)["expense"]}
     assert states["1000"] == {"code": "DRAFT", "icon": "?", "label": "Draft (unapproved)", "tone": "yellow"}
     assert states["3000"]["icon"] == "X" and states["3000"]["label"] == "Rejected"
-    env.bm.post(f"/api/fiscal-years/{fy}/approve", {"confirm_irreversible": True})
+    env.approve(fy)
     states = {r["display_code"]: r["state"] for r in _tree(env, fy)["expense"]}
     assert states["1000"]["icon"] == "lock-closed" and states["1000"]["tone"] == "green"
     env.bm.post(f"/api/budgets/{base['exp']['id']}/unlock", {"reason": "x"})

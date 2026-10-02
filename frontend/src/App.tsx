@@ -2,12 +2,14 @@ import { createContext, useContext, useEffect, useState } from "react";
 import { api, setCsrf } from "./api";
 import { Link, match, useRouter } from "./router";
 import { Loading } from "./components";
+import { NavIcon } from "./icons";
 import InitWizard from "./pages/InitWizard";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import Users from "./pages/Users";
 import AuditLog from "./pages/AuditLog";
 import About from "./pages/About";
+import { MfaGate } from "./pages/Mfa";
 import FiscalYears from "./pages/FiscalYears";
 import FiscalYearDetail from "./pages/FiscalYearDetail";
 import Budgets from "./pages/Budgets";
@@ -16,6 +18,8 @@ import Register from "./pages/Register";
 import Entities from "./pages/Entities";
 import Account from "./pages/Account";
 import Reports from "./pages/Reports";
+import Fundraisers, { FundraiserDetail } from "./pages/Fundraisers";
+import Notifications, { REMINDERS_CHANGED } from "./pages/Notifications";
 
 export interface Me {
   id: number;
@@ -25,10 +29,16 @@ export interface Me {
   roles: string[];
   permissions: string[];
   theme: "light" | "dark";
+  nav_collapsed?: boolean;
+  dashboard_charts?: string[];
+  dashboard_layout?: { key: string; visible: boolean }[]; // v1.5.0 CR-031
+  dashboard_layout_customized?: boolean;
+  modules?: { fundraisers?: boolean }; // v1.6.0 CR-033
+  mfa_pending?: "VERIFY" | "ENROLL" | null; // v1.4.1 CR-018
   csrf_token: string;
 }
 
-const MeCtx = createContext<{ me: Me; can: (p: string) => boolean; refresh: () => Promise<void>; setTheme: (t: "light" | "dark") => void } | null>(null);
+const MeCtx = createContext<{ me: Me; can: (p: string) => boolean; refresh: () => Promise<void>; setTheme: (t: "light" | "dark") => void; patchMe: (p: Partial<Me>) => void } | null>(null);
 
 export function useMe() {
   const c = useContext(MeCtx);
@@ -41,6 +51,7 @@ function applyTheme(t: string) {
 }
 
 export default function App() {
+  const { path, navigate } = useRouter();
   const [status, setStatus] = useState<any>(null);
   const [me, setMe] = useState<Me | null | undefined>(undefined);
 
@@ -59,14 +70,20 @@ export default function App() {
 
   const boot = async () => {
     const s = await api.get("/api/system/status");
-    setStatus(s);
+    // HF-001: load the user first, then switch the status - otherwise the sign-in page flashes (and starts its own
+    // CSRF request) between "initialized" and "user loaded".
     if (s.initialized) await loadMe();
     else setMe(null);
+    setStatus(s);
   };
 
   useEffect(() => {
     boot();
-    const on = () => {
+    const on = (e: Event) => {
+      if ((e as CustomEvent).detail?.code === "MFA_REQUIRED") {
+        loadMe(); // still signed in: show the two-step verification screen
+        return;
+      }
       setCsrf(null);
       setMe(null);
     };
@@ -74,9 +91,17 @@ export default function App() {
     return () => window.removeEventListener("fm:unauthenticated", on);
   }, []);
 
+  // v1.5.0: while signing in (login / two-step screens) the address is the dashboard, so a bookmarked page such as
+  // /about never survives into the sign-in flow; after signing in the user starts on the dashboard.
+  const signingIn = !!status && me !== undefined && (!me || !!me.mfa_pending) && status.initialized;
+  useEffect(() => {
+    if (signingIn && path !== "/") navigate("/", { replace: true });
+  }, [signingIn, path]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (!status || me === undefined) return <div className="center"><Loading /></div>;
   if (!status.initialized) return <InitWizard onDone={boot} />;
-  if (!me) return <Login workspace={status.workspace_name} onLogin={loadMe} />;
+  if (!me) return <Login workspace={status.workspace_name} onLogin={loadMe} legal={status} />;
+  if (me.mfa_pending) return <MfaGate me={me} workspace={status.workspace_name} onDone={loadMe} onLogout={() => { setCsrf(null); setMe(null); }} />;
 
   const ctx = {
     me,
@@ -86,6 +111,7 @@ export default function App() {
       applyTheme(t);
       setMe({ ...me, theme: t });
     },
+    patchMe: (p: Partial<Me>) => setMe({ ...me, ...p }),
   };
   return (
     <MeCtx.Provider value={ctx}>
@@ -104,6 +130,7 @@ function navFor(me: Me) {
     ["/entities", "Entities"],
     ["/reports", "Reports"],
   ];
+  if (me.modules?.fundraisers) fin.splice(6, 0, ["/fundraisers", "Fundraisers"]); // v1.6.0 CR-033 (optional module)
   if (me.security_domain === "ADMINISTRATOR") return [["/", "Dashboard"], ["/users", "Users"], ["/audit-log", "Audit Log"], ["/about", "System/About"]];
   if (me.security_domain === "AUDITOR") return [...fin, ["/users", "Users"], ["/audit-log", "Audit Log"]];
   return fin;
@@ -111,6 +138,13 @@ function navFor(me: Me) {
 
 function Shell({ workspace, warning, onLogout }: { workspace: string; warning: boolean; onLogout: () => void }) {
   const { me, can, setTheme } = useMe();
+  // CR-014: collapsible left navigation, remembered per user (like the theme)
+  const [collapsed, setCollapsed] = useState(!!me.nav_collapsed);
+  const toggleNav = () => {
+    const next = !collapsed;
+    setCollapsed(next);
+    api.put("/api/me/preferences", { nav_collapsed: next }).catch(() => undefined);
+  };
   const { path } = useRouter();
   const nav = navFor(me);
   const allowed = new Set(nav.map((n) => n[0]));
@@ -142,6 +176,9 @@ function Shell({ workspace, warning, onLogout }: { workspace: string; warning: b
   else if (path === "/register") page = guard("/register", <Register />);
   else if (path === "/entities") page = guard("/entities", <Entities />);
   else if (path === "/reports") page = guard("/reports", <Reports />);
+  else if (path === "/notifications") page = can("reminder.view") ? <Notifications /> : <NotAuthorized />;
+  else if (path === "/fundraisers") page = guard("/fundraisers", <Fundraisers />);
+  else if ((m = match("/fundraisers/:id", path))) page = guard("/fundraisers", <FundraiserDetail id={Number(m.id)} />);
   else page = <p>Page not found.</p>;
 
   const roleNames: Record<string, string> = {
@@ -149,16 +186,17 @@ function Shell({ workspace, warning, onLogout }: { workspace: string; warning: b
     REGISTER_USER: "Register User", AUDITOR: "Auditor",
   };
   return (
-    <div className="shell">
+    <div className={`shell${collapsed ? " nav-collapsed" : ""}`}>
       <header className="topbar">
         <div className="brand">
-          <span className="logo" aria-hidden="true">◆</span> {workspace} <span className="muted">· Financial Management</span>
+          <img className="logo" src="/favicon.svg" alt="" width={20} height={20} /> {workspace} <span className="muted">· Fundwarden</span>
         </div>
         <div className="userbox">
           <span className="muted">{me.username} ({me.roles.map((r) => roleNames[r] || r).join(", ")})</span>
           <button className="small" onClick={toggleTheme} aria-label={`Switch to ${me.theme === "dark" ? "light" : "dark"} mode`}>
             {me.theme === "dark" ? "☀ Light" : "☾ Dark"}
           </button>
+          {can("reminder.view") ? <Bell path={path} /> : null}
           <Link to="/account" className="small-link">My account</Link>
           <button className="small" onClick={logout}>Sign out</button>
         </div>
@@ -166,14 +204,40 @@ function Shell({ workspace, warning, onLogout }: { workspace: string; warning: b
       {warning ? <div className="alert warn banner" role="alert">Security warning: this server is exposed on a network without HTTPS configuration. Deploy behind an HTTPS reverse proxy.</div> : null}
       <div className="body">
         <nav className="sidenav" aria-label="Main navigation">
+          <button type="button" className="nav-toggle" onClick={toggleNav} aria-expanded={!collapsed}
+            aria-label={collapsed ? "Expand navigation" : "Collapse navigation"} title={collapsed ? "Expand navigation" : "Collapse navigation"}>
+            <span aria-hidden="true">{collapsed ? "»" : "«"}</span>
+          </button>
           {nav.map(([to, label]) => (
-            <Link key={to} to={to}>{label}</Link>
+            <Link key={to} to={to} aria-label={label} title={collapsed ? label : undefined}>
+              <NavIcon to={to} /><span className="nav-label">{label}</span>
+            </Link>
           ))}
           {can("financial.view") ? null : null}
         </nav>
         <main className="content">{page}</main>
       </div>
     </div>
+  );
+}
+
+/** v1.6.3 CR-036: notifications bell with the number of due reminders (refreshed on navigation and every 5 min). */
+function Bell({ path }: { path: string }) {
+  const [n, setN] = useState(0);
+  useEffect(() => {
+    const load = () => api.get("/api/reminders/count").then((c) => setN(c.due), () => undefined);
+    load();
+    const t = window.setInterval(load, 5 * 60 * 1000);
+    window.addEventListener(REMINDERS_CHANGED, load);
+    return () => { window.clearInterval(t); window.removeEventListener(REMINDERS_CHANGED, load); };
+  }, [path]);
+  return (
+    <Link to="/notifications" className="bell" aria-label={n ? `Notifications: ${n} due` : "Notifications"} title="Notifications">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M6 9a6 6 0 1 1 12 0c0 5 2 6 2 7H4c0-1 2-2 2-7z" /><path d="M10 20a2 2 0 0 0 4 0" />
+      </svg>
+      {n ? <span className="bell-count" data-testid="bell-count">{n > 99 ? "99+" : n}</span> : null}
+    </Link>
   );
 }
 

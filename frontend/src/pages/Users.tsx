@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api } from "../api";
-import { ErrorBox, Field, Loading, Modal } from "../components";
+import { ErrorBox, Field, Loading, Modal, GuardedForm } from "../components";
 import { useMe } from "../App";
 
 const ROLES: Record<string, [string, string][]> = {
@@ -14,6 +14,7 @@ export default function Users() {
   const [users, setUsers] = useState<any[] | null>(null);
   const [edit, setEdit] = useState<any | null>(null);
   const [reset, setReset] = useState<any | null>(null);
+  const [mfaReset, setMfaReset] = useState<any | null>(null);
   const [err, setErr] = useState<unknown>(null);
   const load = () => api.get("/api/users").then(setUsers, setErr);
   useEffect(() => {
@@ -29,16 +30,18 @@ export default function Users() {
       </div>
       <ErrorBox error={err} />
       <table className="table">
-        <thead><tr><th>Username</th><th>Email</th><th>Security domain</th><th>Roles</th><th>Status</th>{manage ? <th /> : null}</tr></thead>
+        <thead><tr><th>Username</th><th>Email</th><th>Security domain</th><th>Roles</th><th>Status</th><th>Two-step</th>{manage ? <th /> : null}</tr></thead>
         <tbody>
           {users.map((u) => (
             <tr key={u.id}>
               <td>{u.username}</td><td>{u.email}</td><td>{u.security_domain}</td><td>{u.roles.join(", ")}</td>
               <td>{u.active ? "Active" : "Disabled"}</td>
+              <td>{u.mfa_enabled ? <span className="badge green">On</span> : <span className="badge grey">Not set up</span>}</td>
               {manage ? (
                 <td className="actions-cell">
                   <button className="small" onClick={() => setEdit(u)}>Edit</button>
                   <button className="small" onClick={() => setReset(u)}>Reset password</button>
+                  {u.mfa_enabled ? <button className="small" onClick={() => setMfaReset(u)}>Reset two-step</button> : null}
                 </td>
               ) : null}
             </tr>
@@ -47,6 +50,7 @@ export default function Users() {
       </table>
       {edit ? <UserForm user={edit} onClose={() => setEdit(null)} onSaved={() => { setEdit(null); load(); }} /> : null}
       {reset ? <ResetForm user={reset} onClose={() => setReset(null)} /> : null}
+      {mfaReset ? <MfaResetForm user={mfaReset} onClose={() => { setMfaReset(null); load(); }} /> : null}
     </div>
   );
 }
@@ -78,7 +82,7 @@ function UserForm({ user, onClose, onSaved }: { user: any; onClose: () => void; 
   };
   return (
     <Modal title={isNew ? "New user" : `Edit ${user.username}`} onClose={onClose}>
-      <form onSubmit={submit}>
+      <GuardedForm onSubmit={submit}>
         <ErrorBox error={err} />
         {isNew ? <Field label="Username"><input required value={f.username} onChange={(e) => setF({ ...f, username: e.target.value })} /></Field> : null}
         <Field label="Email"><input required type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} /></Field>
@@ -100,7 +104,7 @@ function UserForm({ user, onClose, onSaved }: { user: any; onClose: () => void; 
         ) : null}
         {!isNew ? <label className="check"><input type="checkbox" checked={f.active} onChange={(e) => setF({ ...f, active: e.target.checked })} /> Active</label> : null}
         <div className="actions"><button type="button" onClick={onClose}>Cancel</button><button className="primary" type="submit">Save</button></div>
-      </form>
+      </GuardedForm>
     </Modal>
   );
 }
@@ -120,7 +124,7 @@ function ResetForm({ user, onClose }: { user: any; onClose: () => void }) {
   };
   return (
     <Modal title={`Reset password for ${user.username}`} onClose={onClose}>
-      <form onSubmit={submit}>
+      <GuardedForm onSubmit={submit}>
         <ErrorBox error={err} />
         {done ? <div className="alert ok">Password reset. The user's sessions were signed out.</div> : (
           <>
@@ -128,7 +132,37 @@ function ResetForm({ user, onClose }: { user: any; onClose: () => void }) {
             <div className="actions"><button type="button" onClick={onClose}>Cancel</button><button className="primary" type="submit">Reset</button></div>
           </>
         )}
-      </form>
+      </GuardedForm>
+    </Modal>
+  );
+}
+
+// v1.4.1 CR-018: the user sets two-step verification up again at the next sign-in.
+function MfaResetForm({ user, onClose }: { user: any; onClose: () => void }) {
+  const [reason, setReason] = useState("");
+  const [err, setErr] = useState<unknown>(null);
+  const [done, setDone] = useState(false);
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    try {
+      await api.post(`/api/users/${user.id}/reset-mfa`, { reason });
+      setDone(true);
+    } catch (x) {
+      setErr(x);
+    }
+  };
+  return (
+    <Modal title={`Reset two-step verification for ${user.username}`} onClose={onClose}>
+      <GuardedForm onSubmit={submit}>
+        <ErrorBox error={err} />
+        {done ? <><div className="alert ok" role="status">Two-step verification was reset. {user.username} was signed out and will set it up again at the next sign-in.</div><div className="actions"><button type="button" className="primary" onClick={onClose}>Done</button></div></> : (
+          <>
+            <p>Use this when {user.username} has lost both the authenticator app and the recovery codes. Their authenticator, recovery codes and trusted browsers are removed and they are signed out everywhere.</p>
+            <Field label="Reason (required)"><input required maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Lost phone" /></Field>
+            <div className="actions"><button type="button" onClick={onClose}>Cancel</button><button className="primary" type="submit">Reset two-step verification</button></div>
+          </>
+        )}
+      </GuardedForm>
     </Modal>
   );
 }

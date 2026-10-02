@@ -3,7 +3,42 @@
 
 let csrfToken: string | null = null;
 
+/** v1.5.0: the server names the page build it serves. If this tab runs an older build (the server was upgraded while
+ * the page was open), reload once so the current code is used. The `_b` query marker prevents a reload loop. */
+const OWN_BUILD = (() => {
+  try {
+    return new URL(import.meta.url).pathname.split("/").pop() || "";
+  } catch {
+    return "";
+  }
+})();
+let reloading = false;
+function checkFrontendBuild(server: string | null) {
+  if (!server || !OWN_BUILD.endsWith(".js") || reloading) return;
+  const u = new URL(window.location.href);
+  if (server === OWN_BUILD) {
+    if (u.searchParams.has("_b")) {  // up to date again: drop the marker
+      u.searchParams.delete("_b");
+      window.history.replaceState(window.history.state, "", u.pathname + u.search + u.hash);
+    }
+    return;
+  }
+  if (u.searchParams.get("_b") === server) return; // already reloaded once for this build - never loop
+  reloading = true;
+  u.searchParams.set("_b", server);
+  window.location.replace(u.toString());
+}
+
+export function getCsrf(): string | null {
+  return csrfToken;
+}
+
+// HF-001 (1.5.0): a pre-auth token fetched while signed out must never overwrite a session token that was set
+// meanwhile (a slow /api/auth/csrf answer used to replace the session token right after sign-in -> 403 CSRF_FAILED).
+let csrfGen = 0;
+
 export function setCsrf(token: string | null) {
+  csrfGen += 1;
   csrfToken = token;
 }
 
@@ -43,6 +78,7 @@ async function request<T>(method: string, url: string, body?: unknown, isForm = 
     }
   }
   const res = await fetch(url, { method, headers, body: payload, credentials: "same-origin" });
+  checkFrontendBuild(res.headers.get("X-Frontend-Build"));
   const text = await res.text();
   let data: any = null;
   try {
@@ -53,7 +89,8 @@ async function request<T>(method: string, url: string, body?: unknown, isForm = 
   if (!res.ok) {
     const err = new ApiError(res.status, data);
     if (res.status === 401 && !url.startsWith("/api/auth/login")) {
-      window.dispatchEvent(new CustomEvent("fm:unauthenticated"));
+      // v1.5.0: MFA_REQUIRED means "signed in, second step outstanding" - the app shows the two-step screen
+      window.dispatchEvent(new CustomEvent("fm:unauthenticated", { detail: { code: data?.error?.code } }));
     }
     throw err;
   }
@@ -65,6 +102,7 @@ export const api = {
   post: <T = any>(url: string, body?: unknown) => request<T>("POST", url, body ?? {}),
   patch: <T = any>(url: string, body?: unknown) => request<T>("PATCH", url, body ?? {}),
   put: <T = any>(url: string, body?: unknown) => request<T>("PUT", url, body ?? {}),
+  delete: <T = any>(url: string) => request<T>("DELETE", url),
   upload: <T = any>(url: string, file: File) => {
     const fd = new FormData();
     fd.append("file", file);
@@ -73,8 +111,9 @@ export const api = {
 };
 
 export async function preAuthCsrf() {
+  const gen = csrfGen;
   const r = await api.get<{ csrf_token: string }>("/api/auth/csrf");
-  setCsrf(r.csrf_token);
+  if (gen === csrfGen) setCsrf(r.csrf_token); // someone set a (session) token meanwhile: keep it
 }
 
 export function qs(params: Record<string, string | number | boolean | null | undefined>) {
@@ -97,4 +136,11 @@ export function money(v: string | null | undefined) {
 export function todayIso() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** v1.3 CR-011: one-time key for a create form (works on plain-HTTP LAN addresses, unlike crypto.randomUUID). */
+export function newRequestKey() {
+  const b = new Uint8Array(16);
+  crypto.getRandomValues(b);
+  return Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
 }

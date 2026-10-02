@@ -4,6 +4,9 @@
 #   main    -> GitHub release      v<version>  (+ git tag)          (install in production)
 # A release is created only once per version: if tag v<version> already exists the main build is packaged but not
 # re-released (pull requests into main are blocked earlier by scripts/check_promotion.sh when the version was not bumped).
+# v1.5.0: the one-file Windows .exe is built and smoke-tested (with the portable zip) on a Windows runner (CR-026);
+# install.sh (one-command Linux install, CR-027) is attached to every release. Run this workflow by hand
+# (Actions -> build -> Run workflow) on a feature branch to try the packages without publishing anything.
 name: build
 on:
   push:
@@ -37,6 +40,13 @@ jobs:
       - id: meta
         name: Version
         run: echo "version=$(bash scripts/version.sh)" >> "$GITHUB_OUTPUT"
+      - name: Build info shown in the app (My Account / System About)
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          printf '{"version":"%s","branch":"%s","commit":"%s","run":"%s","built_at":"%s"}\n' \
+            "$VERSION" "$GITHUB_REF_NAME" "${GITHUB_SHA::7}" "$GITHUB_RUN_NUMBER" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            > backend/fmpoc/build_info.json
       - name: Frontend production build
         run: npm --prefix frontend ci && npm --prefix frontend run build
       - name: Linux portable package (servers - use with packaging/linux/install-server.sh)
@@ -48,27 +58,104 @@ jobs:
           VERSION: ${{ steps.meta.outputs.version }}
         run: |
           mkdir -p release
-          cp dist/FinancialManagementPOC-linux-x64-portable.tar.gz dist/FinancialManagementPOC-windows-x64.zip release/
-          cp packaging/linux/install-server.sh release/
+          cp dist/Fundwarden-linux-x64-portable.tar.gz dist/Fundwarden-windows-x64.zip release/
+          cp packaging/linux/install-server.sh packaging/linux/install.sh release/
           printf '{"version":"%s","branch":"%s","commit":"%s","run":"%s","built_at":"%s"}\n' \
             "$VERSION" "$GITHUB_REF_NAME" "$GITHUB_SHA" "$GITHUB_RUN_NUMBER" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > release/build-info.json
-          (cd release && sha256sum -- * > SHA256SUMS.txt && cat SHA256SUMS.txt)
       - name: Smoke test the Linux package
         run: |
-          mkdir -p "$RUNNER_TEMP/pkg" && tar -xzf release/FinancialManagementPOC-linux-x64-portable.tar.gz -C "$RUNNER_TEMP/pkg"
-          BIN=$(find "$RUNNER_TEMP/pkg" -maxdepth 2 -name FinancialManagementPOC -type f | head -1)
+          mkdir -p "$RUNNER_TEMP/pkg" && tar -xzf release/Fundwarden-linux-x64-portable.tar.gz -C "$RUNNER_TEMP/pkg"
+          BIN=$(find "$RUNNER_TEMP/pkg" -maxdepth 2 -name fundwarden -type f | head -1)
           env -i HOME="$RUNNER_TEMP" PATH=/usr/bin:/bin "$BIN" --no-browser --port 8790 --data-dir "$RUNNER_TEMP/d" &
           for i in $(seq 1 60); do curl -fs http://127.0.0.1:8790/api/health >/dev/null && break; sleep 1; done
           STATUS=$(curl -fs http://127.0.0.1:8790/api/system/status); echo "$STATUS"
           [[ "$STATUS" == *"\"version\":\"$(bash scripts/version.sh)\""* ]] || { echo "::error::package reports the wrong version"; exit 1; }
       - uses: actions/upload-artifact@v4
         with:
-          name: FinancialManagementPOC-${{ steps.meta.outputs.version }}-${{ github.ref_name }}-${{ github.run_number }}
+          name: linux-packages-${{ github.run_number }}
           path: release/
-          retention-days: ${{ github.ref_name == 'develop' && 14 || 90 }}
+          retention-days: 1
+
+  windows-exe:
+    # v1.5.0 CR-026: one-file .exe (PyInstaller --onefile) + smoke test of the .exe and of the portable zip.
+    needs: package
+    runs-on: windows-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Build info shown in the app
+        env:
+          VERSION: ${{ needs.package.outputs.version }}
+        run: |
+          $sha = "$env:GITHUB_SHA".Substring(0, 7)
+          $built = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+          '{"version":"' + $env:VERSION + '","branch":"' + $env:GITHUB_REF_NAME + '","commit":"' + $sha + '","run":"' + $env:GITHUB_RUN_NUMBER + '","built_at":"' + $built + '"}' |
+            Set-Content -Encoding utf8NoBOM backend/fmpoc/build_info.json
+      - name: Frontend production build
+        run: |
+          npm --prefix frontend ci
+          npm --prefix frontend run build
+      - name: One-file .exe
+        env:
+          FM_EXE_NAME: Fundwarden-${{ needs.package.outputs.version }}-windows-x64
+        run: |
+          python -m pip install --quiet -r backend/requirements.txt pyinstaller==6.22.3
+          python -m PyInstaller --noconfirm --log-level WARN --distpath dist --workpath build/pyinstaller-onefile packaging/pyinstaller/fmpoc-onefile.spec
+          Get-Item "dist/$env:FM_EXE_NAME.exe" | Format-List Name, Length
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-packages-${{ github.run_number }}
+          path: release
+      - name: Smoke test the .exe
+        run: pwsh packaging/windows/smoke_test.ps1 -Command "dist/Fundwarden-${{ needs.package.outputs.version }}-windows-x64.exe" -Version "${{ needs.package.outputs.version }}" -Port 8791
+      - name: Smoke test the portable zip
+        run: |
+          Expand-Archive release/Fundwarden-windows-x64.zip -DestinationPath "$env:RUNNER_TEMP/zip"
+          pwsh packaging/windows/smoke_test.ps1 -Command "$env:RUNNER_TEMP/zip/Fundwarden-windows-x64/Fundwarden.cmd" -Version "${{ needs.package.outputs.version }}" -Port 8792
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-exe-${{ github.run_number }}
+          path: dist/Fundwarden-${{ needs.package.outputs.version }}-windows-x64.exe
+          retention-days: 1
+
+  assemble:
+    # All release files + SHA256SUMS.txt (install.sh verifies against it). Publishing waits for both smoke tests.
+    needs: [package, windows-exe]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-packages-${{ github.run_number }}
+          path: release
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-exe-${{ github.run_number }}
+          path: release
+      - name: Checksums
+        run: (cd release && sha256sum -- * > SHA256SUMS.txt && cat SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Fundwarden-${{ needs.package.outputs.version }}-${{ github.ref_name }}-${{ github.run_number }}
+          path: release/
+          # test/main packages are kept permanently on the GitHub release; the run copy only feeds the publish job.
+          # Short retention keeps Actions artifact storage (1 GB on GitHub Pro) well below the limit.
+          retention-days: ${{ github.ref_name == 'develop' && 7 || 1 }}
 
   publish:
-    needs: package
+    needs: [package, assemble]
     if: github.ref_name == 'test' || github.ref_name == 'main'
     runs-on: ubuntu-latest
     permissions:
@@ -79,7 +166,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
-          name: FinancialManagementPOC-${{ needs.package.outputs.version }}-${{ github.ref_name }}-${{ github.run_number }}
+          name: Fundwarden-${{ needs.package.outputs.version }}-${{ github.ref_name }}-${{ github.run_number }}
           path: release
       - name: Publish GitHub release
         env:
@@ -93,16 +180,16 @@ jobs:
               exit 0
             fi
             TAG="v$VERSION-test.$GITHUB_RUN_NUMBER"
-            printf '\n---\nTest build from branch `test` (commit %s). Install on the **test** server:\n```\nsudo bash install-server.sh FinancialManagementPOC-linux-x64-portable.tar.gz\n```\n' "$GITHUB_SHA" >> notes.md
+            printf '\n---\nTest build from branch `test` (commit %s). Install or upgrade on the **test** server:\n```\ncurl -fsSL https://github.com/%s/releases/download/%s/install.sh | sudo bash -s -- --version %s\n```\nWindows: download `Fundwarden-%s-windows-x64.exe` and double-click it.\n' "$GITHUB_SHA" "$GITHUB_REPOSITORY" "$TAG" "$TAG" "$VERSION" >> notes.md
             gh release create "$TAG" release/* --target "$GITHUB_SHA" --prerelease \
-              --title "Freedger $VERSION (test build $GITHUB_RUN_NUMBER)" --notes-file notes.md
+              --title "Fundwarden $VERSION (test build $GITHUB_RUN_NUMBER)" --notes-file notes.md
           else
             TAG="v$VERSION"
             if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
               echo "::notice::$TAG already released - packages are attached to this workflow run only."
               exit 0
             fi
-            printf '\n---\nProduction release (commit %s). Upgrade: see docs/upgrade.md, then\n```\nsudo bash install-server.sh FinancialManagementPOC-linux-x64-portable.tar.gz\n```\n' "$GITHUB_SHA" >> notes.md
+            printf '\n---\nProduction release (commit %s). Install or upgrade (see docs/upgrade.md):\n```\ncurl -fsSL https://github.com/%s/releases/latest/download/install.sh | sudo bash\n```\nWindows: download `Fundwarden-%s-windows-x64.exe` and double-click it.\n' "$GITHUB_SHA" "$GITHUB_REPOSITORY" "$VERSION" >> notes.md
             gh release create "$TAG" release/* --target "$GITHUB_SHA" --latest \
-              --title "Freedger $VERSION" --notes-file notes.md
+              --title "Fundwarden $VERSION" --notes-file notes.md
           fi

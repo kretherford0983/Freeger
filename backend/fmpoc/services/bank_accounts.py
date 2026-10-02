@@ -58,13 +58,23 @@ def has_transactions(db: Session, a: BankAccount) -> bool:
     return db.scalar(select(RegisterTransaction.id).where(RegisterTransaction.bank_account_id == a.id).limit(1)) is not None
 
 
+# v1.5.0 CR-028: Bank Accounts page and dashboard show two groups (product owner: only checking and savings are
+# "Checking & Savings"; money market, CDs, investments, cash and other are "Investments and Other").
+GROUPS = [("CHECKING_SAVINGS", "Checking & Savings"), ("INVESTMENTS_OTHER", "Investments and Other")]
+CHECKING_SAVINGS_TYPES = {"CHECKING", "SAVINGS"}
+
+
+def group_of(account_type: str) -> str:
+    return "CHECKING_SAVINGS" if account_type in CHECKING_SAVINGS_TYPES else "INVESTMENTS_OTHER"
+
+
 def out(db: Session, a: BankAccount) -> dict:
     bal = balance_cents(db, a)
     return {**snapshot(a), "opening_balance_date": a.opening_balance_date.isoformat() if a.opening_balance_date else None,
             "closed_date": a.closed_date.isoformat() if a.closed_date else None,
             "financial_institution": entity_brief(a.institution), "current_balance": fmt(bal),
             "label": f"{a.account_name} - {masked(a)}", "uncleared_count": uncleared_count(db, a),
-            "has_transactions": has_transactions(db, a)}
+            "has_transactions": has_transactions(db, a), "group": group_of(a.account_type)}
 
 
 def _institution(db: Session, ctx, entity_id: int, current_id: int | None = None) -> Entity:

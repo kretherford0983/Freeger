@@ -28,8 +28,50 @@ def _open_browser_when_ready(url: str) -> None:
             time.sleep(0.25)
 
 
+def reset_mfa_cli(argv: list[str]) -> int:
+    """v1.4.1 CR-018: host-side MFA reset for a locked-out user (e.g. the only Administrator).
+
+        fundwarden reset-mfa --user NAME [--reason TEXT] [--data-dir DIR]
+
+    Run it as the account that owns the data directory (on the Linux server: sudo -u fundwarden ...). The user sets MFA
+    up again at the next sign-in. Recorded in the audit log as MFA_RESET via "host_cli".
+    """
+    p = argparse.ArgumentParser(prog="fundwarden reset-mfa", description="Reset a user's two-step verification")
+    p.add_argument("--user", required=True, help="username")
+    p.add_argument("--reason", default="Reset from the server command line")
+    p.add_argument("--data-dir")
+    a = p.parse_args(argv)
+    from sqlalchemy import select
+
+    from .db import make_engine, make_session_factory, upgrade_database
+    from .models import User
+    from .services import mfa
+
+    settings = load_settings({"data_dir": a.data_dir})
+    if not settings.database_path.is_file():
+        print(f"No database found in {settings.data_dir}", file=sys.stderr)
+        return 2
+    upgrade_database(settings.database_url)
+    factory = make_session_factory(make_engine(settings.database_url))
+    with factory() as db:
+        user = db.scalar(select(User).where(User.username_normalized == a.user.strip().lower()))
+        if user is None:
+            print(f"User '{a.user}' not found.", file=sys.stderr)
+            return 1
+
+        from types import SimpleNamespace
+        host_ctx = SimpleNamespace(workspace_id=user.workspace_id, user=None, correlation_id="host-cli", ip=None)
+        mfa.reset(db, host_ctx, user, a.reason, via="host_cli")  # audit context: host action, no signed-in user
+        db.commit()
+    print(f"Two-step verification for '{user.username}' was reset. They will set it up again at the next sign-in.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(prog="fmpoc", description="Financial Management POC")
+    argv = sys.argv[1:] if argv is None else argv
+    if argv and argv[0] == "reset-mfa":
+        return reset_mfa_cli(argv[1:])
+    p = argparse.ArgumentParser(prog="fundwarden", description="Fundwarden")
     p.add_argument("--mode", choices=["local", "server"])
     p.add_argument("--host")
     p.add_argument("--port", type=int)
@@ -57,7 +99,7 @@ def main(argv: list[str] | None = None) -> int:
 
     app = create_app(settings)
     url = f"http://{'127.0.0.1' if settings.host in ('0.0.0.0', '::') else settings.host}:{settings.port}"
-    print(f"Financial Management POC {VERSION} - {settings.mode} mode - {url}")
+    print(f"Fundwarden {VERSION} - {settings.mode} mode - {url}")
     print(f"Application data: {settings.data_dir}")
     if settings.mode == "local" and settings.open_browser:
         threading.Thread(target=_open_browser_when_ready, args=(url,), daemon=True).start()

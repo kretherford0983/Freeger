@@ -1,4 +1,9 @@
 // E2E UI verification (AC-INIT-*, AC-UI-THEME-*, AC-FY-VIS-*, AC-SEC-005/011, AC-AUTH-SELF-001, AC-REG-001).
+import { spawn } from "node:child_process";
+import { createHmac } from "node:crypto";
+import { existsSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 
 const PW = "Correct-Horse-9-Battery";
@@ -357,10 +362,824 @@ test("CR-002 / CR-005: reports page, audit PDF and entity report; documentation 
   await expect(page.getByRole("link", { name: "Download CSV" })).toBeVisible();
   await page.goto("/fiscal-years/1");
   const review = page.getByRole("heading", { name: /Documentation review/ }).locator("..");
-  await expect(review).toContainText("No attachment");
-  await expect(review).toContainText("Monthly bank service fee - auto debit");
+  // v1.4 CR-017: a "no attachment" mark WITH a reason counts as documented and is not listed
+  await expect(review).not.toContainText("Monthly bank service fee - auto debit");
   const splitRow = review.getByRole("row", { name: /2026-11-05/ });
   await expect(splitRow).toContainText("Missing attachment");
   await expect(splitRow).toContainText("1 of 2 allocations undocumented");
-  await expect(page.getByText(/transaction\(s\) are marked 'no attachment will be provided'/)).toBeVisible();
+  await expect(page.getByText(/transaction\(s\) have no supporting attachments/)).toBeVisible();
+});
+
+// ---------------------------------------------------------------- v1.3 enhancements
+const PDF = Buffer.from("%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[]/Count 0>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n");
+
+async function pickTravel(dlg: any, i = 1) {
+  await dlg.getByLabel(`Allocation ${i} Fiscal Year`).selectOption({ label: "FY2027 — Draft" });
+  const sel = dlg.getByLabel(`Allocation ${i} Budget`);
+  await sel.selectOption((await sel.locator("option", { hasText: "1000-01 Travel" }).getAttribute("value"))!);
+}
+
+test("CR-011 / CR-010: double-click saves once, files attach in the form, check numbers are unique", async ({ page }) => {
+  await login(page, "ru1", "Brand-New-Pass-99");
+  await page.getByRole("link", { name: "Register" }).click();
+  await page.getByRole("button", { name: "New transaction" }).click();
+  const t = page.getByRole("dialog", { name: /New transaction/ });
+  await t.getByLabel("Transaction date").fill("2026-11-10");
+  await t.getByLabel("Check #").fill("7001");
+  await pickTravel(t);
+  await t.getByLabel("Allocation 1 Amount").fill("12.34");
+  await t.getByLabel("Transaction attachments").setInputFiles({ name: "receipt-7001.pdf", mimeType: "application/pdf", buffer: PDF });
+  await expect(t).toContainText("receipt-7001.pdf");
+  await t.getByRole("button", { name: "Save" }).dblclick();
+  await expect(t).toHaveCount(0);
+  await expect(page.getByRole("row", { name: /2026-11-10/ })).toHaveCount(1);
+  await expect(page.getByRole("row", { name: /2026-11-10/ })).toContainText("📎1");
+  // the same check number cannot be used twice in the account
+  await page.getByRole("button", { name: "New transaction" }).click();
+  const t2 = page.getByRole("dialog", { name: /New transaction/ });
+  await t2.getByLabel("Transaction date").fill("2026-11-11");
+  await t2.getByLabel("Check #").fill("7001");
+  await pickTravel(t2);
+  await t2.getByLabel("Allocation 1 Amount").fill("5.00");
+  await t2.getByRole("button", { name: "Save" }).click();
+  await expect(t2.getByRole("alert")).toContainText("Check number 7001 is already used");
+  await t2.getByRole("button", { name: "Cancel" }).click();
+});
+
+test("CR-012: missing checks are listed in the Fiscal Year reviews and can be resolved", async ({ page }) => {
+  await login(page, "ru1", "Brand-New-Pass-99");
+  const post = await apiAs(page);
+  const opts = await (await page.request.get("/api/budgets/selectable?fiscal_year_id=1&transaction_type=WITHDRAWAL")).json();
+  const travel = opts.find((o: any) => o.label === "1000-01 Travel").id;
+  expect((await post("/api/transactions", { bank_account_id: 1, transaction_type: "WITHDRAWAL", transaction_date: "2026-11-12",
+    check_number: "7003", allocations: [{ budget_id: travel, amount: "3.00" }] })).status()).toBe(201);
+  await page.getByRole("link", { name: "Register" }).click();
+  await page.getByRole("button", { name: "Fiscal Year reviews" }).click();
+  const sec = page.locator(".missing-checks");
+  const row = sec.getByRole("row", { name: /^7002/ });
+  await expect(row).toContainText("#7001");
+  await expect(row).toContainText("#7003");
+  await row.getByRole("button", { name: "Enter transaction" }).click();
+  const t = page.getByRole("dialog", { name: /New transaction/ });
+  await expect(t.getByLabel("Check #")).toHaveValue("7002");
+  await t.getByRole("button", { name: "Cancel" }).click();
+  await row.getByRole("button", { name: "Confirm not missing…" }).click();
+  const d = page.getByRole("dialog", { name: /Confirm check #7002 not missing/ });
+  await d.getByLabel("Note (required)").fill("Torn out of the checkbook and destroyed");
+  await d.getByRole("button", { name: "Confirm not missing" }).click();
+  await expect(d).toHaveCount(0);
+  await expect(sec.getByRole("row", { name: /^7002/ })).toHaveCount(0);
+});
+
+test("CR-007 / CR-008: Fiscal Year document types, approval rules and the Close report", async ({ page }) => {
+  await login(page, "bm1");
+  const post = await apiAs(page);
+  const r = await post("/api/fiscal-years", { identifier: "2031", start_date: "2030-07-01", end_date: "2031-06-30", confirmations: ["FY_GAP"] });
+  expect(r.status()).toBe(201);
+  const fy = await r.json();
+  await page.goto(`/fiscal-years/${fy.id}`);
+  await page.getByRole("button", { name: "Approve…" }).click();
+  let dlg = page.getByRole("dialog", { name: /Approve FY2031/ });
+  await expect(dlg).toContainText("Attach the Approval document");
+  await dlg.getByLabel("I understand approval cannot be reversed.").check();
+  await expect(dlg.getByRole("button", { name: "Approve" })).toBeDisabled();
+  await dlg.getByRole("button", { name: "Cancel" }).click();
+  // "no approval document" needs a strong confirmation
+  await page.getByLabel(/No approval document — this organization/).click();
+  const mark = page.getByRole("dialog", { name: "No approval document?" });
+  await expect(mark).toContainText("The budget approval should be documented.");
+  await mark.getByLabel("Reason (optional)").fill("Approved verbally at the annual meeting");
+  await mark.getByLabel(/I understand and confirm/).check();
+  await mark.getByRole("button", { name: "Mark as no approval document" }).click();
+  await expect(page.locator(".fy-docs")).toContainText("Approved verbally at the annual meeting");
+  // uploading an approval document removes the mark
+  await page.getByLabel(/Add approval document/).setInputFiles({ name: "board-minutes.pdf", mimeType: "application/pdf", buffer: PDF });
+  await expect(page.locator(".fy-docs")).toContainText("board-minutes.pdf");
+  await expect(page.getByLabel(/No approval document — this organization/)).toHaveCount(0);
+  await page.getByRole("button", { name: "Approve…" }).click();
+  dlg = page.getByRole("dialog", { name: /Approve FY2031/ });
+  await dlg.getByLabel("I understand approval cannot be reversed.").check();
+  await dlg.getByRole("button", { name: "Approve" }).click();
+  await expect(page.getByRole("heading", { name: /FY2031/, level: 1 })).toContainText("Approved");
+  // an "other" document can be re-labelled as the Audit Signoff
+  await page.getByLabel(/Add other document/).setInputFiles({ name: "auditor-letter.pdf", mimeType: "application/pdf", buffer: PDF });
+  await page.getByLabel("Document type of auditor-letter.pdf").selectOption("AUDIT_SIGNOFF");
+  const signoff = page.locator(".fy-docs section.attachments", { has: page.getByRole("heading", { name: /Audit Signoff/ }) });
+  await expect(signoff).toContainText("auditor-letter.pdf");
+  const readiness = page.locator("section.card", { has: page.getByRole("heading", { name: "Closure readiness" }) });
+  await expect(readiness).not.toContainText("An Audit Signoff document is required");
+  await page.locator(".fy-docs").evaluate((el) => el.scrollIntoView({ block: "start" }));
+  await page.screenshot({ path: "e2e-screenshots/light-fy-documents.png" });
+  // Close report on the Reports page
+  await page.getByRole("link", { name: "Reports" }).click();
+  await page.getByRole("tab", { name: "Fiscal Year Close" }).click();
+  await page.getByLabel("Close report Fiscal Year").selectOption({ label: "FY2031 — Approved" });
+  const href = await page.getByRole("link", { name: "Open Close report PDF" }).getAttribute("href");
+  expect(href).toContain(`/api/reports/fy-close?fiscal_year_id=${fy.id}`);
+  const pdf = await page.request.get(href!);
+  expect(pdf.status()).toBe(200);
+  expect((await pdf.body()).subarray(0, 5).toString()).toBe("%PDF-");
+});
+
+test("CR-013 / CR-014 / CR-015: fixed navigation, collapsible menu and pinned register header", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await login(page, "ru1", "Brand-New-Pass-99");
+  const post = await apiAs(page);
+  const opts = await (await page.request.get("/api/budgets/selectable?fiscal_year_id=1&transaction_type=WITHDRAWAL")).json();
+  const travel = opts.find((o: any) => o.label === "1000-01 Travel").id;
+  for (let i = 0; i < 30; i++) {
+    const res = await post("/api/transactions", { bank_account_id: 1, transaction_type: "WITHDRAWAL", transaction_date: "2026-12-01",
+      allocations: [{ budget_id: travel, amount: `1.${String(i).padStart(2, "0")}`, description: `Scroll ${i}` }] });
+    expect(res.status()).toBe(201);
+  }
+  await page.getByRole("link", { name: "Register" }).click();
+  await expect(page.getByRole("row", { name: /Scroll 29/ })).toBeVisible();
+  await page.locator("main.content").evaluate((el) => { el.scrollTop = el.scrollHeight; });
+  await page.waitForTimeout(200);
+  // top bar and navigation did not move; register header and column headings are still on screen
+  expect((await page.locator("header.topbar").boundingBox())!.y).toBe(0);
+  expect((await page.getByRole("link", { name: "Dashboard" }).boundingBox())!.y).toBeLessThan(150);
+  const h1 = (await page.getByRole("heading", { name: "Register", level: 1 }).boundingBox())!;
+  expect(h1.y).toBeGreaterThan(40);
+  expect(h1.y).toBeLessThan(140);
+  await expect(page.getByRole("button", { name: "New transaction" })).toBeInViewport();
+  await expect(page.getByText("Current balance")).toBeInViewport();
+  await expect(page.getByLabel("Search")).toBeInViewport();
+  await expect(page.locator("table.register thead th", { hasText: "Withdrawal" })).toBeInViewport();
+  await expect(page.getByRole("row", { name: /Scroll 0\b/ })).not.toBeInViewport();
+  await page.screenshot({ path: "e2e-screenshots/light-register-scrolled.png" });
+  // collapsible navigation: icons only, current page still highlighted, remembered after reload
+  await page.getByRole("button", { name: "Collapse navigation" }).click();
+  const nav = page.getByRole("navigation", { name: "Main navigation" });
+  await expect.poll(async () => (await nav.boundingBox())!.width).toBeLessThan(70);
+  await expect(nav.locator(".nav-label").first()).toBeHidden();
+  await expect(nav.getByRole("link", { name: "Register" })).toHaveAttribute("aria-current", "page");
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Expand navigation" })).toBeVisible();
+  expect((await page.locator("header.topbar").boundingBox())!.width).toBe(1280);
+  await page.screenshot({ path: "e2e-screenshots/light-register-collapsed.png" });
+  await page.getByRole("button", { name: "Expand navigation" }).click();
+  await expect(nav.getByText("Register", { exact: true })).toBeVisible();
+});
+
+// ---------------------------------------------------------------- v1.4 enhancements
+test("CR-022 / CR-021: version in My Account for every user; bank balance total on the dashboard", async ({ page }) => {
+  await login(page, "bm1");
+  const total = page.getByTestId("bank-total");
+  await expect(total).toContainText("Total (all accounts)");
+  await expect(total).toContainText("$");
+  await page.screenshot({ path: "e2e-screenshots/light-dashboard-v14.png", fullPage: true });
+  await page.getByRole("link", { name: "My account" }).click();
+  const about = page.getByRole("region", { name: "About" });
+  await expect(about.getByTestId("app-version")).toHaveText(/^\d+\.\d+\.\d+$/);
+  await expect(about).toContainText(process.env.FM_BUNDLE ? "Build" : "Development build");
+  await expect(about).not.toContainText("Bind address");
+  await page.screenshot({ path: "e2e-screenshots/light-account-v14.png", fullPage: true });
+  await logout(page);
+  await login(page, "admin");
+  await page.getByRole("link", { name: "System/About" }).click();
+  await expect(page.getByText("Bind address")).toBeVisible();
+});
+
+// ---------------------------------------------------------------- v1.4.1
+test("CR-016: audit report signature page — wording, saved wordings, signers", async ({ page }) => {
+  await login(page, "bm1");
+  const post = await apiAs(page);
+  for (const n of ["Jane Trustee", "John Trustee"]) {
+    expect((await post("/api/entities", { entity_type: "INDIVIDUAL", primary_contact: n, confirmations: ["DUPLICATE_ENTITY"] })).status()).toBe(201);
+  }
+  await page.getByRole("link", { name: "Reports" }).click();
+  await page.getByLabel("Include audit review signature page").check();
+  await expect(page.getByLabel("Selected wording")).toContainText("We, the undersigned");
+  // new wording with an unknown variable is refused before opening the PDF
+  await page.getByLabel("New wording…").check();
+  await page.getByLabel("Signature page wording").fill("We, the Trustees of {ORG}, approve {YEAR}.");
+  await expect(page.getByRole("alert")).toContainText("Unknown variable(s): {YEAR}");
+  await page.getByLabel("Signature page wording").fill("We, the Trustees of {ORG}, approve the records for {FY}.");
+  await page.getByRole("button", { name: "Save for future use" }).click();
+  await expect(page.getByText("Wording saved for future use.")).toBeVisible();
+  await expect(page.getByLabel("Selected wording")).toContainText("We, the Trustees of {ORG}");
+  // signers
+  await page.getByRole("combobox", { name: "Signer 1" }).fill("Jane");
+  await page.getByRole("listbox").getByRole("option", { name: /Jane Trustee/ }).click();
+  await page.getByLabel("Signer 1 title").fill("Trustee");
+  await page.getByRole("button", { name: "+ Add signer" }).click();
+  await page.getByRole("combobox", { name: "Signer 2" }).fill("John");
+  await page.getByRole("listbox").getByRole("option", { name: /John Trustee/ }).click();
+  const href = await page.getByRole("link", { name: "Open printable PDF" }).getAttribute("href");
+  expect(href).toContain("signature_page=true");
+  expect(href).toContain("signature_template_id=");
+  expect(href!.match(/signer_id=/g)!.length).toBe(2);
+  const pdf = await page.request.get(href!);
+  expect(pdf.status()).toBe(200);
+  expect((await pdf.body()).subarray(0, 5).toString()).toBe("%PDF-");
+  await page.screenshot({ path: "e2e-screenshots/light-reports-signature.png", fullPage: true });
+  // delete the saved wording again
+  await page.getByRole("button", { name: "Delete saved wording 1" }).click();
+  await expect(page.getByRole("button", { name: "Delete saved wording 1" })).toHaveCount(0);
+  await expect(page.getByLabel("Default wording")).toBeChecked();
+});
+
+test("CR-020: dashboard charts — defaults, choose charts per user, data tables, light and dark", async ({ page }) => {
+  await login(page, "bm1");
+  const charts = page.getByRole("region", { name: "Charts" });
+  await expect(charts.getByTestId("chart-income_pie")).toBeVisible();
+  await expect(charts.getByTestId("chart-monthly")).toBeVisible();
+  await expect(charts.getByTestId("chart-expense_vs_budget")).toBeVisible();
+  await expect(charts.getByTestId("chart-balances")).toHaveCount(0);
+  await expect(charts.getByTestId("chart-monthly").locator(".recharts-surface").first()).toBeVisible();
+  await charts.getByTestId("chart-income_pie").screenshot({ path: "e2e-screenshots/light-chart-income-pie.png" });
+  // choose charts: add bank balances + cumulative net, remove the income pie; saved for this user
+  await charts.getByRole("button", { name: "Choose charts" }).click();
+  await charts.getByRole("checkbox", { name: "Bank balances (month end)" }).check();
+  await charts.getByRole("checkbox", { name: "Cumulative net (income − expenses)" }).check();
+  await charts.getByRole("checkbox", { name: "Income by budget" }).uncheck();
+  await charts.getByRole("button", { name: "Done" }).click();
+  await expect(charts.getByRole("status")).toHaveText("Chart choice saved");
+  await expect(charts.getByTestId("chart-balances")).toBeVisible();
+  await expect(charts.getByTestId("chart-income_pie")).toHaveCount(0);
+  // data table fallback
+  const monthly = charts.getByTestId("chart-monthly");
+  await monthly.getByText("Show data table").click();
+  await expect(monthly.getByRole("table")).toContainText("Expenses");
+  await page.screenshot({ path: "e2e-screenshots/light-dashboard-charts.png", fullPage: true });
+  await page.reload();
+  await expect(page.getByRole("region", { name: "Charts" }).getByTestId("chart-cumulative_net")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Charts" }).getByTestId("chart-income_pie")).toHaveCount(0);
+  await page.getByRole("button", { name: /Switch to dark mode/ }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await page.screenshot({ path: "e2e-screenshots/dark-dashboard-charts.png", fullPage: true });
+  // restore defaults for later tests
+  await page.getByRole("button", { name: /Switch to light mode/ }).click();
+  await charts.getByRole("button", { name: "Choose charts" }).click();
+  for (const n of ["Bank balances (month end)", "Cumulative net (income − expenses)"]) await charts.getByRole("checkbox", { name: n }).uncheck();
+  await charts.getByRole("checkbox", { name: "Income by budget" }).check();
+  await expect(charts.getByRole("status")).toHaveText("Chart choice saved");
+});
+
+// ---- CR-018: TOTP helper (RFC 6238, SHA-1, 30 s) for the E2E tests
+function totp(secret: string, offsetSteps = 0): string {
+  const alpha = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  let bits = "";
+  for (const ch of secret.replace(/[\s=]/g, "").toUpperCase()) bits += alpha.indexOf(ch).toString(2).padStart(5, "0");
+  const key = Buffer.from(bits.match(/.{8}/g)!.map((b) => parseInt(b, 2)));
+  const step = Math.floor(Date.now() / 1000 / 30) + offsetSteps;
+  const msg = Buffer.alloc(8);
+  msg.writeBigUInt64BE(BigInt(step));
+  const h = createHmac("sha1", key).update(msg).digest();
+  const o = h[h.length - 1] & 0xf;
+  const n = ((h[o] & 0x7f) << 24) | (h[o + 1] << 16) | (h[o + 2] << 8) | h[o + 3];
+  return String(n % 1_000_000).padStart(6, "0");
+}
+
+test("CR-018: two-step verification — setup, recovery codes, sign-in, trusted browser, admin reset", async ({ page }) => {
+  await login(page, "bm1");
+  await page.getByRole("link", { name: "My account" }).click();
+  const sec = page.getByRole("region", { name: "Two-step verification" });
+  await expect(sec).toContainText("Off");
+  await sec.getByRole("button", { name: "Set up two-step verification" }).click();
+  await expect(sec.getByRole("img", { name: "QR code for your authenticator app" })).toBeVisible();
+  const secret = (await sec.getByTestId("mfa-secret").textContent())!.replace(/\s/g, "");
+  expect(secret).toMatch(/^[A-Z2-7]{32}$/);
+  await sec.getByLabel("Code from the app").fill("000000");
+  await sec.getByRole("button", { name: "Turn on two-step verification" }).click();
+  await expect(sec.getByRole("alert")).toContainText("does not match");
+  await sec.getByLabel("Code from the app").fill(totp(secret));
+  await sec.getByRole("button", { name: "Turn on two-step verification" }).click();
+  const codes = sec.getByRole("list", { name: "Recovery codes" }).locator("code");
+  await expect(codes).toHaveCount(10);
+  const recovery = (await codes.first().textContent())!;
+  await page.screenshot({ path: "e2e-screenshots/light-mfa-recovery-codes.png", fullPage: true });
+  await expect(sec.getByRole("button", { name: "Continue" })).toBeDisabled();
+  await sec.getByLabel("I have saved my recovery codes").check();
+  await sec.getByRole("button", { name: "Continue" }).click();
+  await expect(sec).toContainText("10 of 10 recovery codes unused");
+  await logout(page);
+
+  // sign in: password, then the code
+  await page.getByLabel("Username").fill("bm1");
+  await page.getByLabel("Password").fill(PW);
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page.getByRole("heading", { name: "Two-step verification" })).toBeVisible();
+  await page.screenshot({ path: "e2e-screenshots/light-mfa-verify.png", fullPage: true });
+  await page.getByLabel("Authentication code").fill("123456");
+  await page.getByRole("button", { name: "Verify" }).click();
+  await expect(page.getByRole("alert")).toContainText("not valid");
+  await page.getByLabel("Authentication code").fill(totp(secret, 1));
+  await page.getByLabel("Trust this browser for 30 days").check();
+  await page.getByRole("button", { name: "Verify" }).click();
+  await expect(page.getByRole("navigation", { name: "Main navigation" })).toBeVisible();
+  await logout(page);
+  await login(page, "bm1"); // trusted browser: no code asked
+  await logout(page);
+
+  // a recovery code works in another browser context
+  const ctx2 = await page.context().browser()!.newContext({ baseURL: page.url().split("/").slice(0, 3).join("/") });
+  const p2 = await ctx2.newPage();
+  await p2.goto("/");
+  await p2.getByLabel("Username").fill("bm1");
+  await p2.getByLabel("Password").fill(PW);
+  await p2.getByRole("button", { name: "Sign in" }).click();
+  await p2.getByRole("button", { name: /Use a recovery code/ }).click();
+  await p2.getByLabel("Recovery code").fill(recovery);
+  await p2.getByRole("button", { name: "Verify" }).click();
+  await expect(p2.getByRole("navigation", { name: "Main navigation" })).toBeVisible();
+  await ctx2.close();
+
+  // administrator resets bm1's two-step verification
+  await login(page, "admin");
+  await page.getByRole("link", { name: "Users", exact: true }).click();
+  const row = page.getByRole("row", { name: /bm1/ });
+  await expect(row).toContainText("On");
+  await row.getByRole("button", { name: "Reset two-step" }).click();
+  const dlg = page.getByRole("dialog");
+  await dlg.getByLabel("Reason (required)").fill("E2E test");
+  await dlg.getByRole("button", { name: "Reset two-step verification" }).click();
+  await expect(dlg.getByRole("status")).toContainText("was reset");
+  await dlg.getByRole("button", { name: "Done" }).click();
+  await expect(page.getByRole("row", { name: /bm1/ })).toContainText("Not set up");
+  await logout(page);
+  await login(page, "bm1"); // local mode: optional again, no code asked (trusted browser was removed too)
+});
+
+// ---------------------------------------------------------------- CR-023 / CR-024 / CR-025 backup and restore
+const BACKUP_PASS = "e2e backup passphrase 2026";
+let backupFile = "";
+
+test("CR-023 / CR-025: Administrator creates an encrypted backup and restores it", async ({ page }) => {
+  await login(page, "admin");
+  await page.getByRole("link", { name: "System/About" }).click();
+  await expect(page.getByRole("heading", { name: "Backup / Restore" })).toBeVisible();
+  await page.getByLabel("Backup passphrase").fill(BACKUP_PASS);
+  await page.getByLabel("Repeat the passphrase").fill(BACKUP_PASS);
+  await page.getByLabel("Your password").fill(PW);
+  const dl = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Create backup" }).click();
+  const download = await dl;
+  expect(download.suggestedFilename()).toMatch(/^fundwarden-backup-e2e-org-\d{8}-\d{6}\.fmbak$/);
+  backupFile = join(mkdtempSync(join(tmpdir(), "fm-bk-")), download.suggestedFilename());
+  await download.saveAs(backupFile);
+  await expect(page.getByRole("status")).toContainText("Backup ready");
+  await page.screenshot({ path: "e2e-screenshots/light-backup.png", fullPage: true });
+
+  // restore it (replaces the current data; everyone is signed out)
+  await page.getByRole("tab", { name: "Restore" }).click();
+  await page.getByLabel("Backup file (.fmbak)").setInputFiles(backupFile);
+  await page.getByLabel("Backup passphrase").fill(BACKUP_PASS);
+  await page.getByLabel("Your password").fill(PW);
+  await expect(page.getByRole("button", { name: "Restore" })).toBeDisabled();
+  await page.getByLabel("Type RESTORE to confirm").fill("RESTORE");
+  await page.getByRole("button", { name: "Restore" }).click();
+  await expect(page.getByRole("status")).toContainText("Restore complete", { timeout: 30_000 });
+  await page.screenshot({ path: "e2e-screenshots/light-restore-done.png", fullPage: true });
+  await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible({ timeout: 15_000 });
+  await login(page, "admin");
+  await page.getByRole("link", { name: "Audit Log", exact: true }).click();
+  await expect(page.getByText("SYSTEM_RESTORED").first()).toBeVisible();
+});
+
+test("CR-024: a new installation is set up from the backup in the initialization wizard", async ({ page }) => {
+  expect(backupFile).not.toBe("");
+  const port = 8799;
+  const bundle = process.env.FM_BUNDLE;
+  const dataDir = mkdtempSync(join(tmpdir(), "fm-wiz-"));
+  const args = bundle ? ["--no-browser", "--port", String(port), "--data-dir", dataDir]
+    : ["-m", "fmpoc", "--no-browser", "--port", String(port), "--data-dir", dataDir];
+  const child = spawn(bundle || process.env.FM_PYTHON || "python", args, { cwd: existsSync(join(process.cwd(), "..", "backend")) ? join(process.cwd(), "..", "backend") : join(process.cwd(), "backend"), stdio: "ignore" });
+  try {
+    const base = `http://127.0.0.1:${port}`;
+    for (let i = 0; i < 120; i++) {
+      try { if ((await fetch(`${base}/api/health`)).ok) break; } catch { /* starting */ }
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    await page.goto(base + "/");
+    await expect(page.getByRole("heading", { name: "Initialization Wizard" })).toBeVisible();
+    await page.getByRole("button", { name: "Restore from a backup instead" }).click();
+    await page.getByLabel("Backup file (.fmbak)").setInputFiles(backupFile);
+    await page.getByLabel("Backup passphrase").fill("not the passphrase");
+    await page.getByRole("button", { name: "Restore" }).click();
+    await expect(page.getByRole("alert").last()).toContainText("Wrong passphrase", { timeout: 30_000 });
+    await page.getByLabel("Backup file (.fmbak)").setInputFiles(backupFile);
+    await page.getByLabel("Backup passphrase").fill(BACKUP_PASS);
+    await page.getByRole("button", { name: "Restore" }).click();
+    await expect(page.getByRole("status")).toContainText("Restore complete", { timeout: 30_000 });
+    await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("E2E Org")).toBeVisible();
+    await page.getByLabel("Username").fill("admin");
+    await page.getByLabel("Password").fill(PW);
+    await page.getByRole("button", { name: "Sign in" }).click();
+    await expect(page.getByRole("navigation", { name: "Main navigation" })).toBeVisible();
+  } finally {
+    child.kill();
+  }
+});
+
+// ---------------------------------------------------------------- v1.5.0 UI polish
+test("CR-028 / CR-030 / CR-029 / CR-032: account groups, chart columns, signature preview, aligned passphrase fields", async ({ page }) => {
+  await login(page, "bm1");
+  // CR-030: charts in two independent columns
+  const charts = page.getByRole("region", { name: "Charts" });
+  await expect(charts.locator(".chart-cols > .chart-col")).toHaveCount(2);
+  // CR-028: dashboard groups with subtotals
+  await expect(page.getByTestId("bank-group-CHECKING_SAVINGS")).toContainText("Subtotal Checking & Savings");
+  await expect(page.getByTestId("bank-total")).toContainText("Total (all accounts)");
+  await page.getByRole("link", { name: "Bank Accounts" }).click();
+  await expect(page.getByRole("heading", { name: "Checking & Savings" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Investments and Other" })).toBeVisible();
+  await expect(page.getByTestId("accounts-CHECKING_SAVINGS")).toContainText("Total Checking & Savings");
+  await page.screenshot({ path: "e2e-screenshots/light-bank-accounts-groups.png", fullPage: true });
+  // CR-029: preview only the signature page
+  await page.getByRole("link", { name: "Reports" }).click();
+  await page.getByLabel("Include audit review signature page").check();
+  const preview = page.getByRole("link", { name: "Preview signature page" });
+  const href = await preview.getAttribute("href");
+  expect(href).toContain("/api/reports/audit/signature-page?");
+  const pdf = await page.request.get(href!);
+  expect(pdf.status()).toBe(200);
+  expect(pdf.headers()["content-type"]).toBe("application/pdf");
+  await logout(page);
+  // CR-032: passphrase fields line up
+  await login(page, "admin");
+  await page.getByRole("link", { name: "System/About" }).click();
+  await expect(page.getByLabel("Fundraiser module")).toBeVisible(); // the modules panel loads above and shifts the page
+  const a = await page.getByLabel("Backup passphrase").boundingBox();
+  const b = await page.getByLabel("Repeat the passphrase").boundingBox();
+  expect(Math.abs(a!.y - b!.y)).toBeLessThan(2);
+  expect(Math.abs(a!.height - b!.height)).toBeLessThan(2);
+});
+
+// ---------------------------------------------------------------- v1.5.0 CR-031: dashboard layout
+test("CR-031: dashboard sections can be hidden, reordered and reset; saved per user", async ({ page }) => {
+  await login(page, "ru1", "Brand-New-Pass-99");
+  const order = () => page.locator(".dash-section").evaluateAll((els) => els.map((e) => e.getAttribute("data-section")).filter((k) => k !== "notifications")); // v1.6.3: Notifications is first
+  // wait until the dashboard data has loaded (the sections render after /api/dashboard answers)
+  await expect(page.locator(".dash-section")).toHaveCount(6);
+  expect(await order()).toEqual(["fiscal_year", "budget", "bank", "attention", "charts"]);
+  await page.getByRole("button", { name: "Customize dashboard" }).click();
+  await expect(page.getByTestId("layout-review")).toHaveCount(0); // Auditors only
+  await page.getByRole("button", { name: "Move Bank account balances up" }).click();
+  await page.getByRole("button", { name: "Move Bank account balances up" }).click();
+  await page.getByTestId("layout-attention").getByRole("checkbox").uncheck();
+  await expect(page.getByRole("status").filter({ hasText: "Dashboard layout saved" })).toBeVisible();
+  expect(await order()).toEqual(["bank", "fiscal_year", "budget", "charts"]);
+  await page.getByRole("button", { name: "Done" }).click();
+  await page.reload();
+  await expect(page.locator(".dash-section").nth(1)).toHaveAttribute("data-section", "bank");
+  expect(await order()).toEqual(["bank", "fiscal_year", "budget", "charts"]);
+  await page.screenshot({ path: "e2e-screenshots/light-dashboard-customized.png", fullPage: true });
+  await logout(page);
+  // another user keeps the default
+  await login(page, "bm1");
+  await expect(page.locator(".dash-section").nth(1)).toHaveAttribute("data-section", "fiscal_year");
+  await logout(page);
+  await login(page, "ru1", "Brand-New-Pass-99");
+  await expect(page.locator(".dash-section").nth(1)).toHaveAttribute("data-section", "bank");
+  await page.getByRole("button", { name: "Customize dashboard" }).click();
+  await page.getByRole("button", { name: "Reset to default" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Dashboard layout saved" })).toBeVisible();
+  expect(await order()).toEqual(["fiscal_year", "budget", "bank", "attention", "charts"]);
+  await expect(page.getByRole("button", { name: "Reset to default" })).toBeDisabled();
+  await logout(page);
+});
+
+// ---------------------------------------------------------------- v1.6.0 CR-033: fundraisers
+test("CR-033: Administrator turns on fundraisers; Budget Manager creates, filters and views one; shells are upcoming", async ({ page }) => {
+  await login(page, "admin");
+  await page.getByRole("link", { name: "System/About" }).click();
+  await page.getByLabel("Fundraiser module").check();
+  await expect(page.getByRole("status").filter({ hasText: "Saved." })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Fundraisers" })).toHaveCount(0);
+  await logout(page);
+
+  await login(page, "bm1");
+  await page.getByRole("link", { name: "Fundraisers" }).click();
+  await page.getByRole("button", { name: "New fundraiser" }).click();
+  let dlg = page.getByRole("dialog", { name: "New fundraiser" });
+  await dlg.getByLabel("Name").fill("Harvest Dinner");
+  await dlg.getByLabel("Event start date").fill("2026-10-15");
+  const exp = dlg.getByLabel("Expense budget (FY2027)");
+  await exp.selectOption({ label: "1000 Operations" });
+  await expect(dlg.getByRole("note").filter({ hasText: "includes all of its sub-budgets" })).toBeVisible();
+  const travel = await exp.locator("option", { hasText: "1000-01 Travel" }).getAttribute("value");
+  await exp.selectOption(travel!);
+  await expect(dlg.getByRole("note").filter({ hasText: "includes all of its sub-budgets" })).toHaveCount(0);
+  await expect(dlg.getByTestId("fr-preview")).toContainText("will be included");
+  await dlg.getByRole("button", { name: "Create fundraiser" }).click();
+  await expect(page.getByRole("heading", { name: /Harvest Dinner/ })).toBeVisible();
+  await expect(page.getByTestId("fr-event")).toHaveText("2026-10-15");
+  await expect(page.getByRole("row", { name: /FY2027 Expense 1000-01 Travel/ })).toBeVisible();
+  // a filter that matches nothing: warning + no lines
+  await page.getByRole("button", { name: "Edit" }).click();
+  dlg = page.getByRole("dialog", { name: "Edit fundraiser" });
+  await dlg.getByLabel("Description filter (optional)").fill("zzz-no-match");
+  await expect(dlg.getByText("Filter in use:")).toBeVisible();
+  await expect(dlg.getByTestId("fr-preview")).toContainText("0 of");
+  await dlg.getByRole("button", { name: "Save" }).click();
+  await expect(page.locator("[data-code=FILTER]")).toBeVisible();
+  await expect(page.getByTestId("fr-totals")).toContainText("$0.00");
+  await page.screenshot({ path: "e2e-screenshots/light-fundraiser-detail.png", fullPage: true });
+  // a shell for an event beyond every Fiscal Year: no budgets yet, listed as upcoming
+  await page.getByRole("link", { name: "← Fundraisers" }).click();
+  await page.getByRole("button", { name: "New fundraiser" }).click();
+  dlg = page.getByRole("dialog", { name: "New fundraiser" });
+  await dlg.getByLabel("Name").fill("Spring Fair 2028");
+  await dlg.getByLabel("Event start date").fill("2028-03-04");
+  await expect(dlg.getByText("No open Fiscal Year is within 3 months of the event yet")).toBeVisible();
+  await dlg.getByRole("button", { name: "Create fundraiser" }).click();
+  await expect(page.locator("[data-code=NO_BUDGETS]")).toBeVisible();
+  await page.getByRole("link", { name: "← Fundraisers" }).click();
+  await expect(page.getByTestId("fundraiser-list")).toContainText("Harvest Dinner");
+  await page.getByLabel("Fundraisers Fiscal Year").selectOption({ label: "Upcoming — no Fiscal Year yet" });
+  await expect(page.getByTestId("fundraiser-list")).toContainText("Spring Fair 2028");
+  await expect(page.getByTestId("fundraiser-list")).not.toContainText("Harvest Dinner");
+  await logout(page);
+
+  // viewers see it, without management buttons
+  await login(page, "ru1", "Brand-New-Pass-99");
+  await page.getByRole("link", { name: "Fundraisers" }).click();
+  await expect(page.getByRole("button", { name: "New fundraiser" })).toHaveCount(0);
+  await page.getByRole("link", { name: "Harvest Dinner" }).click();
+  await expect(page.getByRole("heading", { name: /Harvest Dinner/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Edit" })).toHaveCount(0);
+  await logout(page);
+});
+
+// ---------------------------------------------------------------- v1.6.1 CR-034: fundraiser management
+test("CR-034: buckets, cash float, exclusion and fundraiser documents", async ({ page }) => {
+  // Budget Manager: no filter, the whole Operations budget (so the fundraiser has expense lines)
+  await login(page, "bm1");
+  await page.getByRole("link", { name: "Fundraisers" }).click();
+  await page.getByRole("link", { name: "Harvest Dinner" }).click();
+  await page.getByRole("button", { name: "Edit" }).click();
+  let dlg = page.getByRole("dialog", { name: "Edit fundraiser" });
+  await dlg.getByLabel("Description filter (optional)").fill("");
+  await dlg.getByLabel("Expense budget (FY2027)").selectOption({ label: "1000 Operations" });
+  await dlg.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByTestId("fr-lines").getByRole("button", { name: /^Manage line/ }).first()).toBeVisible();
+  await logout(page);
+
+  // Register User manages the lines
+  await login(page, "ru1", "Brand-New-Pass-99");
+  await page.getByRole("link", { name: "Fundraisers" }).click();
+  await page.getByRole("link", { name: "Harvest Dinner" }).click();
+  await page.getByRole("button", { name: "New bucket" }).click();
+  dlg = page.getByRole("dialog", { name: "New bucket" });
+  await dlg.getByLabel("Bucket name").fill("Food sales");
+  await dlg.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByTestId("fr-buckets")).toContainText("Food sales");
+  const before = await page.getByTestId("fr-totals").innerText();
+  // line 1: everything into the bucket
+  await page.getByTestId("fr-lines").getByRole("button", { name: /^Manage line/ }).nth(0).click();
+  dlg = page.getByRole("dialog", { name: "Manage transaction line" });
+  await dlg.getByRole("button", { name: "All remaining" }).click();
+  await expect(dlg.getByTestId("fr-line-remaining")).toContainText("unassigned $0.00");
+  await dlg.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByTestId("fr-lines").locator(".fr-bucket").first()).toContainText("Food sales");
+  await expect(page.getByTestId("fr-chart-buckets")).toBeVisible();
+  // line 2: cash float out for the whole amount -> not an expense of the fundraiser
+  await page.getByTestId("fr-lines").getByRole("button", { name: /^Manage line/ }).nth(1).click();
+  dlg = page.getByRole("dialog", { name: "Manage transaction line" });
+  await dlg.getByLabel("Cash float out").check();
+  await dlg.getByLabel("Cash float amount").fill("1.00");
+  await dlg.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByTestId("fr-adjustments")).toContainText("cash float taken out $1.00");
+  expect(await page.getByTestId("fr-totals").innerText()).not.toEqual(before);
+  // line 1 again: exclude (needs a reason; clears the bucket)
+  await page.getByTestId("fr-lines").getByRole("button", { name: /^Manage line/ }).nth(0).click();
+  dlg = page.getByRole("dialog", { name: "Manage transaction line" });
+  await dlg.getByLabel("Exclude this line from the fundraiser").check();
+  await dlg.getByLabel("Reason for excluding").fill("Not for the dinner");
+  await dlg.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByTestId("fr-lines").locator("tr.fr-excluded")).toContainText("Excluded: Not for the dinner");
+  await expect(page.getByTestId("fr-adjustments")).toContainText("1 excluded line");
+  // fundraiser document
+  await page.locator("section.attachments").filter({ hasText: "Fundraiser documents" }).locator("input[type=file]")
+    .setInputFiles({ name: "flyer.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[]/Count 0>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n") });
+  await expect(page.getByRole("heading", { name: "Fundraiser documents (1)" })).toBeVisible();
+  await page.screenshot({ path: "e2e-screenshots/light-fundraiser-manage.png", fullPage: true });
+  await logout(page);
+
+  // a fundraiser in use cannot be deleted
+  await login(page, "bm1");
+  await page.getByRole("link", { name: "Fundraisers" }).click();
+  await page.getByRole("link", { name: "Harvest Dinner" }).click();
+  await page.getByRole("button", { name: "Delete…" }).click();
+  await page.getByRole("dialog", { name: "Delete fundraiser" }).getByRole("button", { name: "Delete" }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "Archive it instead" })).toBeVisible();
+  await logout(page);
+});
+
+// ---------------------------------------------------------------- v1.6.2 CR-035: fundraiser report
+test("CR-035: fundraiser report PDF; Audit and Close reports can include fundraisers", async ({ page }) => {
+  await login(page, "bm1");
+  await page.getByRole("link", { name: "Fundraisers" }).click();
+  await page.getByRole("link", { name: "Harvest Dinner" }).click();
+  const href = await page.getByRole("link", { name: "Report (PDF)" }).getAttribute("href");
+  const pdf = await page.request.get(href!);
+  expect(pdf.status()).toBe(200);
+  expect(pdf.headers()["content-type"]).toBe("application/pdf");
+  await page.getByRole("link", { name: "Reports" }).click();
+  await expect(page.getByLabel("Include fundraisers")).toBeChecked();
+  const audit = await page.getByRole("link", { name: "Open printable PDF" }).getAttribute("href");
+  expect(audit).toContain("include_fundraisers=true");
+  const withFr = await page.request.get(audit!);
+  expect(withFr.status()).toBe(200);
+  await page.getByLabel("Include fundraisers").uncheck();
+  const without = await page.getByRole("link", { name: "Open printable PDF" }).getAttribute("href");
+  expect(without).not.toContain("include_fundraisers");
+  const plain = await page.request.get(without!);
+  expect((await withFr.body()).length).toBeGreaterThan((await plain.body()).length);
+  await logout(page);
+});
+
+// ---------------------------------------------------------------- v1.6.3 CR-036: reminders and notifications
+test("CR-036: organization and personal reminders - bell, dashboard, resolve with a note, read-only viewers", async ({ page }) => {
+  const now = new Date(); // the server uses its local date
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  await login(page, "bm1");
+  await page.getByRole("link", { name: "Notifications" }).click();
+  await expect(page.getByText("Nothing needs your attention.")).toBeVisible();
+  // organization reminder due today
+  await page.getByRole("button", { name: "New reminder" }).click();
+  let dlg = page.getByRole("dialog", { name: "New reminder" });
+  await dlg.getByRole("combobox").first().selectOption("ORGANIZATION");
+  await dlg.getByLabel("Reminder", { exact: true }).fill("File the annual return");
+  await dlg.getByLabel("Due date").fill(today);
+  await dlg.getByLabel("Link to (optional)").selectOption("FISCAL_YEAR");
+  await dlg.getByLabel("Item").selectOption({ index: 1 });
+  await dlg.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByTestId("reminder")).toContainText("File the annual return");
+  await expect(page.getByTestId("bell-count")).toHaveText("1");
+  // personal reminder next year: upcoming, editable, not a notification yet
+  await page.getByRole("button", { name: "New reminder" }).click();
+  dlg = page.getByRole("dialog", { name: "New reminder" });
+  await dlg.getByLabel("Reminder", { exact: true }).fill("Renew my token");
+  await dlg.getByLabel("Due date").fill(`${Number(today.slice(0, 4)) + 1}-01-15`);
+  await dlg.getByRole("button", { name: "Save" }).click();
+  await page.getByRole("tab", { name: "Upcoming" }).click();
+  await expect(page.getByTestId("reminder")).toContainText("Renew my token");
+  await expect(page.getByRole("button", { name: "Edit Renew my token" })).toBeVisible();
+  await expect(page.getByTestId("bell-count")).toHaveText("1");
+  // dashboard section
+  await page.getByRole("link", { name: "Dashboard" }).click();
+  await expect(page.locator("[data-section=notifications]")).toContainText("File the annual return");
+  await page.screenshot({ path: "e2e-screenshots/light-dashboard-notifications.png" });
+  await logout(page);
+
+  // Register User: sees and resolves the organization reminder with a note; not the other user's personal one
+  await login(page, "ru1", "Brand-New-Pass-99");
+  await expect(page.getByTestId("bell-count")).toHaveText("1");
+  await page.getByRole("link", { name: /Notifications/ }).click();
+  await expect(page.getByTestId("reminder")).toHaveCount(1);
+  await page.getByRole("button", { name: "Resolve File the annual return" }).click();
+  dlg = page.getByRole("dialog", { name: "Resolve reminder" });
+  await dlg.getByLabel("Note (optional)").fill("Filed online");
+  await dlg.getByRole("button", { name: "Mark as resolved" }).click();
+  await expect(page.getByText("Nothing needs your attention.")).toBeVisible();
+  await expect(page.getByTestId("bell-count")).toHaveCount(0);
+  await page.getByRole("tab", { name: "Resolved" }).click();
+  await expect(page.getByTestId("reminder")).toContainText("Filed online");
+  await page.getByRole("button", { name: "Reopen File the annual return" }).click();
+  await expect(page.getByTestId("bell-count")).toHaveText("1");
+  await logout(page);
+});
+
+// ---------------------------------------------------------------- v1.6.4 CR-037 / CR-038
+test("CR-037 / CR-038: cash count sheet PDF; mark a fundraiser as cancelled and reinstate it", async ({ page }) => {
+  await login(page, "bm1");
+  await page.getByRole("link", { name: "Fundraisers" }).click();
+  await page.getByRole("link", { name: "Harvest Dinner" }).click();
+  await page.getByRole("button", { name: "Cash count sheet…" }).click();
+  let dlg = page.getByRole("dialog", { name: "Cash count sheet" });
+  // 1.6.6: three empty rows by default = three blank Signature / Printed / Date rows; no fourth empty row
+  await expect(dlg.locator(".sig-signer")).toHaveCount(3);
+  await expect(dlg.getByRole("button", { name: "+ Add signature line" })).toHaveCount(0);
+  const href = await dlg.getByRole("link", { name: "Open sheet (PDF)" }).getAttribute("href");
+  expect(href).toMatch(/blank_lines=3$/);
+  expect((await page.request.get(href!.replace("blank_lines=3", "blank_lines=4"))).status()).toBe(422);
+  await dlg.getByLabel("Add page 2 for more checks").uncheck();   // page 2 (more check lines, for the back) is optional
+  await expect(dlg.getByRole("link", { name: "Open sheet (PDF)" })).toHaveAttribute("href", /extra_checks=false&blank_lines=3$/);
+  await dlg.getByLabel("Add page 2 for more checks").check();
+  const pdf = await page.request.get(href!);
+  expect(pdf.status()).toBe(200);
+  expect(pdf.headers()["content-type"]).toBe("application/pdf");
+  await dlg.getByRole("button", { name: "Close", exact: true }).last().click();
+  await page.getByRole("button", { name: "Mark as cancelled…" }).click();
+  dlg = page.getByRole("dialog", { name: "Mark fundraiser as cancelled" });
+  await dlg.getByLabel("Reason").fill("Hall double-booked");
+  await dlg.getByRole("button", { name: "Mark as cancelled" }).click();
+  await expect(page.getByTestId("fr-cancelled")).toContainText("Hall double-booked");
+  await expect(page.getByRole("heading", { name: /Harvest Dinner/ })).toContainText("Cancelled");
+  await expect(page.getByTestId("fr-lines")).toBeVisible(); // transactions still listed
+  await page.getByRole("link", { name: "← Fundraisers" }).click();
+  await expect(page.getByRole("row", { name: /Harvest Dinner/ })).toContainText("Cancelled");
+  await page.getByRole("link", { name: "Harvest Dinner" }).click();
+  await page.getByRole("button", { name: "Reinstate" }).click();
+  await expect(page.getByTestId("fr-cancelled")).toHaveCount(0);
+  await logout(page);
+});
+
+// ---------------------------------------------------------------- v1.5.0: license (AGPL-3.0) and source link
+test("v1.5.0: sign-in page and My Account offer the source code, license and third-party notices", async ({ page }) => {
+  await page.goto("/");
+  const legal = page.locator(".login-legal");
+  await expect(legal.getByRole("link", { name: "Source code" })).toHaveAttribute("href", /github\.com\/kretherford0983\/Fundwarden/);
+  const lic = await page.request.get(await legal.getByRole("link", { name: "License" }).getAttribute("href") as string);
+  expect(await lic.text()).toContain("GNU AFFERO GENERAL PUBLIC LICENSE");
+  const notices = await page.request.get(await legal.getByRole("link", { name: "Third-party notices" }).getAttribute("href") as string);
+  expect(await notices.text()).toContain("recharts");
+  await login(page, "bm1");
+  await page.getByRole("link", { name: "My account" }).click();
+  await expect(page.getByTestId("app-license")).toContainText("AGPL-3.0");
+  await expect(page.getByTestId("app-license").getByRole("link", { name: "Source code" })).toBeVisible();
+  await logout(page);
+});
+
+// ---------------------------------------------------------------- 1.6.6: Fundwarden name and icon
+test("1.6.6: the page carries the Fundwarden name and the coin icon (browser tab, sign-in page, top bar)", async ({ page }) => {
+  await page.goto("/");
+  await expect(page).toHaveTitle("Fundwarden");
+  await expect(page.locator('link[rel="icon"]')).toHaveAttribute("href", "/favicon.svg");
+  const svg = await page.request.get("/favicon.svg");
+  expect(svg.status()).toBe(200);
+  expect(svg.headers()["content-type"]).toContain("image/svg+xml");
+  expect((await page.request.get("/favicon-32.png")).headers()["content-type"]).toContain("image/png");
+  expect((await page.request.get("/apple-touch-icon.png")).status()).toBe(200);
+  await expect(page.locator(".login-legal")).toContainText("Fundwarden");
+  await expect(page.locator(".login-legal img.logo")).toHaveJSProperty("complete", true);
+  expect(await page.locator(".login-legal img.logo").evaluate((i) => (i as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+  await login(page, "bm1");
+  await expect(page.locator("header.topbar .brand")).toContainText("Fundwarden");
+  expect(await page.locator("header.topbar img.logo").evaluate((i) => (i as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+  await logout(page);
+});
+
+// ---------------------------------------------------------------- v1.5.0: sign-in from a bookmarked page (server mode)
+test("v1.5.0: a bookmarked page leads to the dashboard address, two-step setup/verify, then the dashboard", async ({ page }) => {
+  const port = 8800;
+  const bundle = process.env.FM_BUNDLE;
+  const dataDir = mkdtempSync(join(tmpdir(), "fm-srv-"));
+  const args = ["--mode", "server", "--host", "127.0.0.1", "--no-browser", "--port", String(port), "--data-dir", dataDir];
+  const child = spawn(bundle || process.env.FM_PYTHON || "python", bundle ? args : ["-m", "fmpoc", ...args],
+    { cwd: existsSync(join(process.cwd(), "..", "backend")) ? join(process.cwd(), "..", "backend") : join(process.cwd(), "backend"), stdio: "ignore" });
+  try {
+    const base = `http://127.0.0.1:${port}`;
+    for (let i = 0; i < 120; i++) {
+      try { if ((await fetch(`${base}/api/health`)).ok) break; } catch { /* starting */ }
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    // initialize from a deep link
+    // HF-001: E2E_THROTTLE=6 slows the browser CPU like a busy CI runner (reproduced the sign-in CSRF race)
+    if (process.env.E2E_THROTTLE) {
+      const cdp = await page.context().newCDPSession(page);
+      await cdp.send("Emulation.setCPUThrottlingRate", { rate: Number(process.env.E2E_THROTTLE) });
+    }
+    await page.goto(base + "/about");
+    await page.getByLabel("Organization / Workspace Name").fill("Server Org");
+    await page.getByLabel("Administrator Username").fill("admin");
+    await page.getByLabel("Administrator Email Address").fill("admin@example.org");
+    await page.getByLabel("Password", { exact: true }).fill(PW);
+    await page.getByLabel("Password Confirmation").fill(PW);
+    await page.getByRole("button", { name: "Initialize" }).click();
+    await expect(page.getByRole("heading", { name: "Set up two-step verification" })).toBeVisible();
+    await expect(page).toHaveURL(base + "/");
+    const secret = (await page.getByTestId("mfa-secret").textContent())!.replace(/\s/g, "");
+    await page.getByLabel("Code from the app").fill(totp(secret));
+    await page.getByRole("button", { name: "Turn on two-step verification" }).click();
+    await page.getByLabel("I have saved my recovery codes").check();
+    await page.getByRole("button", { name: "Continue" }).click();
+    await expect(page.getByRole("heading", { name: "Administration" })).toBeVisible();
+    await page.getByRole("button", { name: "Sign out" }).click();
+
+    // a bookmark into the app: sign-in and the two-step step happen on "/", then the dashboard opens
+    await page.goto(base + "/users");
+    await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
+    await expect(page).toHaveURL(base + "/");
+    await page.getByLabel("Username").fill("admin");
+    await page.getByLabel("Password").fill(PW);
+    await page.getByRole("button", { name: "Sign in" }).click();
+    await expect(page.getByRole("heading", { name: "Two-step verification" })).toBeVisible();
+    await page.getByLabel("Authentication code").fill(totp(secret, 1));
+    await page.getByRole("button", { name: "Verify" }).click();
+    await expect(page.getByRole("heading", { name: "Administration" })).toBeVisible();
+    await expect(page).toHaveURL(base + "/");
+
+    // a page left open across a server upgrade reloads itself once (no loop)
+    let loads = 0;
+    page.on("load", () => { loads += 1; });
+    await page.route("**/api/**", async (route) => {
+      const r = await route.fetch();
+      await route.fulfill({ response: r, headers: { ...r.headers(), "x-frontend-build": "index-NEWER.js" } });
+    });
+    await page.getByRole("link", { name: "Users", exact: true }).click();
+    await page.waitForTimeout(2500);
+    expect(loads).toBe(1);
+    await expect(page.getByRole("heading", { name: "Users" })).toBeVisible();
+    await page.unroute("**/api/**");
+    await page.getByRole("link", { name: "Dashboard", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Administration" })).toBeVisible();
+    await expect.poll(() => page.url()).not.toContain("_b=");  // marker dropped once the builds match again
+  } finally {
+    child.kill();
+  }
 });
