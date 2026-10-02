@@ -1051,7 +1051,14 @@ test("CR-037 / CR-038: cash count sheet PDF; mark a fundraiser as cancelled and 
   await page.getByRole("link", { name: "Harvest Dinner" }).click();
   await page.getByRole("button", { name: "Cash count sheet…" }).click();
   let dlg = page.getByRole("dialog", { name: "Cash count sheet" });
+  // 1.6.6: three empty rows by default = three blank Signature / Printed blocks; every added row is printed (up to 5)
+  await expect(dlg.locator(".sig-signer")).toHaveCount(3);
+  await expect(dlg.getByRole("link", { name: "Open sheet (PDF)" })).toHaveAttribute("href", /blank_lines=3$/);
+  await dlg.getByRole("button", { name: "+ Add signature line" }).click();
+  await dlg.getByRole("button", { name: "+ Add signature line" }).click();
+  await expect(dlg.getByRole("button", { name: "+ Add signature line" })).toHaveCount(0);
   const href = await dlg.getByRole("link", { name: "Open sheet (PDF)" }).getAttribute("href");
+  expect(href).toMatch(/blank_lines=5$/);
   const pdf = await page.request.get(href!);
   expect(pdf.status()).toBe(200);
   expect(pdf.headers()["content-type"]).toBe("application/pdf");

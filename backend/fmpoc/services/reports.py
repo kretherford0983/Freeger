@@ -927,9 +927,15 @@ _COINS = ["$1 coin", "50¢", "25¢", "10¢", "5¢", "1¢"]
 _CHECK_LINES = 16
 
 
-def build_count_sheet(db: Session, ctx, fr: Fundraiser, signers: list[tuple[str, str | None]]) -> tuple[str, str]:
+COUNT_SHEET_MAX_SIGNATURES = 5
+
+
+def build_count_sheet(db: Session, ctx, fr: Fundraiser, signers: list[tuple[str, str | None]],
+                      blank_lines: int = 0) -> tuple[str, str]:
     """One printable page, filled in by hand: bills and coins grid, checks list, totals (usable on their own when the
-    individual counts are not written down), notes and signature lines (chosen signers or three blank lines)."""
+    individual counts are not written down), notes and signature blocks: the chosen signers (name printed under the
+    line) followed by `blank_lines` blank blocks - a "Signature" line with a "Printed" line underneath (1.6.6).
+    With neither, three blank blocks."""
     ws = db.get(Workspace, ctx.workspace_id)
     title = f"Cash count sheet — {fr.name} — {ws.name}"
     buf = io.BytesIO()
@@ -945,7 +951,12 @@ def build_count_sheet(db: Session, ctx, fr: Fundraiser, signers: list[tuple[str,
     cash += [[blank, blank, blank]] * (_CHECK_LINES - len(_BILLS) - len(_COINS))
     checks = [[PM("<b>#</b>", "cell"), PM("<b>Check no.</b>", "cell"), PM("<b>From</b>", "cell"), PM("<b>Amount</b>", "cell")]]
     checks += [[P(str(i + 1), "cell"), blank, blank, blank] for i in range(_CHECK_LINES)]
-    row_h = [0.2 * inch] + [0.235 * inch] * _CHECK_LINES
+    caps: list[str | None] = [f"{name}, {t}" if t else name for name, t in signers]
+    caps += [None] * (blank_lines if (caps or blank_lines) else 3)   # None = blank block (Signature / Printed)
+    caps = caps[:COUNT_SHEET_MAX_SIGNATURES]
+    # five blocks with blank ones need three rows of two lines each: slightly lower grid rows keep it on one page
+    crowded = len(caps) == 5 and None in caps
+    row_h = [0.2 * inch] + [(0.2 if crowded else 0.225) * inch] * _CHECK_LINES
     left_w = [1.05 * inch, 0.7 * inch, 1.0 * inch]
     right_w = [0.3 * inch, 0.8 * inch, 1.75 * inch, 1.0 * inch]
 
@@ -971,21 +982,35 @@ def build_count_sheet(db: Session, ctx, fr: Fundraiser, signers: list[tuple[str,
     f += [pair, Spacer(1, 8), totals,
           P("The totals may be entered on their own when the individual bills, coins and checks are not listed above.", "small"),
           Spacer(1, 8), PM("Notes: ______________________________________________________________________________________", "body"),
-          Spacer(1, 9), PM("____________________________________________________________________________________________", "body"),
+          *([] if crowded else [Spacer(1, 9), PM("_" * 92, "body")]),   # second notes line
           Spacer(1, 10),
           P(f"We, the undersigned, counted the cash and checks received for {fr.name} and agree with the amounts "
             "recorded on this sheet.", "body"), Spacer(1, 4)]
-    caps = [f"{name}, {t}" if t else name for name, t in signers] or ["Name and title"] * 3
-    if len(caps) <= 3:
-        lines = [[_SignLine(3.2 * inch, c), _SignLine(1.6 * inch, "Date")] for c in caps]
-        widths = [3.6 * inch, 2.0 * inch]
-    else:  # four or five signers: two per row so the sheet stays on one page
-        cells = [[_SignLine(2.35 * inch, c), _SignLine(0.95 * inch, "Date")] for c in caps]
-        cells += [["", ""]] * (len(cells) % 2)
-        lines = [cells[i] + cells[i + 1] for i in range(0, len(cells), 2)]
-        widths = [2.5 * inch, 1.15 * inch, 2.5 * inch, FRAME_W - 12 - 6.15 * inch]
-    sig_t = Table(lines, colWidths=widths, rowHeights=[0.6 * inch] * len(lines))
-    sig_t.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "BOTTOM"), ("LEFTPADDING", (0, 0), (-1, -1), 0)]))
+    two_up = len(caps) > 2   # three to five blocks: two per row so the sheet stays on one page
+    w_sig, w_date, gap = (2.35 * inch, 0.95 * inch, 0.15 * inch) if two_up else (3.2 * inch, 1.6 * inch, 0.4 * inch)
+    h_sig, h_printed = (0.45 * inch, 0.4 * inch) if crowded else (0.5 * inch, 0.43 * inch)
+    tight = [("VALIGN", (0, 0), (-1, -1), "BOTTOM"), ("LEFTPADDING", (0, 0), (-1, -1), 0),
+             ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 0),
+             ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]
+
+    def block(cap: str | None) -> Table:
+        rows = [[_SignLine(w_sig, cap or "Signature"), _SignLine(w_date, "Date")]]
+        if cap is None:
+            rows.append([_SignLine(w_sig, "Printed"), ""])
+        t = Table(rows, colWidths=[w_sig + gap, w_date], rowHeights=[h_sig] + [h_printed] * (len(rows) - 1))
+        t.setStyle(TableStyle(tight))
+        return t
+
+    blocks = [block(c) for c in caps]
+    if two_up:
+        blocks += [""] * (len(blocks) % 2)
+        lines = [[blocks[i], blocks[i + 1]] for i in range(0, len(blocks), 2)]
+        widths = [w_sig + gap + w_date + 0.2 * inch, FRAME_W - 12 - (w_sig + gap + w_date + 0.2 * inch)]
+    else:
+        lines = [[b] for b in blocks]
+        widths = [w_sig + gap + w_date]
+    sig_t = Table(lines, colWidths=widths)
+    sig_t.setStyle(TableStyle(tight + [("VALIGN", (0, 0), (-1, -1), "TOP")]))
     f.append(sig_t)
     doc.build(f)
     fd, path = tempfile.mkstemp(prefix="fmpoc-count-", suffix=".pdf")

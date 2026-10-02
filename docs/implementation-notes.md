@@ -87,7 +87,7 @@ CR-038: `GET /api/fundraisers/{id}/count-sheet?signer_id=&signer_title=` (`fundr
 fundraiser, event date; date/time of count (no location - product owner); bills $100-$1 and coins $1-1¢ (count,
 amount); 16 check lines; Cash total / Check total / Total counted (usable alone); notes; agreement statement;
 signature + date lines. Signers reuse `signatures.resolve_signers` (0-5 distinct active individual Entities, title
-≤ 60); none → three blank "Name and title" lines; four or five signers are laid out two per row to stay on one page.
+≤ 60); none → three blank blocks; **1.6.6:** a blank block is a "Signature" line with a "Printed" line underneath; `blank_lines` (0–5) adds that many after the chosen signers (at most five blocks, else 422; the dialog sends one per empty row and starts with three); three or more blocks are laid out two per row, and five blocks with blank ones use lower grid rows and one notes line so the sheet stays on one page (tested with a 120-character fundraiser name).
 Nothing is stored: the signed sheet comes back as a fundraiser document.
 
 **v1.6.3 CR-036 Reminders and notifications.** Table `reminder` (migration `0012`): scope PERSONAL/ORGANIZATION,

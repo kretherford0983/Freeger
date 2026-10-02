@@ -525,7 +525,7 @@ function CancelDialog({ f, onClose, onSaved }: { f: any; onClose: () => void; on
 
 function CountSheetDialog({ f, onClose }: { f: any; onClose: () => void }) {
   const [people, setPeople] = useState<any[]>([]);
-  const [signers, setSigners] = useState<{ entity_id: string; title: string }[]>([{ entity_id: "", title: "" }]);
+  const [signers, setSigners] = useState<{ entity_id: string; title: string }[]>([0, 1, 2].map(() => ({ entity_id: "", title: "" })));
   const [err, setErr] = useState<unknown>(null);
   useEffect(() => {
     api.get("/api/entities").then((es: any[]) => setPeople(es.filter((e) => e.entity_type === "INDIVIDUAL" && !e.is_system && e.active !== false)), setErr);
@@ -536,13 +536,14 @@ function CountSheetDialog({ f, onClose }: { f: any; onClose: () => void }) {
     : signers.some((x) => !x.entity_id && x.title.trim()) ? "A title was entered without choosing a signer." : null;
   const p = new URLSearchParams();
   chosen.forEach((x) => { p.append("signer_id", x.entity_id); p.append("signer_title", x.title.trim()); });
-  const href = `/api/fundraisers/${f.id}/count-sheet${chosen.length ? `?${p.toString()}` : ""}`;
+  p.append("blank_lines", String(signers.length - chosen.length));   // 1.6.6: a row left empty prints a blank block
+  const href = `/api/fundraisers/${f.id}/count-sheet?${p.toString()}`;
   const upd = (i: number, patch: object) => setSigners(signers.map((y, j) => (j === i ? { ...y, ...patch } : y)));
   return (
     <Modal title="Cash count sheet" onClose={onClose}>
       <p>A blank sheet to print: bills and coins, checks, totals, notes and signature lines. Fill it in by hand at the count, have everyone sign, then scan it and add it under <b>Fundraiser documents</b>.</p>
       <ErrorBox error={err} />
-      <h3>Signers (up to 5, optional)</h3>
+      <h3>Signature lines (1 to 5)</h3>
       {signers.map((x, i) => (
         <div key={i} className="sig-signer row">
           <div className="grow"><EntityPicker label={`Signer ${i + 1}`} entities={people} value={x.entity_id} onChange={(v) => upd(i, { entity_id: v })} /></div>
@@ -550,8 +551,8 @@ function CountSheetDialog({ f, onClose }: { f: any; onClose: () => void }) {
           {signers.length > 1 ? <button type="button" className="small" aria-label={`Remove signer ${i + 1}`} onClick={() => setSigners(signers.filter((_, j) => j !== i))}>Remove</button> : null}
         </div>
       ))}
-      {signers.length < 5 ? <button type="button" className="small" onClick={() => setSigners([...signers, { entity_id: "", title: "" }])}>+ Add signer</button> : null}
-      <p className="hint">Signers are individual Entities. With no signer chosen, three blank "Name and title" lines are printed.</p>
+      {signers.length < 5 ? <button type="button" className="small" onClick={() => setSigners([...signers, { entity_id: "", title: "" }])}>+ Add signature line</button> : null}
+      <p className="hint">One signature line with a date is printed for each row. Choose a signer (an individual Entity) to print the name under the line, or leave the row empty for blank <b>Signature</b> and <b>Printed</b> lines to fill in by hand.</p>
       {problem ? <div className="alert error" role="alert">{problem}</div> : null}
       <div className="actions">
         <button type="button" onClick={onClose}>Close</button>

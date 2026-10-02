@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from .. import audit
 from ..deps import Ctx, get_db, require
+from ..errors import validation
 from ..schemas import ReasonIn, FundraiserBucketIn, FundraiserIn, FundraiserLineIn, FundraiserPreviewIn, ModulesIn
 from ..services import fundraisers as svc
 
@@ -168,15 +169,19 @@ def reinstate(fid: int, db: Session = Depends(get_db), ctx: Ctx = Depends(manage
 
 
 @router.get("/fundraisers/{fid}/count-sheet")
-def count_sheet(fid: int, signer_id: list[int] = Query([]), signer_title: list[str] = Query([]), download: bool = False,
+def count_sheet(fid: int, signer_id: list[int] = Query([]), signer_title: list[str] = Query([]),
+                blank_lines: int = Query(0, ge=0, le=5), download: bool = False,
                 db: Session = Depends(get_db), ctx: Ctx = Depends(viewer)):
     """A blank cash count sheet (PDF) to print, fill in by hand, sign and upload under Fundraiser documents."""
     from ..services import reports as report_svc
     from ..services import signatures as sig
     f = svc.get(db, ctx, fid)
     signers = sig.resolve_signers(db, ctx, signer_id, signer_title)
-    path, fname = report_svc.build_count_sheet(db, ctx, f, signers)
-    audit.record(db, ctx, "REPORT_GENERATED", "fundraiser", f.id, None, {"report": "CASH_COUNT_SHEET", "signers": len(signers)})
+    if len(signers) + blank_lines > report_svc.COUNT_SHEET_MAX_SIGNATURES:
+        raise validation(f"At most {report_svc.COUNT_SHEET_MAX_SIGNATURES} signature blocks fit on the sheet.", "blank_lines")
+    path, fname = report_svc.build_count_sheet(db, ctx, f, signers, blank_lines)
+    audit.record(db, ctx, "REPORT_GENERATED", "fundraiser", f.id, None,
+                 {"report": "CASH_COUNT_SHEET", "signers": len(signers), "blank_lines": blank_lines})
     db.commit()
     headers = {"Content-Disposition": f'{"attachment" if download else "inline"}; filename="{fname}"',
                "Cache-Control": "private, no-store", "X-Frame-Options": "SAMEORIGIN",
