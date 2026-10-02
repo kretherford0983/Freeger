@@ -1,9 +1,9 @@
-# Freedger
+<h1><img src="frontend/public/favicon.svg" alt="" width="36" align="top"> Fundwarden</h1>
 
 **Free financial ledger for small organizations** — clubs, associations, booster groups and similar bodies that
-keep a checkbook, a budget and an annual audit. Freedger runs on your own Windows PC or Linux server; your data
-stays in one folder you control. Current version: **1.6.5** (test channel; the first production release is planned as 1.6.6) —
-[download](https://github.com/kretherford0983/Freeger/releases/latest) · [changelog](CHANGELOG.md).
+keep a checkbook, a budget and an annual audit. Fundwarden runs on your own Windows PC or Linux server; your data
+stays in one folder you control. Current release: **1.6.6** (the first production release) —
+[download](https://github.com/kretherford0983/Fundwarden/releases/latest) · [changelog](CHANGELOG.md).
 
 ## What it does
 
@@ -27,42 +27,44 @@ stays in one folder you control. Current version: **1.6.5** (test channel; the f
 
 | | |
 |---|---|
-| **Windows (single user)** | Download `Freedger-<version>-windows-x64.exe` from the [latest release](https://github.com/kretherford0983/Freeger/releases/latest) and double-click it. |
-| **Linux server (multiple users)** | `curl -fsSL https://github.com/kretherford0983/Freeger/releases/latest/download/install.sh \| sudo bash` — installs or upgrades a systemd service; put an HTTPS reverse proxy in front of it. |
+| **Windows (single user)** | Download `Fundwarden-<version>-windows-x64.exe` from the [latest release](https://github.com/kretherford0983/Fundwarden/releases/latest) and double-click it. |
+| **Linux server (multiple users)** | `curl -fsSL https://github.com/kretherford0983/Fundwarden/releases/latest/download/install.sh \| sudo bash` — installs or upgrades a systemd service; put an HTTPS reverse proxy in front of it. |
 
 The first start shows the **Initialization Wizard** (organization name, administrator account). There are no
 default credentials. Details, HTTPS, Docker and moving data between machines: [docs/deployment.md](docs/deployment.md).
 Upgrades never touch your data or configuration: [docs/upgrade.md](docs/upgrade.md). **Make encrypted backups
 regularly** (System/About → Backup / Restore) and keep them off the machine: [docs/backup-restore.md](docs/backup-restore.md).
 
-Freedger is provided without warranty (see [License](#license)). It is a record-keeping tool, not accounting,
+Fundwarden is provided without warranty (see [License](#license)). It is a record-keeping tool, not accounting,
 tax or legal advice.
 
 ## Documentation
 
-**Using Freedger** — the guides describe what each release line added; read them in order for the full picture:
+**Using Fundwarden** — the guides describe what each release line added; read them in order for the full picture:
 [1.2](docs/user-guide-v1.2.md) (reports, transfers) · [1.3](docs/user-guide-v1.3.md) (Fiscal Year documents, close
 report) · [1.4](docs/user-guide-v1.4.md) (audit signatures, two-step verification, charts, backup) ·
 [1.5](docs/user-guide-v1.5.md) (dashboard layout, installers) · [1.6](docs/user-guide-v1.6.md) (fundraisers,
 reminders).
 
-**Running Freedger**
+**Running Fundwarden**
 - [docs/deployment.md](docs/deployment.md) — local and server installation, HTTPS reverse proxy, Docker, data portability
 - [docs/upgrade.md](docs/upgrade.md) — upgrading and rolling back; database changes per version
 - [docs/backup-restore.md](docs/backup-restore.md) — encrypted backups, restore, disaster recovery
 - [docs/configuration.md](docs/configuration.md) — settings, config file, environment variables, data layout
 - [docs/security.md](docs/security.md) — security controls and dependency-vulnerability checks
 
-**Developing Freedger**
+**Developing Fundwarden**
 - [docs/branching.md](docs/branching.md) — branches, builds, releases and versioning (`Breaking.Major.Minor`)
 - [docs/implementation-notes.md](docs/implementation-notes.md) — design decisions, including every change request (§1a)
 - [CHANGELOG.md](CHANGELOG.md) — what changed in each version
 
-**Origin.** Freedger started as an implementation of the *Financial Management POC Agent-Agnostic Benchmark v1.1*.
+**Origin.** Fundwarden started as an implementation of the *Financial Management POC Agent-Agnostic Benchmark v1.1*.
 The specification is kept unchanged in [`spec/`](spec/); [docs/acceptance-results.md](docs/acceptance-results.md),
 [docs/benchmark-results.md](docs/benchmark-results.md) and [docs/manual-verification.md](docs/manual-verification.md)
-record the results against that specification as of version 1.1 and are not updated for later versions. For the
-same reason packages, the service and the data folder still carry the names `FinancialManagementPOC` / `fmpoc`.
+record the results against that specification as of version 1.1 and are not updated for later versions. Until 1.6.5
+the application was called *Financial Management POC* / *Freedger*; the Python package (`fmpoc`), the database file
+and the `FM_*` settings keep those internal names. Upgrading an installation from before the rename:
+[docs/upgrade.md](docs/upgrade.md).
 
 ## Technology
 
@@ -91,7 +93,7 @@ Useful options: `--mode server --host 0.0.0.0 --port 8765 --data-dir DIR --no-br
 cd backend && python -m pytest                    # API tests incl. security negative tests
 cd frontend && npx tsc --noEmit -p . && npm run build
 cd frontend && FM_PYTHON=$(which python) npx playwright test                     # E2E vs source
-cd frontend && FM_BUNDLE=../dist/FinancialManagementPOC/FinancialManagementPOC npx playwright test   # E2E vs package
+cd frontend && FM_BUNDLE=../dist/fundwarden/fundwarden npx playwright test   # E2E vs package
 bash scripts/security_check.sh                    # pip-audit + npm audit + security tests
 ```
 
@@ -99,13 +101,13 @@ bash scripts/security_check.sh                    # pip-audit + npm audit + secu
 
 | Artifact | Command | Notes |
 |---|---|---|
-| Linux x86-64 portable (servers, glibc ≥ 2.27) | `bash packaging/build_linux_portable.sh` | → `dist/FinancialManagementPOC-linux-x64-portable.tar.gz`; install with `sudo bash packaging/linux/install-server.sh <tarball>` |
-| Linux x86-64 self-contained | `bash packaging/build_linux.sh` | PyInstaller onedir → `dist/FinancialManagementPOC-linux-x64.tar.gz` |
-| Windows x86-64 portable folder | `bash packaging/build_windows_portable.sh` | Runs on any OS; relocatable CPython + win_amd64 wheels → `dist/FinancialManagementPOC-windows-x64.zip`; launch `FinancialManagementPOC.cmd` |
-| Windows x86-64 one-file .exe | `pyinstaller --noconfirm --distpath dist packaging/pyinstaller/fmpoc-onefile.spec` | Build on Windows (CI: `windows-latest`) → `Freedger-<version>-windows-x64.exe` |
-| Windows x86-64 PyInstaller folder | `pwsh packaging/build_windows.ps1` | Build on Windows → `FinancialManagementPOC.exe` |
+| Linux x86-64 portable (servers, glibc ≥ 2.27) | `bash packaging/build_linux_portable.sh` | → `dist/Fundwarden-linux-x64-portable.tar.gz`; install with `sudo bash packaging/linux/install-server.sh <tarball>` |
+| Linux x86-64 self-contained | `bash packaging/build_linux.sh` | PyInstaller onedir → `dist/Fundwarden-linux-x64.tar.gz` |
+| Windows x86-64 portable folder | `bash packaging/build_windows_portable.sh` | Runs on any OS; relocatable CPython + win_amd64 wheels → `dist/Fundwarden-windows-x64.zip`; launch `Fundwarden.cmd` |
+| Windows x86-64 one-file .exe | `pyinstaller --noconfirm --distpath dist packaging/pyinstaller/fmpoc-onefile.spec` | Build on Windows (CI: `windows-latest`) → `Fundwarden-<version>-windows-x64.exe` |
+| Windows x86-64 PyInstaller folder | `pwsh packaging/build_windows.ps1` | Build on Windows → `Fundwarden.exe` |
 | Linux one-command install | `packaging/linux/install.sh` | Published with every release — see [docs/deployment.md](docs/deployment.md) |
-| Docker (optional, server) | `docker build -f packaging/docker/Dockerfile -t fmpoc .` | plus `docker-compose.yml` with Caddy HTTPS |
+| Docker (optional, server) | `docker build -f packaging/docker/Dockerfile -t fundwarden .` | plus `docker-compose.yml` with Caddy HTTPS |
 | Docker from bundle (no registry needed) | `bash packaging/docker/build_bundle_image.sh` | image from the self-contained Linux bundle |
 
 CI/CD (GitHub Actions, `.github/workflows/`): every pull request and feature branch runs the full test suite; merges
@@ -126,12 +128,12 @@ docs/                     user guides, operations and implementation documentati
 
 ## Issues and contributions
 
-Bugs and enhancement requests: [GitHub issues](https://github.com/kretherford0983/Freeger/issues). Please do **not**
+Bugs and enhancement requests: [GitHub issues](https://github.com/kretherford0983/Fundwarden/issues). Please do **not**
 put real financial data, account numbers or backups in an issue.
 
 ## License
 
-Freedger is free software: you can redistribute it and/or modify it under the terms of the
+Fundwarden is free software: you can redistribute it and/or modify it under the terms of the
 [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0-only). If you run a modified version for other people
 over a network, you must offer them its source code. Bundled third-party components keep their own licenses — see
 [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt) (regenerate with `python scripts/third_party_notices.py`; CI

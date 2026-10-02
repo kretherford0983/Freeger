@@ -58,14 +58,14 @@ jobs:
           VERSION: ${{ steps.meta.outputs.version }}
         run: |
           mkdir -p release
-          cp dist/FinancialManagementPOC-linux-x64-portable.tar.gz dist/FinancialManagementPOC-windows-x64.zip release/
+          cp dist/Fundwarden-linux-x64-portable.tar.gz dist/Fundwarden-windows-x64.zip release/
           cp packaging/linux/install-server.sh packaging/linux/install.sh release/
           printf '{"version":"%s","branch":"%s","commit":"%s","run":"%s","built_at":"%s"}\n' \
             "$VERSION" "$GITHUB_REF_NAME" "$GITHUB_SHA" "$GITHUB_RUN_NUMBER" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > release/build-info.json
       - name: Smoke test the Linux package
         run: |
-          mkdir -p "$RUNNER_TEMP/pkg" && tar -xzf release/FinancialManagementPOC-linux-x64-portable.tar.gz -C "$RUNNER_TEMP/pkg"
-          BIN=$(find "$RUNNER_TEMP/pkg" -maxdepth 2 -name FinancialManagementPOC -type f | head -1)
+          mkdir -p "$RUNNER_TEMP/pkg" && tar -xzf release/Fundwarden-linux-x64-portable.tar.gz -C "$RUNNER_TEMP/pkg"
+          BIN=$(find "$RUNNER_TEMP/pkg" -maxdepth 2 -name fundwarden -type f | head -1)
           env -i HOME="$RUNNER_TEMP" PATH=/usr/bin:/bin "$BIN" --no-browser --port 8790 --data-dir "$RUNNER_TEMP/d" &
           for i in $(seq 1 60); do curl -fs http://127.0.0.1:8790/api/health >/dev/null && break; sleep 1; done
           STATUS=$(curl -fs http://127.0.0.1:8790/api/system/status); echo "$STATUS"
@@ -110,7 +110,7 @@ jobs:
           npm --prefix frontend run build
       - name: One-file .exe
         env:
-          FM_EXE_NAME: Freedger-${{ needs.package.outputs.version }}-windows-x64
+          FM_EXE_NAME: Fundwarden-${{ needs.package.outputs.version }}-windows-x64
         run: |
           python -m pip install --quiet -r backend/requirements.txt pyinstaller==6.22.3
           python -m PyInstaller --noconfirm --log-level WARN --distpath dist --workpath build/pyinstaller-onefile packaging/pyinstaller/fmpoc-onefile.spec
@@ -120,15 +120,15 @@ jobs:
           name: linux-packages-${{ github.run_number }}
           path: release
       - name: Smoke test the .exe
-        run: pwsh packaging/windows/smoke_test.ps1 -Command "dist/Freedger-${{ needs.package.outputs.version }}-windows-x64.exe" -Version "${{ needs.package.outputs.version }}" -Port 8791
+        run: pwsh packaging/windows/smoke_test.ps1 -Command "dist/Fundwarden-${{ needs.package.outputs.version }}-windows-x64.exe" -Version "${{ needs.package.outputs.version }}" -Port 8791
       - name: Smoke test the portable zip
         run: |
-          Expand-Archive release/FinancialManagementPOC-windows-x64.zip -DestinationPath "$env:RUNNER_TEMP/zip"
-          pwsh packaging/windows/smoke_test.ps1 -Command "$env:RUNNER_TEMP/zip/FinancialManagementPOC-windows-x64/FinancialManagementPOC.cmd" -Version "${{ needs.package.outputs.version }}" -Port 8792
+          Expand-Archive release/Fundwarden-windows-x64.zip -DestinationPath "$env:RUNNER_TEMP/zip"
+          pwsh packaging/windows/smoke_test.ps1 -Command "$env:RUNNER_TEMP/zip/Fundwarden-windows-x64/Fundwarden.cmd" -Version "${{ needs.package.outputs.version }}" -Port 8792
       - uses: actions/upload-artifact@v4
         with:
           name: windows-exe-${{ github.run_number }}
-          path: dist/Freedger-${{ needs.package.outputs.version }}-windows-x64.exe
+          path: dist/Fundwarden-${{ needs.package.outputs.version }}-windows-x64.exe
           retention-days: 1
 
   assemble:
@@ -148,7 +148,7 @@ jobs:
         run: (cd release && sha256sum -- * > SHA256SUMS.txt && cat SHA256SUMS.txt)
       - uses: actions/upload-artifact@v4
         with:
-          name: FinancialManagementPOC-${{ needs.package.outputs.version }}-${{ github.ref_name }}-${{ github.run_number }}
+          name: Fundwarden-${{ needs.package.outputs.version }}-${{ github.ref_name }}-${{ github.run_number }}
           path: release/
           # test/main packages are kept permanently on the GitHub release; the run copy only feeds the publish job.
           # Short retention keeps Actions artifact storage (1 GB on GitHub Pro) well below the limit.
@@ -166,7 +166,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
-          name: FinancialManagementPOC-${{ needs.package.outputs.version }}-${{ github.ref_name }}-${{ github.run_number }}
+          name: Fundwarden-${{ needs.package.outputs.version }}-${{ github.ref_name }}-${{ github.run_number }}
           path: release
       - name: Publish GitHub release
         env:
@@ -180,16 +180,16 @@ jobs:
               exit 0
             fi
             TAG="v$VERSION-test.$GITHUB_RUN_NUMBER"
-            printf '\n---\nTest build from branch `test` (commit %s). Install or upgrade on the **test** server:\n```\ncurl -fsSL https://github.com/%s/releases/download/%s/install.sh | sudo bash -s -- --version %s\n```\nWindows: download `Freedger-%s-windows-x64.exe` and double-click it.\n' "$GITHUB_SHA" "$GITHUB_REPOSITORY" "$TAG" "$TAG" "$VERSION" >> notes.md
+            printf '\n---\nTest build from branch `test` (commit %s). Install or upgrade on the **test** server:\n```\ncurl -fsSL https://github.com/%s/releases/download/%s/install.sh | sudo bash -s -- --version %s\n```\nWindows: download `Fundwarden-%s-windows-x64.exe` and double-click it.\n' "$GITHUB_SHA" "$GITHUB_REPOSITORY" "$TAG" "$TAG" "$VERSION" >> notes.md
             gh release create "$TAG" release/* --target "$GITHUB_SHA" --prerelease \
-              --title "Freedger $VERSION (test build $GITHUB_RUN_NUMBER)" --notes-file notes.md
+              --title "Fundwarden $VERSION (test build $GITHUB_RUN_NUMBER)" --notes-file notes.md
           else
             TAG="v$VERSION"
             if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
               echo "::notice::$TAG already released - packages are attached to this workflow run only."
               exit 0
             fi
-            printf '\n---\nProduction release (commit %s). Install or upgrade (see docs/upgrade.md):\n```\ncurl -fsSL https://github.com/%s/releases/latest/download/install.sh | sudo bash\n```\nWindows: download `Freedger-%s-windows-x64.exe` and double-click it.\n' "$GITHUB_SHA" "$GITHUB_REPOSITORY" "$VERSION" >> notes.md
+            printf '\n---\nProduction release (commit %s). Install or upgrade (see docs/upgrade.md):\n```\ncurl -fsSL https://github.com/%s/releases/latest/download/install.sh | sudo bash\n```\nWindows: download `Fundwarden-%s-windows-x64.exe` and double-click it.\n' "$GITHUB_SHA" "$GITHUB_REPOSITORY" "$VERSION" >> notes.md
             gh release create "$TAG" release/* --target "$GITHUB_SHA" --latest \
-              --title "Freedger $VERSION" --notes-file notes.md
+              --title "Fundwarden $VERSION" --notes-file notes.md
           fi

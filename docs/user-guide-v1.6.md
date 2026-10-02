@@ -1,7 +1,13 @@
 # What's new in 1.6 — quick guide
 
-*1.6.0: the optional Fundraiser module (core). 1.6.1: buckets, cash float, exclusions and fundraiser documents.
+*1.6.6: the application is renamed Fundwarden. 1.6.0: the optional Fundraiser module (core). 1.6.1: buckets, cash float, exclusions and fundraiser documents.
 1.6.2: the fundraiser report. 1.6.3: reminders and notifications. 1.6.4: cancelled fundraisers and the cash count sheet.*
+
+## 1.6.6: a new name — Fundwarden
+From 1.6.6 the application is called **Fundwarden** and has an icon (a gold coin with a keyhole) in the browser
+tab. Nothing about your work changes: same address, same sign-in, same data. If you set up two-step verification
+earlier, the entry in your authenticator app keeps its old label and keeps working. New backups are named
+`fundwarden-backup-…`; older backup files still restore.
 
 ## Turning the module on (Administrator)
 System/About → **Optional modules** → tick **Fundraiser module**. Budget Managers, Budget Users, Register Users and

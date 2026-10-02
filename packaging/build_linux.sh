@@ -8,5 +8,5 @@ npm --prefix frontend run build
 python3 -m venv build/venv-linux
 build/venv-linux/bin/pip install --quiet -r backend/requirements.txt pyinstaller==6.22.3
 build/venv-linux/bin/pyinstaller --noconfirm --log-level WARN --distpath dist --workpath build/pyinstaller packaging/pyinstaller/fmpoc.spec
-tar -C dist -czf dist/FinancialManagementPOC-linux-x64.tar.gz FinancialManagementPOC
-echo "Built dist/FinancialManagementPOC-linux-x64.tar.gz  (run: ./FinancialManagementPOC/FinancialManagementPOC)"
+tar -C dist -czf dist/Fundwarden-linux-x64.tar.gz fundwarden
+echo "Built dist/Fundwarden-linux-x64.tar.gz  (run: ./fundwarden/fundwarden)"

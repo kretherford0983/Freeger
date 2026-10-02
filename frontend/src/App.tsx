@@ -189,7 +189,7 @@ function Shell({ workspace, warning, onLogout }: { workspace: string; warning: b
     <div className={`shell${collapsed ? " nav-collapsed" : ""}`}>
       <header className="topbar">
         <div className="brand">
-          <span className="logo" aria-hidden="true">◆</span> {workspace} <span className="muted">· Financial Management</span>
+          <img className="logo" src="/favicon.svg" alt="" width={20} height={20} /> {workspace} <span className="muted">· Fundwarden</span>
         </div>
         <div className="userbox">
           <span className="muted">{me.username} ({me.roles.map((r) => roleNames[r] || r).join(", ")})</span>

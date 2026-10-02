@@ -11,7 +11,8 @@ set up from a backup in the **initialization wizard** ("Restore from a backup in
 | Every attachment | Logs, the `pre-restore/` safety copy, temporary work files |
 | The portable encryption key (`secrets/`) — needed to read bank account numbers and authenticator secrets | |
 
-A backup is a single file `freedger-backup-<organization>-<date>-<time>.fmbak`.
+A backup is a single file `fundwarden-backup-<organization>-<date>-<time>.fmbak` (before 1.6.6:
+`freedger-backup-…` — those files restore exactly as before).
 
 ## Encryption
 
@@ -59,5 +60,5 @@ running the wizard). The new server keeps its own `config.toml`.
 ## Manual recovery without the application
 
 The files can also be copied by hand while the service is stopped: `database/`, `attachments/` and `secrets/` from
-the data directory (`/var/lib/fmpoc` on a Linux server). The installer's automatic snapshots before each upgrade
-(`/var/backups/fmpoc/<timestamp>/`) are such copies.
+the data directory (`/var/lib/fundwarden` on a Linux server). The installer's automatic snapshots before each upgrade
+(`/var/backups/fundwarden/<timestamp>/`) are such copies.

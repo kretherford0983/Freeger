@@ -20,7 +20,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "packaging" / "linux" / "install.sh"
-PKG = "FinancialManagementPOC-linux-x64-portable.tar.gz"
+PKG = "Fundwarden-linux-x64-portable.tar.gz"
 
 pytestmark = pytest.mark.skipif(not (shutil.which("bash") and shutil.which("curl") and shutil.which("sha256sum")),
                                 reason="needs bash, curl and sha256sum")
@@ -37,14 +37,14 @@ def _tarball() -> bytes:
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as t:
         data = b"#!/bin/sh\necho fake\n"
-        info = tarfile.TarInfo("FinancialManagementPOC-linux-x64/FinancialManagementPOC")
+        info = tarfile.TarInfo("Fundwarden-linux-x64/fundwarden")
         info.size = len(data)
         t.addfile(info, io.BytesIO(data))
     return buf.getvalue()
 
 
 STUB = b"""#!/usr/bin/env bash
-printf '%s\\n' "$@" > "$FREEDGER_TEST_RECORD"
+printf '%s\\n' "$@" > "$FUNDWARDEN_TEST_RECORD"
 """
 
 
@@ -110,8 +110,8 @@ def run(gh, tmp_path, *args, config: str | None = None):
     cfg = tmp_path / "config.toml"
     if config is not None:
         cfg.write_text(config)
-    env = {**os.environ, "FREEDGER_API": gh.base + "/api", "FREEDGER_DOWNLOAD": gh.base + "/dl",
-           "FREEDGER_TEST_NONROOT": "1", "FREEDGER_TEST_RECORD": str(rec), "FREEDGER_CONFIG": str(cfg)}
+    env = {**os.environ, "FUNDWARDEN_API": gh.base + "/api", "FUNDWARDEN_DOWNLOAD": gh.base + "/dl",
+           "FUNDWARDEN_TEST_NONROOT": "1", "FUNDWARDEN_TEST_RECORD": str(rec), "FUNDWARDEN_CONFIG": str(cfg)}
     # piped into bash exactly like `curl … | sudo bash -s -- …`
     p = subprocess.run(["bash", "-s", "--", "--yes", *args], input=SCRIPT.read_bytes(), env=env,
                        capture_output=True, timeout=60)
@@ -126,7 +126,7 @@ def test_auto_uses_newest_test_prerelease_while_in_beta(gh, tmp_path):
     gh.add_release("v1.5.0-test.11", True)
     code, out, args = run(gh, tmp_path)
     assert code == 0, out
-    assert "Freedger v1.5.0-test.11" in out and "TEST pre-release" in out
+    assert "Fundwarden v1.5.0-test.11" in out and "TEST pre-release" in out
     assert args is not None and args[0].endswith(PKG) and len(args) == 1
 
 
@@ -135,7 +135,7 @@ def test_auto_prefers_production_from_1_5_0(gh, tmp_path):
     gh.add_release("v1.6.0-test.3", True)
     code, out, args = run(gh, tmp_path, "--port", "9001")
     assert code == 0, out
-    assert "Freedger v1.5.0 " in out and "TEST" not in out
+    assert "Fundwarden v1.5.0 " in out and "TEST" not in out
     assert args[1:] == ["--port", "9001"]
 
 
@@ -143,7 +143,7 @@ def test_auto_ignores_production_older_than_the_installer(gh, tmp_path):
     gh.add_release("v1.2.1", False)
     gh.add_release("v1.5.0-test.2", True)
     code, out, _ = run(gh, tmp_path)
-    assert code == 0 and "Freedger v1.5.0-test.2" in out
+    assert code == 0 and "Fundwarden v1.5.0-test.2" in out
 
 
 def test_channels_and_pinned_version(gh, tmp_path):
@@ -154,7 +154,7 @@ def test_channels_and_pinned_version(gh, tmp_path):
     assert code == 0 and "v1.5.0-test.2" in out
     gh.add_release("v1.5.0-test.3", True)
     code, out, _ = run(gh, tmp_path, "--version", "v1.5.0-test.2")
-    assert code == 0 and "Freedger v1.5.0-test.2" in out
+    assert code == 0 and "Fundwarden v1.5.0-test.2" in out
     assert not any(r.startswith("/api") for r in gh.requests[-3:])  # pinned: no API lookup
     assert run(gh, tmp_path, "--version", "1.5;rm -rf /")[0] != 0
     assert run(gh, tmp_path, "--port", "http")[0] != 0
@@ -175,7 +175,7 @@ def test_requires_root(gh, tmp_path):
     if os.geteuid() == 0:
         pytest.skip("running as root")
     gh.add_release("v1.5.0-test.9", True)
-    env = {**os.environ, "FREEDGER_API": gh.base + "/api", "FREEDGER_DOWNLOAD": gh.base + "/dl"}
+    env = {**os.environ, "FUNDWARDEN_API": gh.base + "/api", "FUNDWARDEN_DOWNLOAD": gh.base + "/dl"}
     p = subprocess.run(["bash", "-s", "--", "--yes"], input=SCRIPT.read_bytes(), env=env, capture_output=True)
     assert p.returncode != 0 and b"run as root" in p.stderr
 

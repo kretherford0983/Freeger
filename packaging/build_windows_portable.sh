@@ -3,13 +3,13 @@
 # Uses the relocatable CPython build from astral-sh/python-build-standalone plus official win_amd64 wheels.
 # The result needs no separately installed Python, Node.js, SQLite, Docker or database server (BR-083).
 #
-# Usage (repo root):  bash packaging/build_windows_portable.sh      -> dist/FinancialManagementPOC-windows-x64.zip
+# Usage (repo root):  bash packaging/build_windows_portable.sh      -> dist/Fundwarden-windows-x64.zip
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PBS_TAG="${PBS_TAG:-20251014}"
 PYVER="${PYVER:-3.12.12}"
 PYMINOR="312"
-NAME="FinancialManagementPOC-windows-x64"
+NAME="Fundwarden-windows-x64"
 OUT="$ROOT/dist/$NAME"
 CACHE="$ROOT/build/cache"
 ARCHIVE="cpython-${PYVER}+${PBS_TAG}-x86_64-pc-windows-msvc-install_only.tar.gz"
@@ -61,18 +61,18 @@ from fmpoc.__main__ import main
 sys.exit(main())
 PY
 find "$OUT" -name "__pycache__" -type d -prune -exec rm -rf {} +
-cat > "$OUT/FinancialManagementPOC.cmd" <<'CMD'
+cat > "$OUT/Fundwarden.cmd" <<'CMD'
 @echo off
-rem Local mode: binds to 127.0.0.1 and opens the default browser. Data: %LOCALAPPDATA%\FinancialManagementPOC
+rem Local mode: binds to 127.0.0.1 and opens the default browser. Data: %LOCALAPPDATA%\Fundwarden
 setlocal
 set "HERE=%~dp0"
 set PYTHONNOUSERSITE=1
 set PYTHONDONTWRITEBYTECODE=1
 "%HERE%python\python.exe" -I "%HERE%app\launch.py" %*
 CMD
-cat > "$OUT/FinancialManagementPOC-Server.cmd" <<'CMD'
+cat > "$OUT/Fundwarden-Server.cmd" <<'CMD'
 @echo off
-rem Server mode. Configure host/port in %LOCALAPPDATA%\FinancialManagementPOC\config.toml or FM_* variables.
+rem Server mode. Configure host/port in %LOCALAPPDATA%\Fundwarden\config.toml or FM_* variables.
 rem Put an HTTPS reverse proxy in front for network use and set FM_SECURE_COOKIES=true.
 setlocal
 set "HERE=%~dp0"

@@ -3,13 +3,13 @@
 services:
   app:
     build: { context: ../.., dockerfile: packaging/docker/Dockerfile }
-    image: fmpoc:1.1.0
+    image: fundwarden
     restart: unless-stopped
     environment:
       FM_SECURE_COOKIES: "true"        # cookies only over HTTPS (TLS terminated by Caddy)
       FM_HSTS: "true"
       FM_TRUSTED_PROXIES: "*"          # only the private compose network can reach the app port
-    volumes: [ "fmpoc-data:/data" ]
+    volumes: [ "fundwarden-data:/data" ]
     expose: [ "8765" ]
   caddy:
     image: caddy:2
@@ -18,5 +18,5 @@ services:
     volumes: [ "./Caddyfile:/etc/caddy/Caddyfile:ro", "caddy-data:/data" ]
     depends_on: [ app ]
 volumes:
-  fmpoc-data: {}
+  fundwarden-data: {}
   caddy-data: {}
