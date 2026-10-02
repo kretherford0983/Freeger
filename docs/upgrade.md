@@ -1,4 +1,4 @@
-# Upgrading a Linux server install (current release: 1.4.1)
+# Upgrading a Linux server install (current release: 1.6.5)
 
 The upgrade replaces only the application binaries. It does **not** modify:
 
@@ -55,12 +55,17 @@ documentation review worked on the pre-existing data.
 
 ## Steps
 
-**Since 1.5.0 — one command on the server** (does steps 1–4 below; the data snapshot and rollback copy are the same):
+**One command on the server** (does steps 1–4 below; the data snapshot and rollback copy are the same):
 ```bash
-curl -fsSL https://github.com/kretherford0983/Freeger/releases/download/<tag>/install.sh | sudo bash -s -- --version <tag>
+curl -fsSL https://github.com/kretherford0983/Freeger/releases/latest/download/install.sh | sudo bash
 ```
-(`<tag>` e.g. `v1.5.0-test.14`; after the first production release:
-`curl -fsSL https://github.com/kretherford0983/Freeger/releases/latest/download/install.sh | sudo bash`.)
+This installs the newest production release. A specific release (for example a test pre-release on a test server):
+`curl -fsSL https://github.com/kretherford0983/Freeger/releases/download/<tag>/install.sh | sudo bash -s -- --version <tag>`
+(`<tag>` e.g. `v1.6.5` or `v1.6.5-test.27`).
+
+**From a test pre-release to the production release:** a server installed from any `v1.x.y-test.N` build upgrades
+to the production release with the same command; the table above applies unchanged (a test build and the release of
+the same version have the same database).
 The port of the existing installation is read from `config.toml`. Then continue with *Verify*.
 
 **Manual:**
@@ -76,17 +81,16 @@ The port of the existing installation is read from `config.toml`. Then continue 
    ```
    If you installed on a non-default port, pass the same `--port N` (it only affects the health check; your
    `config.toml` keeps its own port).
-4. Expected output ends with `"version":"1.3.0"` and `Installed.` and names the backup folder
+4. Expected output ends with `"version":"<new version>"` and `Installed.` and names the backup folder
    (`snapshotting data to /var/backups/fmpoc/<timestamp>`). The Cloudflare tunnel needs no change.
-5. Verify: sign in, check the collapsible menu («), open a Fiscal Year page (**Fiscal Year documents** section),
-   Register → **Fiscal Year reviews** (missing checks), and Reports → **Fiscal Year Close**.
-6. **After upgrading to 1.3.0:** open each Fiscal Year that is not closed yet. Documents uploaded earlier are listed
+5. Verify: sign in, check the version under System/About (or My Account), open a Fiscal Year page and a register.
+6. **Only when upgrading from a version before 1.3.0:** open each Fiscal Year that is not closed yet. Documents uploaded earlier are listed
    under *Other documents*; use the drop-down to mark the signoff as **Audit Signoff** and the budget approval as
    **Approval document** (or tick "No approval document"). Closed years are unaffected.
 
 ## Rollback
 
-Rolling back from 1.3.0 (or 1.2.1) to an earlier release requires restoring the data snapshot taken by the upgrade, because an older release
+Rolling back across a database change (see the table above) requires restoring the data snapshot taken by the upgrade, because an older release
 cannot open a database migrated by a newer one. **Anything entered after the upgrade is lost**, so export anything you need first.
 
 ```bash

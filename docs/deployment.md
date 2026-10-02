@@ -35,11 +35,8 @@ verifies the checksums and runs that release's `install-server.sh` (systemd serv
 data in `/var/lib/fmpoc`, a data snapshot before every upgrade, health check). The same command installs and
 upgrades; `config.toml`, the key, the database and attachments are never replaced.
 
-- **Which release:** by default the newest production release that has this installer (1.5.0 or later). While
-  Freedger is in beta there is none yet, so the newest **test** pre-release is installed and a notice says so.
-  `--channel production` or `--channel test` chooses explicitly; `--version <tag>` installs exactly that release.
-- **Until the first production release** the `latest` address above does not exist yet — use a pre-release's own
-  address (shown in its release notes):
+- **Which release:** by default the newest production release (1.6.5 was the first). `--channel test` installs the
+  newest **test** pre-release instead (for a test server only); `--version <tag>` installs exactly that release:
   `curl -fsSL https://github.com/kretherford0983/Freeger/releases/download/<tag>/install.sh | sudo bash -s -- --version <tag>`
 - **Port:** a new installation uses 8765 (`--port N` to change); an upgrade reads the port from the existing
   `config.toml`.
@@ -105,8 +102,8 @@ login rate limiter).
 ## Docker (optional)
 
 ```bash
-docker build -f packaging/docker/Dockerfile -t fmpoc:1.1.0 .
-docker run -d -p 127.0.0.1:8765:8765 -v fmpoc-data:/data fmpoc:1.1.0
+docker build -f packaging/docker/Dockerfile -t fmpoc .
+docker run -d -p 127.0.0.1:8765:8765 -v fmpoc-data:/data fmpoc
 # or with automatic HTTPS:
 docker compose -f packaging/docker/docker-compose.yml up -d     # edit Caddyfile host name first
 ```
@@ -115,8 +112,8 @@ Linux bundle (this path was built and run during verification).
 
 ## Upgrades
 
-Stop the application, replace the binaries, start it again. Alembic migrations run automatically; databases are
-never dropped or recreated.
+See [upgrade.md](upgrade.md). In short: stop the application, replace the binaries, start it again. Alembic
+migrations run automatically; databases are never dropped or recreated.
 
 ## Moving data between machines / operating systems (AC-DEP-006)
 
