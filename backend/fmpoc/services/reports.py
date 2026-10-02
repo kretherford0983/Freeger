@@ -185,9 +185,9 @@ class _Block(Flowable):
 class _SignLine(Flowable):
     """v1.4.1 CR-016: a line to write on, with a caption (plain text, not markup) underneath."""
 
-    def __init__(self, width: float, caption: str):
+    def __init__(self, width: float, caption: str, value: str | None = None):
         super().__init__()
-        self.lw, self.caption = width, caption
+        self.lw, self.caption, self.value = width, caption, value   # value: text pre-printed on the line (1.6.6)
         self.width, self.height = width, 0.42 * inch
 
     def draw(self):
@@ -198,6 +198,12 @@ class _SignLine(Flowable):
         c.setFillColor(colors.black)
         c.setFont(_FONT, 10.5)
         c.drawString(0, 0.02 * inch, self.caption[:90])
+        if self.value:
+            size = 10.5
+            while size > 7 and c.stringWidth(self.value, _FONT, size) > self.lw:
+                size -= 0.5
+            c.setFont(_FONT, size)
+            c.drawString(0, 0.25 * inch, self.value[:90])
 
 
 def _signature_page(doc: "_AuditDoc", sp) -> list:
@@ -924,70 +930,110 @@ __all__ = ["build_audit_report", "entity_activity", "entity_activity_csv", "Keep
 # --------------------------------------------------------------------------- v1.6.4 CR-038 cash count sheet
 _BILLS = ["$100", "$50", "$20", "$10", "$5", "$2", "$1"]
 _COINS = ["$1 coin", "50¢", "25¢", "10¢", "5¢", "1¢"]
-_CHECK_LINES = 16
+_CHECK_LINES = 13          # 1.6.6: as many check lines as bill/coin lines; more checks go on page 2 (the back)
+_EXTRA_CHECK_LINES = 30    # page 2
 
 
-def build_count_sheet(db: Session, ctx, fr: Fundraiser, signers: list[tuple[str, str | None]]) -> tuple[str, str]:
+COUNT_SHEET_MAX_SIGNATURES = 5        # rows on the sheet in total
+COUNT_SHEET_MAX_BLANK = 3             # blank rows when no signer is chosen
+COUNT_SHEET_MAX_BLANK_WITH_NAMED = 2  # blank rows next to chosen signers
+
+
+def build_count_sheet(db: Session, ctx, fr: Fundraiser, signers: list[tuple[str, str | None]],
+                      blank_lines: int = 0, extra_checks: bool = True) -> tuple[str, str]:
     """One printable page, filled in by hand: bills and coins grid, checks list, totals (usable on their own when the
-    individual counts are not written down), notes and signature lines (chosen signers or three blank lines)."""
+    individual counts are not written down), two notes lines and one signature row per person (Signature | Printed |
+    Date): the chosen signers (name pre-printed on the "Printed" line) followed by `blank_lines` blank rows (1.6.6).
+    With neither, three blank rows. `extra_checks` adds page 2 (to print on the back): more check lines and their
+    total."""
     ws = db.get(Workspace, ctx.workspace_id)
     title = f"Cash count sheet — {fr.name} — {ws.name}"
-    buf = io.BytesIO()
-    doc = _AuditDoc(buf, title="Cash count sheet", author=ws.name)
-    event = fr.start_date.isoformat() if fr.start_date == fr.end_date else f"{fr.start_date} to {fr.end_date}"
-    blank = ""
-    f: list = [_Mark(doc, "Cash count sheet"), PM("Cash count sheet", "h1"),
-               _kv([("Organization", ws.name), ("Fundraiser", fr.name), ("Event date", event)], w1=1.2 * inch, style="body"),
-               Spacer(1, 6),
-               PM("Date of count: ______________________ &nbsp;&nbsp;&nbsp; Time: ______________", "body"), Spacer(1, 8)]
-    cash = [[PM("<b>Bills and coins</b>", "cell"), PM("<b>Count</b>", "cell"), PM("<b>Amount</b>", "cell")]]
-    cash += [[P(x, "body"), blank, blank] for x in _BILLS + _COINS]
-    cash += [[blank, blank, blank]] * (_CHECK_LINES - len(_BILLS) - len(_COINS))
-    checks = [[PM("<b>#</b>", "cell"), PM("<b>Check no.</b>", "cell"), PM("<b>From</b>", "cell"), PM("<b>Amount</b>", "cell")]]
-    checks += [[P(str(i + 1), "cell"), blank, blank, blank] for i in range(_CHECK_LINES)]
-    row_h = [0.2 * inch] + [0.235 * inch] * _CHECK_LINES
-    left_w = [1.05 * inch, 0.7 * inch, 1.0 * inch]
-    right_w = [0.3 * inch, 0.8 * inch, 1.75 * inch, 1.0 * inch]
+    def render(h_row: float):
+        buf = io.BytesIO()
+        doc = _AuditDoc(buf, title="Cash count sheet", author=ws.name)
+        event = fr.start_date.isoformat() if fr.start_date == fr.end_date else f"{fr.start_date} to {fr.end_date}"
+        blank = ""
+        f: list = [_Mark(doc, "Cash count sheet"), PM("Cash count sheet", "h1"),
+                   _kv([("Organization", ws.name), ("Fundraiser", fr.name), ("Event date", event)], w1=1.2 * inch, style="body"),
+                   Spacer(1, 6),
+                   PM("Date of count: ______________________ &nbsp;&nbsp;&nbsp; Time: ______________", "body"), Spacer(1, 8)]
+        cash = [[PM("<b>Bills and coins</b>", "cell"), PM("<b>Count</b>", "cell"), PM("<b>Amount</b>", "cell")]]
+        cash += [[P(x, "body"), blank, blank] for x in _BILLS + _COINS]
+        cash += [[blank, blank, blank]] * max(0, _CHECK_LINES - len(_BILLS) - len(_COINS))
+        checks = [[PM("<b>#</b>", "cell"), PM("<b>Check no.</b>", "cell"), PM("<b>From</b>", "cell"), PM("<b>Amount</b>", "cell")]]
+        checks += [[P(str(i + 1), "cell"), blank, blank, blank] for i in range(_CHECK_LINES)]
+        caps: list[str | None] = [f"{name}, {t}" if t else name for name, t in signers]
+        caps += [None] * (blank_lines if (caps or blank_lines) else COUNT_SHEET_MAX_BLANK)   # None = blank row
+        caps = caps[:COUNT_SHEET_MAX_SIGNATURES]
+        row_h = [0.2 * inch] + [0.235 * inch] * _CHECK_LINES
+        left_w = [1.05 * inch, 0.7 * inch, 1.0 * inch]
+        right_w = [0.3 * inch, 0.8 * inch, 1.75 * inch, 1.0 * inch]
 
-    def grid(data, widths):
-        t = Table(data, colWidths=widths, rowHeights=row_h)
-        t.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#6b7480")),
-                               ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e8ecf1")),
-                               ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LEFTPADDING", (0, 0), (-1, -1), 4),
-                               ("TOPPADDING", (0, 0), (-1, -1), 1), ("BOTTOMPADDING", (0, 0), (-1, -1), 1)]))
-        return t
+        def grid(data, widths, heights=None):
+            t = Table(data, colWidths=widths, rowHeights=heights or row_h)
+            t.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#6b7480")),
+                                   ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e8ecf1")),
+                                   ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                                   ("TOPPADDING", (0, 0), (-1, -1), 1), ("BOTTOMPADDING", (0, 0), (-1, -1), 1)]))
+            return t
 
-    pair = Table([[grid(cash, left_w), grid(checks, right_w)]], colWidths=[sum(left_w) + 0.3 * inch, sum(right_w)])
-    pair.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0),
-                              ("RIGHTPADDING", (0, 0), (-1, -1), 0)]))
-    totals = Table([[PM("<b>Cash total</b>", "body"), "$", PM("<b>Check total</b>", "body"), "$",
-                     PM("<b>Total counted</b>", "body"), "$"]],
-                   colWidths=[0.95 * inch, 1.3 * inch, 1.0 * inch, 1.3 * inch, 1.15 * inch, FRAME_W - 12 - 5.7 * inch],
-                   rowHeights=[0.34 * inch])
-    totals.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), 1, colors.black), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                                ("LINEAFTER", (1, 0), (1, 0), 0.5, colors.HexColor("#6b7480")),
-                                ("LINEAFTER", (3, 0), (3, 0), 0.5, colors.HexColor("#6b7480")),
-                                ("FONTNAME", (0, 0), (-1, -1), _FONT), ("FONTSIZE", (0, 0), (-1, -1), 10)]))
-    f += [pair, Spacer(1, 8), totals,
-          P("The totals may be entered on their own when the individual bills, coins and checks are not listed above.", "small"),
-          Spacer(1, 8), PM("Notes: ______________________________________________________________________________________", "body"),
-          Spacer(1, 9), PM("____________________________________________________________________________________________", "body"),
-          Spacer(1, 10),
-          P(f"We, the undersigned, counted the cash and checks received for {fr.name} and agree with the amounts "
-            "recorded on this sheet.", "body"), Spacer(1, 4)]
-    caps = [f"{name}, {t}" if t else name for name, t in signers] or ["Name and title"] * 3
-    if len(caps) <= 3:
-        lines = [[_SignLine(3.2 * inch, c), _SignLine(1.6 * inch, "Date")] for c in caps]
-        widths = [3.6 * inch, 2.0 * inch]
-    else:  # four or five signers: two per row so the sheet stays on one page
-        cells = [[_SignLine(2.35 * inch, c), _SignLine(0.95 * inch, "Date")] for c in caps]
-        cells += [["", ""]] * (len(cells) % 2)
-        lines = [cells[i] + cells[i + 1] for i in range(0, len(cells), 2)]
-        widths = [2.5 * inch, 1.15 * inch, 2.5 * inch, FRAME_W - 12 - 6.15 * inch]
-    sig_t = Table(lines, colWidths=widths, rowHeights=[0.6 * inch] * len(lines))
-    sig_t.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "BOTTOM"), ("LEFTPADDING", (0, 0), (-1, -1), 0)]))
-    f.append(sig_t)
-    doc.build(f)
+        pair = Table([[grid(cash, left_w), grid(checks, right_w)]], colWidths=[sum(left_w) + 0.3 * inch, sum(right_w)])
+        pair.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                                  ("RIGHTPADDING", (0, 0), (-1, -1), 0)]))
+        totals = Table([[PM("<b>Cash total</b>", "body"), "$", PM("<b>Check total</b>", "body"), "$",
+                         PM("<b>Total counted</b>", "body"), "$"]],
+                       colWidths=[0.95 * inch, 1.3 * inch, 1.0 * inch, 1.3 * inch, 1.15 * inch, FRAME_W - 12 - 5.7 * inch],
+                       rowHeights=[0.34 * inch])
+        totals.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), 1, colors.black), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                                    ("LINEAFTER", (1, 0), (1, 0), 0.5, colors.HexColor("#6b7480")),
+                                    ("LINEAFTER", (3, 0), (3, 0), 0.5, colors.HexColor("#6b7480")),
+                                    ("FONTNAME", (0, 0), (-1, -1), _FONT), ("FONTSIZE", (0, 0), (-1, -1), 10)]))
+        if extra_checks:
+            more = Table([["", P("More checks: continue on page 2 (the back of this sheet).", "small")]],
+                         colWidths=[sum(left_w) + 0.3 * inch, sum(right_w)])
+            more.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 1),
+                                      ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
+            f.append(pair)
+            pair = more
+        f += [pair, Spacer(1, 8), totals,
+              P("The totals may be entered on their own when the individual bills, coins and checks are not listed above.", "small"),
+              Spacer(1, 8), PM("Notes: ______________________________________________________________________________________", "body"),
+              Spacer(1, 9), PM("_" * 92, "body"),   # always two notes lines
+              Spacer(1, 10),
+              P(f"We, the undersigned, counted the cash and checks received for {fr.name} and agree with the amounts "
+                "recorded on this sheet.", "body"), Spacer(1, 4)]
+        # 1.6.6: one row per person - Signature | Printed name | Date. A chosen signer's name is pre-printed on the
+        # "Printed" line; a blank row leaves it empty to fill in by hand.
+        w_sig, w_name, w_date, gap = 2.55 * inch, 2.45 * inch, 1.1 * inch, 0.22 * inch
+        lines = [[_SignLine(w_sig, "Signature"), _SignLine(w_name, "Printed", value=c), _SignLine(w_date, "Date")]
+                 for c in caps]
+        sig_t = Table(lines, hAlign="LEFT", colWidths=[w_sig + gap, w_name + gap, w_date], rowHeights=[h_row] * len(lines))
+        sig_t.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "BOTTOM"), ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                                   ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 0),
+                                   ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
+        f.append(sig_t)
+        if extra_checks:   # page 2: print it on the back (duplex) or as a second sheet, only when it is needed
+            wide = [0.4 * inch, 1.2 * inch, FRAME_W - 12 - 3.1 * inch, 1.5 * inch]
+            more_rows = [[PM("<b>#</b>", "cell"), PM("<b>Check no.</b>", "cell"), PM("<b>From</b>", "cell"), PM("<b>Amount</b>", "cell")]]
+            more_rows += [[P(str(_CHECK_LINES + 1 + i), "cell"), blank, blank, blank] for i in range(_EXTRA_CHECK_LINES)]
+            sub = Table([[PM("<b>Total of the checks on this page</b>", "body"), "$"]],
+                        colWidths=[FRAME_W - 12 - 1.5 * inch, 1.5 * inch], rowHeights=[0.34 * inch])
+            sub.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), 1, colors.black), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                                     ("LINEBEFORE", (1, 0), (1, 0), 0.5, colors.HexColor("#6b7480")),
+                                     ("FONTNAME", (0, 0), (-1, -1), _FONT), ("FONTSIZE", (0, 0), (-1, -1), 10)]))
+            f += [PageBreak(), _Mark(doc, "Additional checks"), PM("Cash count sheet — additional checks", "h1"),
+                  _kv([("Organization", ws.name), ("Fundraiser", fr.name), ("Event date", event)], w1=1.2 * inch, style="body"),
+                  Spacer(1, 8), grid(more_rows, wide, [0.2 * inch] + [0.235 * inch] * _EXTRA_CHECK_LINES), Spacer(1, 8), sub,
+                  P("Include this total in the Check total on page 1.", "small")]
+        doc.build(f)
+        return buf, doc
+
+    # the signature rows get as much height as page 1 allows (long names in the header take room): tallest that fits
+    want = 2 if extra_checks else 1
+    for h in (0.78, 0.7, 0.62, 0.55, 0.5, 0.46, 0.43, 0.4):
+        buf, doc = render(h * inch)
+        if doc.page <= want:
+            break
     fd, path = tempfile.mkstemp(prefix="fmpoc-count-", suffix=".pdf")
     os.close(fd)
     try:
