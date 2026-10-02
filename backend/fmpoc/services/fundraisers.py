@@ -217,7 +217,9 @@ def _validate_budgets(db: Session, ctx, f: Fundraiser | None, start: dt.date, en
 def snapshot(f: Fundraiser) -> dict:
     return {"id": f.id, "name": f.name, "description": f.description, "start_date": f.start_date.isoformat(),
             "end_date": f.end_date.isoformat(), "filter_text": f.filter_text, "filter_regex": bool(f.filter_regex),
-            "budget_ids": [fb.budget_id for fb in f.budgets], "archived": f.archived_at is not None}
+            "budget_ids": [fb.budget_id for fb in f.budgets], "archived": f.archived_at is not None,
+            "cancelled": f.cancelled_at is not None, "cancel_reason": f.cancel_reason,
+            "cancelled_at": f.cancelled_at.isoformat() + "Z" if f.cancelled_at else None}
 
 
 def _apply(db: Session, ctx, f: Fundraiser, body, creating: bool) -> None:
@@ -283,6 +285,26 @@ def set_archived(db: Session, ctx, f: Fundraiser, archived: bool) -> Fundraiser:
     return f
 
 
+def set_cancelled(db: Session, ctx, f: Fundraiser, cancelled: bool, reason: str | None = None) -> Fundraiser:
+    """v1.6.4 CR-037: mark that the fundraiser did not take place as planned (reason required) or reinstate it.
+    Nothing else changes - its transactions, buckets and documents keep counting and working."""
+    _require_open(db, ctx, f)
+    if (f.cancelled_at is not None) == cancelled:
+        raise AppError(409, "INVALID_STATE", "The fundraiser is already cancelled." if cancelled else "The fundraiser is not cancelled.")
+    before = snapshot(f)
+    if cancelled:
+        reason = (reason or "").strip()
+        if not reason:
+            raise validation("A reason is required to cancel a fundraiser.", "reason")
+        f.cancelled_at, f.cancelled_by_user_id, f.cancel_reason = utcnow(), ctx.user.id, reason
+    else:
+        f.cancelled_at = f.cancelled_by_user_id = f.cancel_reason = None
+    db.flush()
+    audit.record(db, ctx, "FUNDRAISER_CANCELLED" if cancelled else "FUNDRAISER_REINSTATED", "fundraiser", f.id, before,
+                 snapshot(f))
+    return f
+
+
 def delete(db: Session, ctx, f: Fundraiser) -> None:
     """Allowed while nothing has been classified, excluded, bucketed or attached in the module. Otherwise: archive."""
     if any(fy.status == "CLOSED" for fy in _fys_of(db, f)):
@@ -308,6 +330,8 @@ def status_of(f: Fundraiser, today: dt.date | None = None) -> str:
     today = today or dt.date.today()
     if f.archived_at is not None:
         return "ARCHIVED"
+    if f.cancelled_at is not None:  # v1.6.4 CR-037
+        return "CANCELLED"
     if today < f.start_date:
         return "PLANNED"
     if today <= f.end_date:

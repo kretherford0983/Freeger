@@ -1044,6 +1044,33 @@ test("CR-036: organization and personal reminders - bell, dashboard, resolve wit
   await logout(page);
 });
 
+// ---------------------------------------------------------------- v1.6.4 CR-037 / CR-038
+test("CR-037 / CR-038: cash count sheet PDF; mark a fundraiser as cancelled and reinstate it", async ({ page }) => {
+  await login(page, "bm1");
+  await page.getByRole("link", { name: "Fundraisers" }).click();
+  await page.getByRole("link", { name: "Harvest Dinner" }).click();
+  await page.getByRole("button", { name: "Cash count sheet…" }).click();
+  let dlg = page.getByRole("dialog", { name: "Cash count sheet" });
+  const href = await dlg.getByRole("link", { name: "Open sheet (PDF)" }).getAttribute("href");
+  const pdf = await page.request.get(href!);
+  expect(pdf.status()).toBe(200);
+  expect(pdf.headers()["content-type"]).toBe("application/pdf");
+  await dlg.getByRole("button", { name: "Close", exact: true }).last().click();
+  await page.getByRole("button", { name: "Mark as cancelled…" }).click();
+  dlg = page.getByRole("dialog", { name: "Mark fundraiser as cancelled" });
+  await dlg.getByLabel("Reason").fill("Hall double-booked");
+  await dlg.getByRole("button", { name: "Mark as cancelled" }).click();
+  await expect(page.getByTestId("fr-cancelled")).toContainText("Hall double-booked");
+  await expect(page.getByRole("heading", { name: /Harvest Dinner/ })).toContainText("Cancelled");
+  await expect(page.getByTestId("fr-lines")).toBeVisible(); // transactions still listed
+  await page.getByRole("link", { name: "← Fundraisers" }).click();
+  await expect(page.getByRole("row", { name: /Harvest Dinner/ })).toContainText("Cancelled");
+  await page.getByRole("link", { name: "Harvest Dinner" }).click();
+  await page.getByRole("button", { name: "Reinstate" }).click();
+  await expect(page.getByTestId("fr-cancelled")).toHaveCount(0);
+  await logout(page);
+});
+
 // ---------------------------------------------------------------- v1.5.0: license (AGPL-3.0) and source link
 test("v1.5.0: sign-in page and My Account offer the source code, license and third-party notices", async ({ page }) => {
   await page.goto("/");
