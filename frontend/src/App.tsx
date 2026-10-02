@@ -19,6 +19,7 @@ import Entities from "./pages/Entities";
 import Account from "./pages/Account";
 import Reports from "./pages/Reports";
 import Fundraisers, { FundraiserDetail } from "./pages/Fundraisers";
+import Notifications, { REMINDERS_CHANGED } from "./pages/Notifications";
 
 export interface Me {
   id: number;
@@ -175,6 +176,7 @@ function Shell({ workspace, warning, onLogout }: { workspace: string; warning: b
   else if (path === "/register") page = guard("/register", <Register />);
   else if (path === "/entities") page = guard("/entities", <Entities />);
   else if (path === "/reports") page = guard("/reports", <Reports />);
+  else if (path === "/notifications") page = can("reminder.view") ? <Notifications /> : <NotAuthorized />;
   else if (path === "/fundraisers") page = guard("/fundraisers", <Fundraisers />);
   else if ((m = match("/fundraisers/:id", path))) page = guard("/fundraisers", <FundraiserDetail id={Number(m.id)} />);
   else page = <p>Page not found.</p>;
@@ -194,6 +196,7 @@ function Shell({ workspace, warning, onLogout }: { workspace: string; warning: b
           <button className="small" onClick={toggleTheme} aria-label={`Switch to ${me.theme === "dark" ? "light" : "dark"} mode`}>
             {me.theme === "dark" ? "☀ Light" : "☾ Dark"}
           </button>
+          {can("reminder.view") ? <Bell path={path} /> : null}
           <Link to="/account" className="small-link">My account</Link>
           <button className="small" onClick={logout}>Sign out</button>
         </div>
@@ -215,6 +218,26 @@ function Shell({ workspace, warning, onLogout }: { workspace: string; warning: b
         <main className="content">{page}</main>
       </div>
     </div>
+  );
+}
+
+/** v1.6.3 CR-036: notifications bell with the number of due reminders (refreshed on navigation and every 5 min). */
+function Bell({ path }: { path: string }) {
+  const [n, setN] = useState(0);
+  useEffect(() => {
+    const load = () => api.get("/api/reminders/count").then((c) => setN(c.due), () => undefined);
+    load();
+    const t = window.setInterval(load, 5 * 60 * 1000);
+    window.addEventListener(REMINDERS_CHANGED, load);
+    return () => { window.clearInterval(t); window.removeEventListener(REMINDERS_CHANGED, load); };
+  }, [path]);
+  return (
+    <Link to="/notifications" className="bell" aria-label={n ? `Notifications: ${n} due` : "Notifications"} title="Notifications">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M6 9a6 6 0 1 1 12 0c0 5 2 6 2 7H4c0-1 2-2 2-7z" /><path d="M10 20a2 2 0 0 0 4 0" />
+      </svg>
+      {n ? <span className="bell-count" data-testid="bell-count">{n > 99 ? "99+" : n}</span> : null}
+    </Link>
   );
 }
 

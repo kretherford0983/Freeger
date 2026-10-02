@@ -316,3 +316,13 @@ td.ua { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space
 .fr-bucket-row .field-inner { flex: 1; }
 .fr-lines td:nth-child(1), .fr-lines td:nth-child(3) { white-space: nowrap; }
 .pill.fr-bucket { white-space: nowrap; }
+
+/* v1.6.3 CR-036: reminders and notifications */
+.bell { position: relative; display: inline-flex; align-items: center; padding: 4px 6px; color: inherit; border-radius: 6px; }
+.bell:hover { background: var(--surface-2); }
+.bell-count { position: absolute; top: -4px; right: -6px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--danger); color: #fff; font-size: 10px; font-weight: 700; line-height: 16px; text-align: center; }
+.reminders { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 8px; }
+.reminder { display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+.reminder-due { border-left-color: var(--warn-border); }
+.reminder-resolved { opacity: 0.85; }
+.reminder-main { display: grid; gap: 2px; }

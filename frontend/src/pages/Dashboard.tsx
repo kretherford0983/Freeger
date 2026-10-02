@@ -3,6 +3,7 @@ import { api, money } from "../api";
 import { ErrorBox, FyStatus, Loading, Remaining } from "../components";
 import { Link } from "../router";
 import { useMe } from "../App";
+import { DashboardNotifications } from "./Notifications";
 const DashboardCharts = lazy(() => import("./Charts")); // v1.4.1 CR-020: chart library loaded on demand
 
 export default function Dashboard() {
@@ -31,6 +32,7 @@ export default function Dashboard() {
   const fy = d.current_fiscal_year;
   // v1.5.0 CR-031: every section is a block that can be hidden and moved; the order is saved per user.
   const sections: Record<string, ReactNode> = {
+    notifications: <DashboardNotifications />, // v1.6.3 CR-036: due reminders (nothing when there are none)
     fiscal_year: (
       <section className="card">
         <h2>Current Fiscal Year</h2>
@@ -110,6 +112,7 @@ export default function Dashboard() {
 }
 
 const SECTIONS = [
+  { key: "notifications", title: "Notifications (due reminders)" },
   { key: "fiscal_year", title: "Current Fiscal Year" },
   { key: "budget", title: "Budget (income and expense)" },
   { key: "review", title: "Review summary" },

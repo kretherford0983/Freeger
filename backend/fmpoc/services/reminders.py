@@ -1,0 +1,201 @@
+"""v1.6.3 CR-036: reminders and notifications (plan: project doc claude/freedger-plan-1.6.md).
+
+- PERSONAL reminders: created by Budget Managers and Register Users; private to their owner.
+- ORGANIZATION reminders: created/edited/deleted by Budget Managers; resolved or reopened by Budget Managers and
+  Register Users; Budget Users and Auditors see the due, unresolved ones read-only. Administrators: none.
+- One-time, date only (the server's local date). A reminder becomes a notification on its show date
+  (due date - notify_days_before) and stays until someone resolves it, with an optional note.
+- It can be edited or deleted only before its show date; afterwards it must be resolved (and can be reopened).
+- Everything is audited.
+"""
+from __future__ import annotations
+
+import datetime as dt
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from .. import audit
+from ..errors import AppError, forbidden, not_found, validation
+from ..models import BankAccount, Budget, FiscalYear, Reminder, User, utcnow
+from . import bank_accounts as bank
+from .common import budget_label
+
+LINKS = {"FISCAL_YEAR": FiscalYear, "BUDGET": Budget, "BANK_ACCOUNT": BankAccount}
+
+
+def today() -> dt.date:
+    return dt.date.today()
+
+
+def show_date(r: Reminder) -> dt.date:
+    return r.due_date - dt.timedelta(days=r.notify_days_before or 0)
+
+
+def is_due(r: Reminder, day: dt.date | None = None) -> bool:
+    return show_date(r) <= (day or today())
+
+
+def _link(db: Session, ctx, link_type: str | None, link_id: int | None) -> dict | None:
+    if not link_type or link_id is None:
+        return None
+    obj = db.get(LINKS[link_type], link_id)
+    if obj is None:
+        return None
+    if link_type == "FISCAL_YEAR":
+        if obj.workspace_id != ctx.workspace_id:
+            return None
+        return {"type": link_type, "id": obj.id, "label": f"Fiscal Year {obj.display_name}", "url": f"/fiscal-years/{obj.id}"}
+    if link_type == "BUDGET":
+        fy = db.get(FiscalYear, obj.fiscal_year_id)
+        if fy is None or fy.workspace_id != ctx.workspace_id or obj.is_budget_zero:
+            return None
+        parent = db.get(Budget, obj.parent_budget_id) if obj.parent_budget_id else None
+        return {"type": link_type, "id": obj.id, "label": f"Budget {budget_label(obj, parent)} ({fy.display_name})", "url": "/budgets"}
+    if obj.workspace_id != ctx.workspace_id:
+        return None
+    return {"type": link_type, "id": obj.id, "label": f"Bank account {obj.account_name} - {bank.masked(obj)}", "url": "/bank-accounts"}
+
+
+def snapshot(r: Reminder) -> dict:
+    return {"id": r.id, "scope": r.scope, "owner_user_id": r.owner_user_id, "title": r.title, "details": r.details,
+            "due_date": r.due_date.isoformat(), "notify_days_before": r.notify_days_before, "link_type": r.link_type,
+            "link_id": r.link_id, "resolved": r.resolved_at is not None, "resolution_note": r.resolution_note}
+
+
+def _can_resolve(ctx, r: Reminder) -> bool:
+    return r.owner_user_id == ctx.user.id if r.scope == "PERSONAL" else ctx.has("reminder.org_resolve")
+
+
+def _can_edit(ctx, r: Reminder) -> bool:
+    return r.owner_user_id == ctx.user.id if r.scope == "PERSONAL" else ctx.has("reminder.org_manage")
+
+
+def can_see(ctx, r: Reminder, day: dt.date | None = None) -> bool:
+    if r.workspace_id != ctx.workspace_id or not ctx.has("reminder.view"):
+        return False
+    if r.scope == "PERSONAL":
+        return r.owner_user_id == ctx.user.id
+    if ctx.has("reminder.org_manage"):
+        return True  # Budget Managers: upcoming, due and resolved
+    if ctx.has("reminder.org_resolve"):
+        return is_due(r, day)  # Register Users: due and resolved
+    return is_due(r, day) and r.resolved_at is None  # Budget Users, Auditors: due and not yet cleared
+
+
+def out(db: Session, ctx, r: Reminder, users: dict[int, str] | None = None) -> dict:
+    day = today()
+    def name(uid):
+        return (users or {}).get(uid) or getattr(db.get(User, uid), "username", None)
+
+    due = is_due(r, day)
+    state = "RESOLVED" if r.resolved_at else ("DUE" if due else "UPCOMING")
+    return {**snapshot(r), "state": state, "show_date": show_date(r).isoformat(),
+            "overdue_days": max(0, (day - r.due_date).days) if state == "DUE" else 0,
+            "owner": name(r.owner_user_id), "link": _link(db, ctx, r.link_type, r.link_id),
+            "resolved_at": r.resolved_at.isoformat() + "Z" if r.resolved_at else None,
+            "resolved_by": name(r.resolved_by_user_id) if r.resolved_by_user_id else None,
+            "can_resolve": state == "DUE" and _can_resolve(ctx, r),
+            "can_reopen": state == "RESOLVED" and _can_resolve(ctx, r),
+            "can_edit": state == "UPCOMING" and _can_edit(ctx, r)}
+
+
+def _visible(db: Session, ctx) -> list[Reminder]:
+    day = today()
+    q = select(Reminder).where(Reminder.workspace_id == ctx.workspace_id).order_by(Reminder.due_date, Reminder.id)
+    return [r for r in db.scalars(q) if can_see(ctx, r, day)]
+
+
+def listing(db: Session, ctx, view: str) -> list[dict]:
+    users = {u.id: u.username for u in db.scalars(select(User).where(User.workspace_id == ctx.workspace_id))}
+    items = [out(db, ctx, r, users) for r in _visible(db, ctx)]
+    want = {"due": "DUE", "upcoming": "UPCOMING", "resolved": "RESOLVED"}[view]
+    items = [i for i in items if i["state"] == want]
+    if view == "resolved":
+        items.sort(key=lambda i: i["resolved_at"], reverse=True)
+    return items
+
+
+def due_count(db: Session, ctx) -> int:
+    day = today()
+    return sum(1 for r in _visible(db, ctx) if r.resolved_at is None and is_due(r, day))
+
+
+def get(db: Session, ctx, rid: int) -> Reminder:
+    r = db.get(Reminder, rid)
+    if r is None or not can_see(ctx, r):
+        raise not_found("Reminder")
+    return r
+
+
+def _apply(db: Session, ctx, r: Reminder, body) -> None:
+    if (body.link_type is None) != (body.link_id is None):
+        raise validation("Choose both what the reminder links to and the item, or neither.", "link_id")
+    if body.link_type and _link(db, ctx, body.link_type, body.link_id) is None:
+        raise validation("The linked item was not found.", "link_id")
+    r.title, r.details = body.title, body.details or None
+    r.due_date, r.notify_days_before = body.due_date, body.notify_days_before
+    r.link_type, r.link_id = body.link_type, body.link_id
+    r.updated_by_user_id = ctx.user.id
+
+
+def create(db: Session, ctx, body) -> Reminder:
+    ctx.require("reminder.org_manage" if body.scope == "ORGANIZATION" else "reminder.personal")
+    r = Reminder(workspace_id=ctx.workspace_id, scope=body.scope, owner_user_id=ctx.user.id)
+    _apply(db, ctx, r, body)
+    db.add(r)
+    db.flush()
+    audit.record(db, ctx, "REMINDER_CREATED", "reminder", r.id, None, snapshot(r))
+    return r
+
+
+def _editable(ctx, r: Reminder) -> None:
+    if not _can_edit(ctx, r):
+        raise forbidden()
+    if r.resolved_at is not None or is_due(r):
+        raise AppError(409, "REMINDER_DUE", "A reminder can only be changed or deleted before it is shown. "
+                       "Resolve it instead (a resolved reminder can be reopened).")
+
+
+def update(db: Session, ctx, r: Reminder, body) -> Reminder:
+    _editable(ctx, r)
+    if body.scope != r.scope:
+        raise validation("A reminder cannot be switched between personal and organization.", "scope")
+    before = snapshot(r)
+    _apply(db, ctx, r, body)
+    db.flush()
+    if snapshot(r) != before:
+        audit.record(db, ctx, "REMINDER_UPDATED", "reminder", r.id, before, snapshot(r))
+    return r
+
+
+def delete(db: Session, ctx, r: Reminder) -> None:
+    _editable(ctx, r)
+    audit.record(db, ctx, "REMINDER_DELETED", "reminder", r.id, snapshot(r), None)
+    db.delete(r)
+
+
+def resolve(db: Session, ctx, r: Reminder, note: str | None) -> Reminder:
+    if not _can_resolve(ctx, r):
+        raise forbidden()
+    if r.resolved_at is not None:
+        raise AppError(409, "INVALID_STATE", "This reminder is already resolved.")
+    if not is_due(r):
+        raise AppError(409, "REMINDER_NOT_DUE", "This reminder is not due yet; edit or delete it instead.")
+    before = snapshot(r)
+    r.resolved_at, r.resolved_by_user_id, r.resolution_note = utcnow(), ctx.user.id, (note or "").strip() or None
+    db.flush()
+    audit.record(db, ctx, "REMINDER_RESOLVED", "reminder", r.id, before, snapshot(r))
+    return r
+
+
+def reopen(db: Session, ctx, r: Reminder) -> Reminder:
+    if not _can_resolve(ctx, r):
+        raise forbidden()
+    if r.resolved_at is None:
+        raise AppError(409, "INVALID_STATE", "This reminder is not resolved.")
+    before = snapshot(r)
+    r.resolved_at = r.resolved_by_user_id = r.resolution_note = None
+    db.flush()
+    audit.record(db, ctx, "REMINDER_REOPENED", "reminder", r.id, before, snapshot(r))
+    return r
